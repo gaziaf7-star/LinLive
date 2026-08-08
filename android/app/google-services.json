@@ -1,0 +1,114 @@
+{
+  "project_info": {
+    "project_number": "600034986475",
+    "project_id": "meetlive-24239",
+    "storage_bucket": "meetlive-24239.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:600034986475:android:f57acaa36962a8615c71ae",
+        "android_client_info": {
+          "package_name": "com.liveapp.linlive"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "600034986475-33qn7strb1e5c503trlc36moihnn6eog.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.liveapp.linlive",
+            "certificate_hash": "18554012a664c4afd0b793899b7215a44e64b1ab"
+          }
+        },
+        {
+          "client_id": "600034986475-lcu18ngnpujj49ckmlb4l1g1b119o3mu.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.liveapp.linlive",
+            "certificate_hash": "ba86a438222bac1fe613202a30af28e781549db3"
+          }
+        },
+        {
+          "client_id": "600034986475-ok300k291fmgpj27k5tcsmdgogacqqhj.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.liveapp.linlive",
+            "certificate_hash": "126d0b821a337477826dc6df6df7cf3dd73a6393"
+          }
+        },
+        {
+          "client_id": "600034986475-oiemj6hd3krns6en7kqhu7dgp1f30bra.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCf4Kd2WfiBDdzVdvAOSq90FO789lAnjgc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "600034986475-oiemj6hd3krns6en7kqhu7dgp1f30bra.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "600034986475-hin86rtft11u1r6r1gk7sccahna31gvt.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.meetliveappspro.meetlivepro"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:600034986475:android:642ace56647e2e5e5c71ae",
+        "android_client_info": {
+          "package_name": "com.meetliveappspro.meetlive"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "600034986475-ce8g6871noriu8r4r13mpk220vl142ri.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.meetliveappspro.meetlive",
+            "certificate_hash": "126d0b821a337477826dc6df6df7cf3dd73a6393"
+          }
+        },
+        {
+          "client_id": "600034986475-oiemj6hd3krns6en7kqhu7dgp1f30bra.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCf4Kd2WfiBDdzVdvAOSq90FO789lAnjgc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "600034986475-oiemj6hd3krns6en7kqhu7dgp1f30bra.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "600034986475-hin86rtft11u1r6r1gk7sccahna31gvt.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.meetliveappspro.meetlivepro"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
