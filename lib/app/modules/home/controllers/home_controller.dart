@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:country_picker/country_picker.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -49,6 +50,13 @@ class HomeController extends GetxController {
     super.onInit();
     showBannerList();
     baseList();
+
+    // Auth profile sometimes restores a few frames after HomeController.
+    // Resolve the saved account country independently so live loading stays fast.
+    Future.microtask(() async {
+      await bootstrapSelectedLiveCountryFromProfile();
+    });
+
     Future.microtask(() async {
       await getLivestreamList();
     });
@@ -945,6 +953,11 @@ class HomeController extends GetxController {
   final RxString selectedLiveCountryFlag = '🌐'.obs;
   final RxInt selectedLiveCountryMatchCount = 0.obs;
 
+  // Prevent a late auth restore from overwriting a country the user manually
+  // selected from the Home filter.
+  bool _liveCountryBootstrappedFromProfile = false;
+  bool _liveCountryChangedByUser = false;
+
   /// UI te only available live countries show korar jonno.
   /// Format: {'name': 'Bangladesh', 'key': 'bangladesh', 'flag': '🇧🇩', 'count': '4'}
   final RxList<Map<String, String>> availableLiveCountryOptions =
@@ -1026,36 +1039,38 @@ class HomeController extends GetxController {
         .join(' ');
   }
 
+  final Map<String, String> _liveCountryFlagCache =
+  <String, String>{};
+
+  String _flagFromLiveCountryCode(String code) {
+    final clean = code.trim().toUpperCase();
+    if (!RegExp(r'^[A-Z]{2}$').hasMatch(clean)) return '🌍';
+
+    return String.fromCharCodes(
+      clean.codeUnits.map((unit) => unit + 127397),
+    );
+  }
+
   String _countryFlag(String normalizedCountry) {
-    final text = normalizedCountry.trim().toLowerCase();
+    final text = _normalizeLiveCountry(normalizedCountry);
+    if (text.isEmpty || text == 'global' || text == 'all') return '🌐';
 
-    const flags = {
-      'bangladesh': '🇧🇩',
-      'india': '🇮🇳',
-      'iraq': '🇮🇶',
-      'pakistan': '🇵🇰',
-      'united states': '🇺🇸',
-      'united kingdom': '🇬🇧',
-      'united arab emirates': '🇦🇪',
-      'saudi arabia': '🇸🇦',
-      'nepal': '🇳🇵',
-      'sri lanka': '🇱🇰',
-      'indonesia': '🇮🇩',
-      'malaysia': '🇲🇾',
-      'philippines': '🇵🇭',
-      'singapore': '🇸🇬',
-      'qatar': '🇶🇦',
-      'kuwait': '🇰🇼',
-      'oman': '🇴🇲',
-      'bahrain': '🇧🇭',
-      'turkey': '🇹🇷',
-      'egypt': '🇪🇬',
-      'morocco': '🇲🇦',
-      'canada': '🇨🇦',
-      'australia': '🇦🇺',
-    };
+    final cached = _liveCountryFlagCache[text];
+    if (cached != null) return cached;
 
-    return flags[text] ?? '🌍';
+    for (final country in CountryService().getAll()) {
+      final byName = _normalizeLiveCountry(country.name);
+      final byCode = country.countryCode.trim().toLowerCase();
+
+      if (byName == text || byCode == text) {
+        final flag = _flagFromLiveCountryCode(country.countryCode);
+        _liveCountryFlagCache[text] = flag;
+        return flag;
+      }
+    }
+
+    _liveCountryFlagCache[text] = '🌍';
+    return '🌍';
   }
 
   void _refreshAvailableLiveCountries(List<dynamic> liveList) {
@@ -1161,11 +1176,33 @@ class HomeController extends GetxController {
       final String publicId = _cleanLiveText(user['user_id']);
       final String uniqueId = _cleanLiveText(user['unique_id']);
 
-      if (hostDbId.isNotEmpty && id == hostDbId) return user;
-      if (roomId.isNotEmpty && id == roomId) return user;
-      if (nestedDbId.isNotEmpty && id == nestedDbId) return user;
-      if (nestedPublicId.isNotEmpty && publicId == nestedPublicId) return user;
-      if (nestedPublicId.isNotEmpty && uniqueId == nestedPublicId) return user;
+      if (hostDbId.isNotEmpty &&
+          (id == hostDbId ||
+              publicId == hostDbId ||
+              uniqueId == hostDbId)) {
+        return user;
+      }
+
+      if (roomId.isNotEmpty &&
+          (id == roomId ||
+              publicId == roomId ||
+              uniqueId == roomId)) {
+        return user;
+      }
+
+      if (nestedDbId.isNotEmpty &&
+          (id == nestedDbId ||
+              publicId == nestedDbId ||
+              uniqueId == nestedDbId)) {
+        return user;
+      }
+
+      if (nestedPublicId.isNotEmpty &&
+          (id == nestedPublicId ||
+              publicId == nestedPublicId ||
+              uniqueId == nestedPublicId)) {
+        return user;
+      }
     }
 
     return <String, dynamic>{};
@@ -1212,15 +1249,144 @@ class HomeController extends GetxController {
     final liveCountry = _countryOfLive(raw);
     if (liveCountry.isEmpty) return false;
 
-    return liveCountry == selected ||
-        liveCountry.contains(selected) ||
-        selected.contains(liveCountry);
+    // Country filter must be strict. Selecting Bangladesh must never show
+    // another country's room just because one country name contains another.
+    return liveCountry == selected;
+  }
+
+  /// Home tab-er country filter-er public helpers.
+  /// Existing sorting logic reuse kore, duplicate country resolver banay na.
+  bool liveMatchesSelectedCountry(dynamic raw) {
+    final selected = _normalizeLiveCountry(selectedLiveCountryName.value);
+    if (selected.isEmpty || selected == 'global' || selected == 'all') {
+      return true;
+    }
+    return _isSelectedCountryLive(raw);
+  }
+
+  String resolvedLiveCountry(dynamic raw) => _countryOfLive(raw);
+
+  List<dynamic> get selectedCountryLiveStreams {
+    final source = List<dynamic>.from(showingLiveStreamList);
+    return source.where(liveMatchesSelectedCountry).toList(growable: false);
+  }
+
+  bool _isUsableProfileCountry(String rawCountry) {
+    final normalized = _normalizeLiveCountry(rawCountry);
+    return normalized.isNotEmpty &&
+        normalized != 'global' &&
+        normalized != 'all' &&
+        normalized != 'unknown' &&
+        normalized != 'add country';
+  }
+
+  /// Home may build before the stored auth profile has finished restoring.
+  /// Wait briefly for the real account country instead of leaving the tab Global.
+  Future<void> bootstrapSelectedLiveCountryFromProfile() async {
+    if (_liveCountryBootstrappedFromProfile || _liveCountryChangedByUser) {
+      return;
+    }
+
+    for (int attempt = 0; attempt < 24; attempt++) {
+      if (_liveCountryChangedByUser) return;
+
+      final rawCountry =
+          authController.userProfile.value.user?.country?.toString().trim() ?? '';
+
+      if (_isUsableProfileCountry(rawCountry)) {
+        syncSelectedLiveCountryFromProfile(force: true);
+        return;
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 125));
+    }
+  }
+
+  /// Login / Google onboarding / Edit Profile API-te saved country-ke
+  /// Home-er PK-er porer default country tab banabe.
+  void syncSelectedLiveCountryFromProfile({bool force = false}) {
+    if (_liveCountryChangedByUser && !force) return;
+
+    final current = _normalizeLiveCountry(selectedLiveCountryName.value);
+    if (!force &&
+        current.isNotEmpty &&
+        current != 'global' &&
+        current != 'all') {
+      _liveCountryBootstrappedFromProfile = true;
+      return;
+    }
+
+    final rawCountry =
+        authController.userProfile.value.user?.country?.toString().trim() ?? '';
+
+    if (!_isUsableProfileCountry(rawCountry)) {
+      return;
+    }
+
+    final normalized = _normalizeLiveCountry(rawCountry);
+
+    selectedLiveCountryName.value = _countryDisplayName(normalized);
+    selectedLiveCountryFlag.value = _countryFlag(normalized);
+    _liveCountryBootstrappedFromProfile = true;
+
+    debugPrint(
+      '🌍 Home account country => '
+          '${selectedLiveCountryFlag.value} ${selectedLiveCountryName.value}',
+    );
+
+    _sortLiveStreamList();
+  }
+
+  /// Country tab open hole enough matching live khuje progressively next pages
+  /// load korbe. Eta bounded, tai slow network-e endless request hobe na.
+  Future<void> ensureSelectedCountryLivestreams({
+    int minimumResults = 8,
+    int maxAdditionalPages = 8,
+  }) async {
+    final selected = _normalizeLiveCountry(selectedLiveCountryName.value);
+    if (selected.isEmpty || selected == 'global' || selected == 'all') return;
+
+    int loadedPages = 0;
+    int waitCycles = 0;
+
+    while (loadedPages < maxAdditionalPages) {
+      if (selectedCountryLiveStreams.length >= minimumResults) return;
+      if (!liveHasMore.value) return;
+
+      if (isLoading.value || isLoadingMoreLive.value) {
+        waitCycles++;
+        if (waitCycles > 20) return;
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        continue;
+      }
+
+      waitCycles = 0;
+      final beforePage = liveCurrentPage.value;
+      await loadMoreLivestreamList();
+
+      if (liveCurrentPage.value == beforePage && !liveHasMore.value) {
+        return;
+      }
+
+      loadedPages++;
+    }
+  }
+
+  Future<void> refreshSelectedCountryLivestreams() async {
+    await refreshLivestreamList();
+    await ensureSelectedCountryLivestreams(
+      minimumResults: 8,
+      maxAdditionalPages: 6,
+    );
   }
 
   void changeLiveCountry({
     required String name,
     required String flagEmoji,
   }) {
+    _liveCountryChangedByUser = true;
+    _liveCountryBootstrappedFromProfile = true;
+
     final cleanName = name.trim().isEmpty ? 'Global' : name.trim();
     final normalized = _normalizeLiveCountry(cleanName);
 
@@ -1534,6 +1700,67 @@ class HomeController extends GetxController {
       isLoadingMoreLive.value = false;
       print("========== GET LIVESTREAM LIST END ==========");
     }
+  }
+
+  /// Resolves an active livestream without changing the visible Home list or
+  /// its pagination cursor. The backend does not expose a single-room read
+  /// endpoint, so global live banners use this bounded authoritative search.
+  Future<Map<String, dynamic>?> findActiveLivestreamById(
+      int livestreamId, {
+        int maxPages = 5,
+      }) async {
+    if (livestreamId <= 0 || maxPages <= 0) return null;
+
+    final int perPage = livePerPage.value > 0 ? livePerPage.value : 10;
+    for (int page = 1; page <= maxPages; page++) {
+      final response = await _dio.get(
+        getLiveStreamList,
+        queryParameters: <String, dynamic>{
+          'page': page,
+          'per_page': perPage,
+        },
+        options: Options(
+          headers: const <String, String>{
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+        ),
+      );
+
+      final dynamic body = response.data;
+      final List<dynamic> items = _extractLiveList(body);
+      for (final raw in items) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        if (_liveIdOf(item) == livestreamId) return item;
+      }
+
+      bool hasAnotherPage = items.length >= perPage;
+      if (body is Map && body['pagination'] is Map) {
+        final pagination = Map<String, dynamic>.from(body['pagination']);
+        final dynamic hasMore = pagination['has_more'];
+        final int lastPage =
+            int.tryParse('${pagination['last_page'] ?? 0}') ?? 0;
+        if (hasMore is bool) {
+          hasAnotherPage = hasMore;
+        } else if (pagination.containsKey('next_page')) {
+          final nextPage = pagination['next_page'];
+          hasAnotherPage =
+              nextPage != null &&
+                  nextPage.toString().trim().isNotEmpty &&
+                  nextPage.toString() != 'null';
+        } else if (lastPage > 0) {
+          hasAnotherPage = page < lastPage;
+        }
+      } else if (body is Map && body['last_page'] != null) {
+        final int lastPage =
+            int.tryParse('${body['last_page'] ?? page}') ?? page;
+        hasAnotherPage = page < lastPage;
+      }
+
+      if (!hasAnotherPage) break;
+    }
+    return null;
   }
 
   Future<void> refreshLivestreamList() async {

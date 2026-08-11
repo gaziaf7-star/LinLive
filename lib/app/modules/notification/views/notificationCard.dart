@@ -544,9 +544,9 @@ class _LightGlowBackgroundState extends State<_LightGlowBackground>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
-  static const Color kAppColor1 = Color(0xFFF80230);
-  static const Color kAppColor2 = Color(0xFFFD375D);
-  static const Color kAppbarColor = Color(0xFFF43C5D);
+  static const Color kAppColor1 = Color(0xFF3B072F);
+  static const Color kAppColor2 = Color(0xFF3B072F);
+  static const Color kAppbarColor = Color(0xFF3B072F);
 
   @override
   void initState() {
@@ -575,9 +575,9 @@ class _LightGlowBackgroundState extends State<_LightGlowBackground>
           decoration: const BoxDecoration(
             gradient: LinearGradient(
               colors: [
-                Color(0xFFFFF5F7),
-                Color(0xFFFFEEF2),
-                Color(0xFFFFFFFF),
+                Color(0xFF3B072F),
+                Color(0xFF3B072F),
+                Color(0xFF3B072F),
               ],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
@@ -590,7 +590,7 @@ class _LightGlowBackgroundState extends State<_LightGlowBackground>
                 right: -70,
                 child: _GlowCircle(
                   size: 220,
-                  color: kAppColor2.withOpacity(0.6),
+                  color: kAppColor2,
                 ),
               ),
 
@@ -599,7 +599,7 @@ class _LightGlowBackgroundState extends State<_LightGlowBackground>
                 left: -90,
                 child: _GlowCircle(
                   size: 260,
-                  color: kAppColor1.withOpacity(0.5),
+                  color: kAppColor1,
                 ),
               ),
 
@@ -608,7 +608,7 @@ class _LightGlowBackgroundState extends State<_LightGlowBackground>
                 right: -100,
                 child: _GlowCircle(
                   size: 280,
-                  color: kAppbarColor.withOpacity(0.4),
+                  color: kAppbarColor,
                 ),
               ),
 
@@ -617,7 +617,7 @@ class _LightGlowBackgroundState extends State<_LightGlowBackground>
                 left: -70 + (value * 35),
                 child: _GlowCircle(
                   size: 230,
-                  color: kAppColor2.withOpacity(0.2),
+                  color: kAppColor2,
                 ),
               ),
             ],

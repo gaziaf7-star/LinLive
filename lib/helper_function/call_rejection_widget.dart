@@ -3,7 +3,7 @@ import 'package:get/get.dart';
 
 
 import '../app/modules/livestream/controllers/livestream_controller.dart';
-import '../app/modules/livestream/controllers/websocket_controller.dart';
+import '../app/modules/livestream/socket/websocket_controller.dart';
 import '../constants/layout_constant.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';

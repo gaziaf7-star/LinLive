@@ -758,31 +758,22 @@ class _AppmenuViewState extends State<AppmenuView>
                   image: 'assets/newaudio/myIteam.png',
                 ),
               ),
-              Obx(() {
-                final currentUser = authController.userProfile.value.user;
-                final bool isHost = currentUser?.isHostAccount ?? false;
-                final bool isAgency = currentUser?.isAgencyAccount ?? false;
-
-                // Host priority: both values thakleo Verified-i show korbe.
-                if (isAgency && !isHost) {
-                  return const SizedBox.shrink();
-                }
-
-                return _menuCardWithGap(
-                  castomCard(
-                    onPress: homeController.showHostStatusList,
-                    height: kHeight * 0.033,
-                    imageWidth: kHeight * 0.033,
-                    imagePadding: EdgeInsets.only(
-                      left: kWeight * 0.01,
-                      right: kWeight * 0.025,
-                    ),
-                    bacgroundColor: const Color(0xfffff0d4),
-                    text: 'Verified'.appTr,
-                    image: 'assets/newaudio/hostt.png',
+              // Verified option Agency, Host, ebong normal user sobar jonno visible.
+              // Creator option-er Host restriction alada shortcut menu-te handle kora hocche.
+              _menuCardWithGap(
+                castomCard(
+                  onPress: homeController.showHostStatusList,
+                  height: kHeight * 0.033,
+                  imageWidth: kHeight * 0.033,
+                  imagePadding: EdgeInsets.only(
+                    left: kWeight * 0.01,
+                    right: kWeight * 0.025,
                   ),
-                );
-              }),
+                  bacgroundColor: const Color(0xfffff0d4),
+                  text: 'Verified'.appTr,
+                  image: 'assets/newaudio/hostt.png',
+                ),
+              ),
               Obx(() {
                 if (!_canShowRechargeInviteByCoins()) {
                   return const SizedBox.shrink();
@@ -1661,8 +1652,6 @@ Widget _profileInfoHeaderCard() {
     ),
   );
 }
-
-
 class _AnimatedLoveWaveBackground extends StatelessWidget {
   const _AnimatedLoveWaveBackground();
 

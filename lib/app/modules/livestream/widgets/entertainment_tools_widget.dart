@@ -19,7 +19,7 @@ import '../../../../widgets/message_bottom.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../../trading/views/trading_view.dart';
 import '../controllers/livestream_controller.dart';
-import '../controllers/websocket_controller.dart';
+import '../socket/websocket_controller.dart';
 import 'GameBottomSheet.dart';
 import 'musicplayerBottomSheet.dart';
 import 'red_packet_send_widget.dart';

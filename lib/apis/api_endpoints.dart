@@ -252,7 +252,6 @@ const kFreamPersecs = '$kMainUrl/asset_purchase';
 String kCallSepcificUser(int callerId, int receiverId) =>
     "$kMainUrl/rejectcall/$callerId/$receiverId";
 
-//new sagor FireBase Staff
 
 const String kSentNotiSpecificUser = '$kMainUrl/sentnotispecificuser';
 String sentNotiSpecificUser(String deviceToken) =>

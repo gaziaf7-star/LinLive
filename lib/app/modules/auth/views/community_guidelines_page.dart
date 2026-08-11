@@ -37,7 +37,7 @@ class CommunityGuidelinesPage extends StatelessWidget {
             children: <Widget>[
               _centerTitle(('$_appName COMMUNITY GUIDELINES').appTr),
               const SizedBox(height: 8),
-              _centerSubTitle(('Last Updated: August 08, 2026').appTr),
+              _centerSubTitle(('Last Updated: August 10, 2026').appTr),
               const SizedBox(height: 20),
               _paragraph(
                 ('These Guidelines apply to live audio, live video, voice rooms, profiles, comments, posts, messages, gifts, virtual items, games, and all other community features. Before creating, broadcasting, posting, uploading, or sharing user-generated content, users must accept and follow our Terms of Service, Privacy Policy, and these Community Guidelines.').appTr,

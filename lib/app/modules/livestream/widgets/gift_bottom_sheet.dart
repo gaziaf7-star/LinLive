@@ -15,7 +15,7 @@ import '../../../../constants/image_helper.dart';
 import '../../../../constants/layout_constant.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../controllers/livestream_controller.dart';
-import '../controllers/websocket_controller.dart';
+import '../socket/websocket_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 /// Play Store safe mode.

@@ -4,7 +4,7 @@ import 'package:get/get.dart';
 
 import '../../../../constants/constants.dart';
 import 'livestream_controller.dart';
-import 'websocket_controller.dart';
+import '../socket/websocket_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 class LiveStreamActionController extends GetxController {

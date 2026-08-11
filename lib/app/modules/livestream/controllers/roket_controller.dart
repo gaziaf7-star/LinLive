@@ -1,5 +1,3 @@
-
-
 import 'dart:async';
 import 'dart:collection';
 
@@ -9,7 +7,6 @@ import 'package:get/get.dart' hide Response;
 import '../../../../apis/api_endpoints.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../utils/LiveTestingLogger.dart';
-
 
 /// Realtime + API state for the LINLIVE Rocket system.
 ///
@@ -32,7 +29,8 @@ class RocketController extends GetxController {
   final RxMap<String, dynamic> rewards = <String, dynamic>{}.obs;
   final RxList<Map<String, dynamic>> ranking = <Map<String, dynamic>>[].obs;
   final RxMap<String, dynamic> myRanking = <String, dynamic>{}.obs;
-  final RxList<Map<String, dynamic>> launchHistory = <Map<String, dynamic>>[].obs;
+  final RxList<Map<String, dynamic>> launchHistory =
+      <Map<String, dynamic>>[].obs;
   final RxList<Map<String, dynamic>> myRewards = <Map<String, dynamic>>[].obs;
   final RxMap<String, dynamic> lastLaunch = <String, dynamic>{}.obs;
 
@@ -48,13 +46,13 @@ class RocketController extends GetxController {
   final RxBool roomLaunchVisible = false.obs;
   final RxMap<String, dynamic> roomLaunchData = <String, dynamic>{}.obs;
   final Queue<Map<String, dynamic>> _roomLaunchQueue =
-  Queue<Map<String, dynamic>>();
+      Queue<Map<String, dynamic>>();
 
   /// App-wide launch banner queue.
   final RxBool globalLaunchBannerVisible = false.obs;
   final RxMap<String, dynamic> globalLaunchData = <String, dynamic>{}.obs;
   final Queue<Map<String, dynamic>> _globalLaunchQueue =
-  Queue<Map<String, dynamic>>();
+      Queue<Map<String, dynamic>>();
 
   final Set<String> _seenRealtimeKeys = <String>{};
   final Queue<String> _seenRealtimeOrder = Queue<String>();
@@ -119,11 +117,7 @@ class RocketController extends GetxController {
     final Map<String, dynamic> data = _map(root['data']);
     final Map<String, dynamic> payload = _map(data['data']);
 
-    return <String, dynamic>{
-      ...root,
-      ...data,
-      ...payload,
-    };
+    return <String, dynamic>{...root, ...data, ...payload};
   }
 
   int _livestreamIdFrom(dynamic raw) {
@@ -148,12 +142,9 @@ class RocketController extends GetxController {
   String _token() {
     try {
       if (!Get.isRegistered<AuthController>()) return '';
-      return Get.find<AuthController>()
-          .userProfile
-          .value
-          .token
-          ?.toString()
-          .trim() ??
+      return Get.find<AuthController>().userProfile.value.token
+              ?.toString()
+              .trim() ??
           '';
     } catch (_) {
       return '';
@@ -173,10 +164,7 @@ class RocketController extends GetxController {
     );
   }
 
-  Future<void> bindLivestream(
-      int livestreamId, {
-        bool force = false,
-      }) async {
+  Future<void> bindLivestream(int livestreamId, {bool force = false}) async {
     if (livestreamId <= 0) return;
 
     final bool changed = currentLivestreamId.value != livestreamId;
@@ -196,10 +184,7 @@ class RocketController extends GetxController {
     unawaited(fetchRanking(livestreamId: livestreamId));
   }
 
-  Future<void> fetchHome({
-    int? livestreamId,
-    bool showLoader = true,
-  }) async {
+  Future<void> fetchHome({int? livestreamId, bool showLoader = true}) async {
     final int sid = livestreamId ?? currentLivestreamId.value;
     if (sid <= 0) return;
 
@@ -304,7 +289,8 @@ class RocketController extends GetxController {
       rocketMap['level'] ?? p['level'] ?? p['current_level'],
     );
 
-    final dynamic enabledRaw = p['enabled'] ??
+    final dynamic enabledRaw =
+        p['enabled'] ??
         settingMap['enabled'] ??
         settingMap['status'] ??
         rocketMap['enabled'];
@@ -342,9 +328,7 @@ class RocketController extends GetxController {
       rocketMap['session_id'] ?? p['session_id'] ?? sessionId.value,
     );
     progressCoins.value = _int(
-      rocketMap['progress_coins'] ??
-          p['progress_coins'] ??
-          progressCoins.value,
+      rocketMap['progress_coins'] ?? p['progress_coins'] ?? progressCoins.value,
     );
     targetCoins.value = _int(
       rocketMap['target_coins'] ??
@@ -390,10 +374,10 @@ class RocketController extends GetxController {
   /// still 0, so this controller stayed bound to 0/old room and silently
   /// discarded valid progress + launch events.
   void handleRealtime(
-      String actionType,
-      dynamic rawPayload, {
-        int? activeLivestreamId,
-      }) {
+    String actionType,
+    dynamic rawPayload, {
+    int? activeLivestreamId,
+  }) {
     final String action = actionType.trim().toLowerCase();
     if (!action.startsWith('rocket_')) return;
 
@@ -426,7 +410,8 @@ class RocketController extends GetxController {
           };
           if (!_rememberEvent(_eventKey(normalized, action))) continue;
 
-          final bool launchIsCurrentRoom = launchSid > 0 &&
+          final bool launchIsCurrentRoom =
+              launchSid > 0 &&
               launchSid == currentLivestreamId.value &&
               (activeSid <= 0 || launchSid == activeSid);
 
@@ -480,6 +465,21 @@ class RocketController extends GetxController {
     }
   }
 
+  void restoreRoomLaunchPresentation({
+    required int livestreamId,
+    required Map<String, dynamic> payload,
+  }) {
+    if (livestreamId <= 0) return;
+    _bindRealtimeRoomNow(livestreamId);
+    final normalized = <String, dynamic>{
+      ...payload,
+      'action_type': 'rocket_launched',
+      'livestream_id': livestreamId,
+    };
+    _enqueueRoomLaunch(normalized);
+    unawaited(_hydrateVisibleRoomLaunch(normalized, livestreamId));
+  }
+
   /// Synchronous room binding used only after WebsocketController has already
   /// verified that the Rocket event belongs to the currently open live room.
   void _bindRealtimeRoomNow(int livestreamId) {
@@ -529,7 +529,7 @@ class RocketController extends GetxController {
         if (rewardType == 'coin') {
           final bool hasExactBalance =
               details.containsKey('new_coin_balance') ||
-                  details.containsKey('coin_balance');
+              details.containsKey('coin_balance');
           if (hasExactBalance && authUser != null) {
             final int exactBalance = _int(
               details['new_coin_balance'] ?? details['coin_balance'],
@@ -673,9 +673,9 @@ class RocketController extends GetxController {
   }
 
   bool _sameLaunchIdentity(
-      Map<String, dynamic> first,
-      Map<String, dynamic> second,
-      ) {
+    Map<String, dynamic> first,
+    Map<String, dynamic> second,
+  ) {
     if (first.isEmpty || second.isEmpty) return false;
 
     final int firstLaunchId = _launchId(first);
@@ -692,18 +692,12 @@ class RocketController extends GetxController {
     return firstSession > 0 &&
         secondSession > 0 &&
         firstSession == secondSession &&
-        (firstLevel <= 0 ||
-            secondLevel <= 0 ||
-            firstLevel == secondLevel);
+        (firstLevel <= 0 || secondLevel <= 0 || firstLevel == secondLevel);
   }
 
-  Map<String, dynamic> _mergeLatestLaunchDetails(
-      Map<String, dynamic> launch,
-      ) {
-    final Map<String, dynamic> original =
-    Map<String, dynamic>.from(launch);
-    final Map<String, dynamic> latest =
-    Map<String, dynamic>.from(lastLaunch);
+  Map<String, dynamic> _mergeLatestLaunchDetails(Map<String, dynamic> launch) {
+    final Map<String, dynamic> original = Map<String, dynamic>.from(launch);
+    final Map<String, dynamic> latest = Map<String, dynamic>.from(lastLaunch);
 
     if (latest.isEmpty ||
         (!_sameLaunchIdentity(original, latest) &&
@@ -721,13 +715,13 @@ class RocketController extends GetxController {
       /// after the API response hydrates winners and delivered reward logs.
       'event_id': original['event_id'] ?? latest['event_id'],
       'launch_event_id':
-      original['launch_event_id'] ?? latest['launch_event_id'],
+          original['launch_event_id'] ?? latest['launch_event_id'],
       'action_type':
-      original['action_type'] ?? latest['action_type'] ?? 'rocket_launched',
-      'livestream_id':
-      original['livestream_id'] ?? latest['livestream_id'],
+          original['action_type'] ?? latest['action_type'] ?? 'rocket_launched',
+      'livestream_id': original['livestream_id'] ?? latest['livestream_id'],
       'stream_id': original['stream_id'] ?? latest['stream_id'],
-      'level': latest['level'] ??
+      'level':
+          latest['level'] ??
           latest['rocket_level'] ??
           original['level'] ??
           original['rocket_level'],
@@ -746,10 +740,7 @@ class RocketController extends GetxController {
     if ((launchRanking is! Iterable || launchRanking.isEmpty) &&
         ranking.isNotEmpty) {
       enriched['ranking'] = ranking
-          .map(
-            (Map<String, dynamic> row) =>
-        Map<String, dynamic>.from(row),
-      )
+          .map((Map<String, dynamic> row) => Map<String, dynamic>.from(row))
           .toList(growable: false);
     }
 
@@ -766,18 +757,17 @@ class RocketController extends GetxController {
     );
 
     if (launchedLevelRewards.isNotEmpty) {
-      enriched['level_rewards'] =
-      Map<String, dynamic>.from(launchedLevelRewards);
+      enriched['level_rewards'] = Map<String, dynamic>.from(
+        launchedLevelRewards,
+      );
       if (_map(enriched['rewards']).isEmpty) {
-        enriched['rewards'] =
-        Map<String, dynamic>.from(launchedLevelRewards);
+        enriched['rewards'] = Map<String, dynamic>.from(launchedLevelRewards);
       }
     } else {
       final dynamic launchRewards = enriched['rewards'];
       if ((launchRewards is! Map || launchRewards.isEmpty) &&
           rewards.isNotEmpty) {
-        enriched['rewards'] =
-        Map<String, dynamic>.from(rewards);
+        enriched['rewards'] = Map<String, dynamic>.from(rewards);
       }
     }
 
@@ -797,16 +787,14 @@ class RocketController extends GetxController {
   }
 
   Future<void> _hydrateVisibleRoomLaunch(
-      Map<String, dynamic> launch,
-      int livestreamId,
-      ) async {
-    if (livestreamId <= 0 ||
-        livestreamId != currentLivestreamId.value) {
+    Map<String, dynamic> launch,
+    int livestreamId,
+  ) async {
+    if (livestreamId <= 0 || livestreamId != currentLivestreamId.value) {
       return;
     }
 
-    final Map<String, dynamic> wanted =
-    Map<String, dynamic>.from(launch);
+    final Map<String, dynamic> wanted = Map<String, dynamic>.from(launch);
 
     /// Ranking can arrive from its own endpoint. The complete launch winner and
     /// reward log data comes from home.last_launch, so hydrate both while the
@@ -819,13 +807,9 @@ class RocketController extends GetxController {
       await Future<void>.delayed(
         Duration(milliseconds: attempt == 0 ? 320 : 760),
       );
-      await fetchHome(
-        livestreamId: livestreamId,
-        showLoader: false,
-      );
+      await fetchHome(livestreamId: livestreamId, showLoader: false);
 
-      final Map<String, dynamic> latest =
-      Map<String, dynamic>.from(lastLaunch);
+      final Map<String, dynamic> latest = Map<String, dynamic>.from(lastLaunch);
       if (latest.isNotEmpty &&
           _sameLaunchIdentity(wanted, latest) &&
           _launchHasRewardDetails(latest)) {
@@ -836,12 +820,12 @@ class RocketController extends GetxController {
     if (livestreamId != currentLivestreamId.value) return;
     if (!roomLaunchVisible.value || roomLaunchData.isEmpty) return;
 
-    final Map<String, dynamic> current =
-    Map<String, dynamic>.from(roomLaunchData);
+    final Map<String, dynamic> current = Map<String, dynamic>.from(
+      roomLaunchData,
+    );
     if (!_sameLaunchIdentity(current, wanted)) return;
 
-    final Map<String, dynamic> refreshed =
-    _enrichRoomLaunch(current);
+    final Map<String, dynamic> refreshed = _enrichRoomLaunch(current);
     roomLaunchData.assignAll(refreshed);
   }
 

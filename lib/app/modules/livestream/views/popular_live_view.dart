@@ -29,7 +29,8 @@ import '../../bottomnav/views/bottomnav_view.dart';
 import '../../myprofile/views/ProfileConribution.dart';
 import '../controllers/livestream_action_controller.dart';
 import '../controllers/livestream_controller.dart';
-import '../controllers/websocket_controller.dart';
+import '../controllers/audience_join_controller.dart';
+import '../socket/websocket_controller.dart';
 import '../helper_functions/call_list_helper.dart';
 import '../widgets/AnimatedProgressBar.dart';
 import '../widgets/CustomPartyRoom.dart';
@@ -51,12 +52,14 @@ class PopularLiveView extends StatefulWidget {
   final String channelName;
   final bool isBroadcaster;
   final String token;
+  final Map<String, dynamic>? roomData;
 
   const PopularLiveView({
     super.key,
     required this.channelName,
     required this.isBroadcaster,
     required this.token,
+    this.roomData,
   });
 
   @override
@@ -108,7 +111,7 @@ class _PopularLiveViewState extends State<PopularLiveView>
   );
   final AgoraService _agoraService = AgoraService();
 
-  final streamData = Get.arguments;
+  late final dynamic streamData;
 
   final streamInfo = {}.obs;
   final broadcasterData = {}.obs;
@@ -738,34 +741,24 @@ class _PopularLiveViewState extends State<PopularLiveView>
   }
 
   void setLiveStreamDataAsAudience() async {
-    // print('stream data $streamData');
-    // // Ensure call list is populated for first-time audience members
-    await liveController.tryToGetCallList(streamId: streamData['id']);
-    // Check if livestream_callers exists and is not empty
-    if (streamData != null &&
-        streamData['livestream_callers'] != null &&
-        streamData['livestream_callers'].isNotEmpty) {
-      broadcasterData.value = streamData['livestream_callers'][0];
-      liveController.broadcasterId.value = _safeUserId(broadcasterData);
-      print('this is broadcaster data ${_safeUserName(broadcasterData)}');
-    } else {
-      // Fallback: try to get broadcaster data from other sources
-      broadcasterData.value = streamData['broadcaster_call_data'] ?? {};
-      if (broadcasterData.value.isNotEmpty &&
-          broadcasterData.value['user'] != null) {
-        liveController.broadcasterId.value = _safeUserId(broadcasterData);
-      }
-      print('Using fallback broadcaster data');
-    }
+    // Apply the canonical route owner synchronously. The first caller is a
+    // seat user, not an authoritative broadcaster fallback.
+    final live = streamData['livestreamdata'] is Map
+        ? Map<String, dynamic>.from(streamData['livestreamdata'])
+        : streamData['livestream'] is Map
+        ? Map<String, dynamic>.from(streamData['livestream'])
+        : <String, dynamic>{};
+    final user = streamData['user'] is Map
+        ? Map<String, dynamic>.from(streamData['user'])
+        : live['user'] is Map
+        ? Map<String, dynamic>.from(live['user'])
+        : <String, dynamic>{};
+    streamInfo.value = streamData;
+    broadcasterData.value = <String, dynamic>{...live, ...streamData, 'user': user};
+    liveController.broadcasterId.value = _safeUserId(broadcasterData);
+    _bootstrapPkStateFromArguments(source: 'audience_stream_data');
 
-    // Set streamInfo with proper fallback
-    if (streamData != null) {
-      streamInfo.value = streamData;
-      _bootstrapPkStateFromArguments(source: 'audience_stream_data');
-    } else {
-      streamInfo.value = {};
-      print('Warning: streamData is null in setLiveStreamDataAsAudience');
-    }
+    await liveController.tryToGetCallList(streamId: streamData['id']);
 
     // Set the stream ID in WebSocket controller and fetch initial gift total
     if (streamData != null && streamData['id'] != null) {
@@ -1340,20 +1333,29 @@ class _PopularLiveViewState extends State<PopularLiveView>
   @override
   void initState() {
     super.initState();
+    streamData = widget.roomData != null
+        ? Map<String, dynamic>.from(widget.roomData!)
+        : Get.arguments is Map
+        ? Map<String, dynamic>.from(Get.arguments)
+        : <String, dynamic>{};
     WidgetsBinding.instance.addObserver(this);
     // Enable wake lock to keep screen on during live streaming
     WakelockPlus.enable();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !kDebugMode) return;
+      if (!mounted) return;
+      if (Get.isRegistered<AudienceJoinController>()) {
+        Get.find<AudienceJoinController>().markTargetRouteReady(
+          streamId: _safeStreamId(),
+        );
+      }
+      if (!kDebugMode) return;
       final String prefix = widget.isBroadcaster ? 'create' : 'join';
       debugPrint(
         '${prefix}_first_ui_ready=${DateTime.now().microsecondsSinceEpoch}',
       );
     });
     _currentToken = widget.token;
-    final Map<String, dynamic> initArgs = Get.arguments is Map
-        ? Map<String, dynamic>.from(Get.arguments)
-        : <String, dynamic>{};
+    final Map<String, dynamic> initArgs = streamData;
     final bool initLooksPk =
         initArgs['is_pk'] == 1 ||
             initArgs['is_pk'] == true ||
@@ -1403,8 +1405,8 @@ class _PopularLiveViewState extends State<PopularLiveView>
     createdAt = liveController.createData['viewer']?['created_at'];
 
     // যদি createData থেকে না পাই, তাহলে arguments থেকে check করি
-    if (createdAt == null && Get.arguments != null) {
-      createdAt = Get.arguments['created_at'];
+    if (createdAt == null) {
+      createdAt = streamData['created_at'];
     }
 
     // যদি এখনো না পাই, তাহলে current time use করি
@@ -1706,9 +1708,7 @@ class _PopularLiveViewState extends State<PopularLiveView>
       print('⚠️ Video minimize keep-alive ignored: $e');
     }
 
-    final args = Get.arguments is Map
-        ? Map<String, dynamic>.from(Get.arguments as Map)
-        : <String, dynamic>{};
+    final args = Map<String, dynamic>.from(streamData);
     liveController.minimizeVideoLiveSession(
       livestreamId: _safeStreamId(),
       channelName: _activeAgoraChannelForVideo().isNotEmpty
@@ -5884,7 +5884,7 @@ class _PopularLiveViewState extends State<PopularLiveView>
         ) ??
             0;
     if (direct > 0) return direct;
-    final arg = Get.arguments;
+    final arg = streamData;
     if (arg is Map) {
       final live = arg['livestreamdata'] ?? arg['livestream'] ?? arg['data'];
       if (live is Map) {

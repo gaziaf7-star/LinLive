@@ -14,7 +14,7 @@ import '../../models/user_profile.dart';
 import '../modules/auth/controllers/auth_controller.dart';
 import '../modules/bottomnav/views/bottomnav_view.dart';
 import '../modules/home/controllers/home_controller.dart';
-import '../modules/livestream/controllers/websocket_controller.dart';
+import '../modules/livestream/socket/websocket_controller.dart';
 import '../modules/messanger/views/messages/components/firestore_service.dart';
 import '../modules/registersteps/controllers/registersteps_controller.dart';
 import 'account_block_service.dart';

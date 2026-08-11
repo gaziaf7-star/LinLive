@@ -44,7 +44,7 @@ class PrivacyPolicyPage extends StatelessWidget {
             children: [
               _centerTitle('PRIVACY POLICY – $_appName'.appTr),
               const SizedBox(height: 8),
-              _centerSubTitle('Last Updated: August 08, 2026'.appTr),
+              _centerSubTitle('Last Updated: August 10, 2026'.appTr),
               const SizedBox(height: 20),
 
               _paragraph(

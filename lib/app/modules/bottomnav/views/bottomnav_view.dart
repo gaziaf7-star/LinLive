@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,7 +13,7 @@ import '../../appmenu/views/appmenu_view.dart';
 import '../../home/views/home_view.dart';
 import '../../livestream/go_to_live/goto_live_tabbar.dart';
 import '../../livestream/controllers/audience_join_controller.dart';
-import '../../livestream/controllers/websocket_controller.dart';
+import '../../livestream/socket/websocket_controller.dart';
 
 import '../../moments/views/moments_view.dart';
 import '../../notification/views/notification_view.dart';
@@ -40,7 +39,7 @@ class BottomnavView extends StatefulWidget {
 }
 
 class _BottomnavViewState extends State<BottomnavView>
-    with TickerProviderStateMixin, WidgetsBindingObserver {
+    with WidgetsBindingObserver {
   int _selectedIndex = 0;
 
   // Daily reward dialog control:
@@ -52,13 +51,6 @@ class _BottomnavViewState extends State<BottomnavView>
 
   late final ChatController _chatController;
   late final DailyRewardController _dailyRewardController;
-
-  late AnimationController _liveController;
-  late AnimationController _borderController;
-  late AnimationController _waveController;
-
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _glowAnimation;
 
   final List<Widget> _pages = [
     const HomeView(),
@@ -80,29 +72,6 @@ class _BottomnavViewState extends State<BottomnavView>
     _dailyRewardController = Get.isRegistered<DailyRewardController>()
         ? Get.find<DailyRewardController>()
         : Get.put(DailyRewardController(), permanent: true);
-
-    _liveController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    )..repeat(reverse: true);
-
-    _borderController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 5200),
-    )..repeat();
-
-    _waveController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 4800),
-    )..repeat();
-
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.055).animate(
-      CurvedAnimation(parent: _liveController, curve: Curves.easeInOut),
-    );
-
-    _glowAnimation = Tween<double>(begin: 0.20, end: 0.48).animate(
-      CurvedAnimation(parent: _liveController, curve: Curves.easeInOut),
-    );
 
     _checkAndRequestPermissions();
 
@@ -259,9 +228,6 @@ class _BottomnavViewState extends State<BottomnavView>
       Get.find<WebsocketController>().disconnectRechargeRealtime();
     }
 
-    _liveController.dispose();
-    _borderController.dispose();
-    _waveController.dispose();
     super.dispose();
   }
 
@@ -549,139 +515,61 @@ class _BottomnavViewState extends State<BottomnavView>
 
             ],
           ),
-          bottomNavigationBar: AnimatedBuilder(
-            animation: Listenable.merge([
-              _liveController,
-              _waveController,
-            ]),
-            builder: (context, _) {
-              return Container(
-                height: 78 + bottomPadding,
-
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  alignment: Alignment.bottomCenter,
-                  children: [
-                    // Positioned.fill(
-                    //   child: CustomPaint(
-                    //     painter: _BottomWavePainter(
-                    //       progress: _waveController.value,
-                    //       glow: _glowAnimation.value,
-                    //     ),
-                    //   ),
-                    // ),
-
-                    Positioned.fill(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              kAppColor1,
-                              kAppColor2,
-                              kAppbarColor,
-                            ],
-                            stops: [0.0, 0.55, 1.0],
-                          ),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.10),
-                            width: 1,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: kAppColor1.withOpacity(0.28),
-                              blurRadius: 26,
-                              spreadRadius: 1,
-                              offset: const Offset(0, -2),
-                            ),
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.12),
-                              blurRadius: 22,
-                              offset: const Offset(0, -6),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    Positioned(
-                      left: width * 0.08,
-                      right: width * 0.08,
-                      bottom: bottomPadding + 66,
-                      child: Container(
-                        height: 1,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.transparent,
-                              Colors.white.withOpacity(0.28),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    Positioned(
-                      left: width * 0.025,
-                      right: width * 0.025,
-                      bottom: bottomPadding,
-                      height: 68,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          _buildAssetNavItem(
-                            assetPath: "assets/new/home.png",
-                            index: 0,
-                            label: ("Home").appTr,
-                          ),
-                          _buildAssetNavItem(
-                            assetPath: "assets/new/youtube.png",
-                            index: 1,
-                            label: ("Moments").appTr,
-                          ),
-                          const SizedBox(width: 64),
-                          StreamBuilder<int>(
-                            stream: Get.find<AuthController>()
-                                .userProfile
-                                .value
-                                .user
-                                ?.id ==
-                                null
-                                ? Stream<int>.value(0)
-                                : _chatController.totalUnreadCountStream,
-                            initialData: 0,
-                            builder: (context, snapshot) {
-                              final int count = snapshot.data ?? 0;
-                              return _buildAssetNavItem(
-                                assetPath: "assets/new/notification.png",
-                                index: 3,
-                                label: ("Notice").appTr,
-                                badge: count > 0
-                                    ? (count > 99 ? '99+' : '$count')
-                                    : null,
-                              );
-                            },
-                          ),
-                          _buildAssetNavItem(
-                            assetPath: "assets/new/user.png",
-                            index: 4,
-                            label: ("Profile").appTr,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    Positioned(
-                      top: -22,
-                      child: _buildCenterButton(),
-                    ),
-                  ],
+          bottomNavigationBar: Container(
+            height: 72 + bottomPadding,
+            decoration: BoxDecoration(
+              color: const Color(0xFF3B072F),
+              border: Border(
+                top: BorderSide(
+                  color: Colors.white.withOpacity(0.08),
+                  width: 0.8,
                 ),
-              );
-            },
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.14),
+                  blurRadius: 12,
+                  offset: const Offset(0, -3),
+                ),
+              ],
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.bottomCenter,
+              children: [
+                Positioned(
+                  left: width * 0.025,
+                  right: width * 0.025,
+                  bottom: bottomPadding,
+                  height: 62,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildAssetNavItem(assetPath: "assets/new/home.png", index: 0, label: ("Home").appTr),
+                      _buildAssetNavItem(assetPath: "assets/new/youtube.png", index: 1, label: ("Moments").appTr),
+                      const SizedBox(width: 60),
+                      StreamBuilder<int>(
+                        stream: Get.find<AuthController>().userProfile.value.user?.id == null
+                            ? Stream<int>.value(0)
+                            : _chatController.totalUnreadCountStream,
+                        initialData: 0,
+                        builder: (context, snapshot) {
+                          final int count = snapshot.data ?? 0;
+                          return _buildAssetNavItem(
+                            assetPath: "assets/new/notification.png",
+                            index: 3,
+                            label: ("Notice").appTr,
+                            badge: count > 0 ? (count > 99 ? '99+' : '$count') : null,
+                          );
+                        },
+                      ),
+                      _buildAssetNavItem(assetPath: "assets/new/user.png", index: 4, label: ("Profile").appTr),
+                    ],
+                  ),
+                ),
+                Positioned(top: -18, child: _buildCenterButton()),
+              ],
+            ),
           ),
         ),
       );
@@ -689,145 +577,25 @@ class _BottomnavViewState extends State<BottomnavView>
   }
 
   Widget _buildCenterButton() {
-    final isSelected = _selectedIndex == 2;
-
+    final bool isSelected = _selectedIndex == 2;
     return GestureDetector(
       onTap: () => _onItemTapped(2),
-      child: AnimatedBuilder(
-        animation: Listenable.merge([
-          _liveController,
-          _borderController,
-        ]),
-        builder: (context, child) {
-          return Transform.scale(
-            scale: _scaleAnimation.value,
-            child: Stack(
-              alignment: Alignment.center,
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  height: 76,
-                  width: 76,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(0.08),
-                    boxShadow: [
-                      BoxShadow(
-                        color: kBottomSoftLight.withOpacity(_glowAnimation.value * 0.38),
-                        blurRadius: 35,
-                        spreadRadius: 4,
-                      ),
-                    ],
-                  ),
-                ),
-
-                Transform.rotate(
-                  angle: _borderController.value * math.pi * 2,
-                  child: Container(
-                    height: 66,
-                    width: 66,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: SweepGradient(
-                        colors: [
-                          kAppColor1,
-                          kBottomSoftLight,
-                          Colors.white,
-                          kAppColor2,
-                          kAppbarColor,
-                          kAppColor1,
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                Container(
-                  height: 58,
-                  width: 58,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                      colors: [
-                        kAppColor1,
-                        kAppColor2,
-                        kAppbarColor,
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    border: Border.all(
-                      color: Colors.white,
-                      width: 3,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: kBottomSoftLight.withOpacity(_glowAnimation.value),
-                        blurRadius: 24,
-                        spreadRadius: 1,
-                        offset: const Offset(0, 7),
-                      ),
-                    ],
-                  ),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Positioned(
-                        top: 8,
-                        left: 10,
-                        child: Container(
-                          height: 16,
-                          width: 36,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(20),
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.white.withOpacity(0.45),
-                                Colors.white.withOpacity(0.02),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      Image.asset(
-                        "assets/new/facetime-button.png",
-                        height: 27,
-                        width: 27,
-                        color: Colors.white,
-                      ),
-                    ],
-                  ),
-                ),
-
-                if (isSelected)
-                  Positioned(
-                    bottom: -8,
-                    child: Container(
-                      height: 5,
-                      width: 28,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        gradient: const LinearGradient(
-                          colors: [
-                            kAppColor1,
-                            kAppColor2,
-                          ],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: kAppColor1.withOpacity(0.55),
-                            blurRadius: 10,
-                            spreadRadius: 1,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          );
-        },
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 64, width: 64,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: const Color(0xFF3B072F),
+          border: Border.all(color: isSelected ? Colors.white : Colors.white.withOpacity(0.45), width: isSelected ? 3 : 2),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 10, offset: const Offset(0, 4))],
+        ),
+        child: Center(
+          child: Container(
+            height: 52, width: 52,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: isSelected ? kAppColor : const Color(0xFF62083E)),
+            child: Center(child: Image.asset("assets/new/facetime-button.png", height: 25, width: 25, color: Colors.white)),
+          ),
+        ),
       ),
     );
   }
@@ -838,172 +606,38 @@ class _BottomnavViewState extends State<BottomnavView>
     required String label,
     String? badge,
   }) {
-    final isSelected = _selectedIndex == index;
-
+    final bool isSelected = _selectedIndex == index;
     return GestureDetector(
       onTap: () => _onItemTapped(index),
       behavior: HitTestBehavior.opaque,
       child: SizedBox(
-        width: 58,
-        height: 64,
+        width: 58, height: 60,
         child: Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.center,
+          clipBehavior: Clip.none, alignment: Alignment.center,
           children: [
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 280),
-              curve: Curves.easeOutBack,
-              top: isSelected ? 3 : 8,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.easeOutBack,
-                height: isSelected ? 46 : 42,
-                width: isSelected ? 50 : 44,
-                padding: const EdgeInsets.all(9),
+            Positioned(
+              top: 3,
+              child: Container(
+                height: 40, width: 44, padding: const EdgeInsets.all(9),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  gradient: isSelected
-                      ? const LinearGradient(
-                    colors: [
-                      kAppColor1,
-                      kAppColor2,
-                      kAppbarColor,
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  )
-                      : null,
-                  color: isSelected ? null : Colors.white.withOpacity(0.075),
-                  border: Border.all(
-                    color: isSelected
-                        ? Colors.white.withOpacity(0.35)
-                        : Colors.white.withOpacity(0.08),
-                    width: 1,
-                  ),
-                  boxShadow: [
-                    if (isSelected)
-                      BoxShadow(
-                        color: kBottomSoftLight.withOpacity(0.22),
-                        blurRadius: 14,
-                        spreadRadius: 1,
-                        offset: const Offset(0, 6),
-                      ),
-                    if (!isSelected)
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.10),
-                        blurRadius: 8,
-                        offset: const Offset(0, 3),
-                      ),
-                  ],
+                  color: isSelected ? kAppColor : Colors.transparent,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: isSelected ? Colors.white.withOpacity(0.28) : Colors.transparent, width: 0.8),
                 ),
-                child: AnimatedScale(
-                  duration: const Duration(milliseconds: 240),
-                  scale: isSelected ? 1.10 : 1.0,
-                  curve: Curves.easeOutBack,
-                  child: isSelected
-                      ? Image.asset(
-                    assetPath,
-                    height: 24,
-                    width: 24,
-                    fit: BoxFit.contain,
-                    color: Colors.white,
-                  )
-                      : ShaderMask(
-                    shaderCallback: (bounds) => LinearGradient(
-                      colors: [
-                        Colors.white.withOpacity(0.72),
-                        kBottomSoftLight.withOpacity(0.76),
-                      ],
-                    ).createShader(bounds),
-                    blendMode: BlendMode.srcIn,
-                    child: Image.asset(
-                      assetPath,
-                      height: 23,
-                      width: 23,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                ),
+                child: Image.asset(assetPath, height: 22, width: 22, fit: BoxFit.contain, color: isSelected ? Colors.white : Colors.white.withOpacity(0.68)),
               ),
             ),
-
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOut,
-              bottom: isSelected ? 0 : -4,
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 220),
-                opacity: isSelected ? 1 : 0,
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.lato(
-                    color: Colors.white,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.1,
-                  ),
-                ),
-              ),
+            Positioned(
+              bottom: 1,
+              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.lato(color: isSelected ? Colors.white : Colors.white.withOpacity(0.58), fontSize: 9, fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600, letterSpacing: 0.1)),
             ),
-
-            if (isSelected)
-              Positioned(
-                bottom: 10,
-                child: Container(
-                  height: 4,
-                  width: 18,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    gradient: const LinearGradient(
-                      colors: [
-                        kAppColor1,
-                        kAppColor2,
-                      ],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: kBottomSoftLight.withOpacity(0.30),
-                        blurRadius: 8,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
             if (badge != null)
               Positioned(
-                top: 2,
-                right: 5,
+                top: 0, right: 4,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [
-                        kAppColor1,
-                        kAppColor2,
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white, width: 1.2),
-                    boxShadow: [
-                      BoxShadow(
-                        color: kBottomSoftLight.withOpacity(0.25),
-                        blurRadius: 8,
-                        offset: const Offset(0, 3),
-                      ),
-                    ],
-                  ),
-                  child: Text(
-                    badge,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 7,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  constraints: const BoxConstraints(minWidth: 17), height: 17, padding: const EdgeInsets.symmetric(horizontal: 4), alignment: Alignment.center,
+                  decoration: BoxDecoration(color: kAppColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white, width: 1)),
+                  child: Text(badge, style: const TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.bold, height: 1)),
                 ),
               ),
           ],

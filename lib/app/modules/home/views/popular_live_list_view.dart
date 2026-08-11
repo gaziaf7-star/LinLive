@@ -464,7 +464,7 @@ class _PopularLiveListViewState extends State<PopularLiveListView> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [kAppColor1.withOpacity(.3), kAppColor2],
+            colors: [Color(0xFF3B072F), Color(0xFF3B072F)],
           ),
         ),
         child: CustomRefreshIndicator(

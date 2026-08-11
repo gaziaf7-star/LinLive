@@ -1,15 +1,12 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../../../apis/api_endpoints.dart';
-import '../../../../constants/constants.dart';
 import '../../../../constants/image_helper.dart';
 import '../controllers/livestream_controller.dart';
-import '../controllers/websocket_controller.dart';
+import '../socket/websocket_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 void showLiveImogiBottomSheet({
@@ -343,16 +340,6 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
     _saveMemoryCategories();
   }
 
-  dynamic _extractResponseList(dynamic responseData) {
-    final root = _asMap(responseData);
-    return root['data'] ??
-        root['imogies'] ??
-        root['emojis'] ??
-        root['items'] ??
-        root['categories'] ??
-        responseData;
-  }
-
   /// Fast open: আগে controller cache থেকে show করবে.
   /// Cache না থাকলে shimmer show করবে.
   Future<void> _loadImogies() async {
@@ -383,39 +370,8 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
         }
       }
 
-      final dio = controller.dio is Dio ? controller.dio as Dio : Dio();
-
-      /// Your API endpoint: api/imogi_list
-      /// kMainUrl usually already contains /api, so final URL becomes:
-      /// https://domain.com/api/imogi_list
-      final url = '$kMainUrl/imogi_list';
-
-      debugPrint('📤 IMOGI LIST URL => $url');
-
-      final response = await dio.get(
-        url,
-        options: Options(
-          sendTimeout: const Duration(seconds: 8),
-          receiveTimeout: const Duration(seconds: 10),
-        ),
-      );
-
-      debugPrint('📥 IMOGI LIST STATUS => ${response.statusCode}');
-
-      if (!(response.statusCode == 200 || response.statusCode == 201)) {
-        if (mounted && _categories.isEmpty) {
-          setState(() => _loading = false);
-        }
-        if (_categories.isEmpty) {
-          Fluttertoast.showToast(msg: ('Imogi list load failed').appTr);
-        }
-        return;
-      }
-
-      final source = _extractResponseList(response.data);
-      final rawList = _asList(source);
-
-      _saveCacheToController(rawList);
+      await controller.fetchImogiList();
+      final rawList = _readCachedImogiList();
 
       final first = rawList.isNotEmpty ? _asMap(rawList.first) : {};
       final hasNestedItems = first.containsKey('imogies') ||
@@ -466,32 +422,6 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
     } catch (_) {}
 
     return <dynamic>[];
-  }
-
-  void _saveCacheToController(List<dynamic> rawList) {
-    if (rawList.isEmpty) return;
-
-    final first = _asMap(rawList.first);
-    final hasNestedItems = first.containsKey('imogies') ||
-        first.containsKey('imogi') ||
-        first.containsKey('emojis') ||
-        first.containsKey('emoji') ||
-        first.containsKey('items') ||
-        first.containsKey('list');
-
-    try {
-      if (hasNestedItems) {
-        final categoryList = controller.imogiCategoryList;
-        if (categoryList != null && categoryList is RxList) {
-          categoryList.assignAll(rawList.map(_asMap).toList());
-        }
-      } else {
-        final imogiList = controller.imogiList;
-        if (imogiList != null && imogiList is RxList) {
-          imogiList.assignAll(rawList.map(_asMap).toList());
-        }
-      }
-    } catch (_) {}
   }
 
   Future<void> _sendImogi(Map<String, dynamic> item) async {

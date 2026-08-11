@@ -12,7 +12,8 @@ import '../views/multi_live_view.dart';
 import '../views/popular_live_view.dart';
 import 'agoraTokenController.dart';
 import 'livestream_controller.dart';
-import 'websocket_controller.dart';
+import 'roket_controller.dart';
+import '../socket/websocket_controller.dart';
 import 'package:meetlivepro/app/modules/livestream/utils/live_performance_config.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
@@ -30,6 +31,314 @@ class AudienceJoinController extends GetxController {
       Get.find<WebsocketController>();
   final Set<int> _joiningLivestreamIds = <int>{};
   int _joinGeneration = 0;
+  final Map<int, Map<String, dynamic>> _pendingRoutePresentations = {};
+  final Map<int, Map<String, dynamic>> _pendingSelfViewerResponses = {};
+  final Map<int, Map<String, dynamic>> _pendingTargetRouteData = {};
+  int _readyRouteStreamId = 0;
+  int _readyRouteGeneration = 0;
+
+  bool _hasCanonicalRoomIdentity(Map<String, dynamic> room, int targetId) {
+    return _livestreamId(room) == targetId &&
+        _ownerUserId(room) > 0 &&
+        _normalChannel(room).isNotEmpty;
+  }
+
+  Future<Map<String, dynamic>> _canonicalBannerTargetData(
+    Map<String, dynamic> bannerData,
+  ) async {
+    if (!_isGlobalBannerNavigation(bannerData)) return bannerData;
+    final int targetId = _livestreamId(bannerData);
+    final stopwatch = Stopwatch()..start();
+    String source = 'cached';
+    debugPrint('BANNER_TARGET_LOOKUP_START target=$targetId source=$source');
+    Map<String, dynamic> canonical = _findCachedLiveRoomData(targetId);
+    if (!_hasCanonicalRoomIdentity(canonical, targetId)) {
+      source = 'paged_list';
+      debugPrint('BANNER_TARGET_LOOKUP_START target=$targetId source=$source');
+      try {
+        canonical =
+            await controller.findActiveLivestreamById(targetId) ??
+            <String, dynamic>{};
+      } catch (_) {
+        debugPrint(
+          'BANNER_TARGET_LOOKUP_FAILED target=$targetId reason=network',
+        );
+        rethrow;
+      }
+    }
+    if (!_hasCanonicalRoomIdentity(canonical, targetId)) {
+      final reason = canonical.isEmpty ? 'not_found' : 'invalid_data';
+      debugPrint(
+        'BANNER_TARGET_LOOKUP_FAILED target=$targetId reason=$reason',
+      );
+      throw StateError('Canonical livestream data unavailable for $targetId');
+    }
+    final result = <String, dynamic>{
+      ...canonical,
+      'id': targetId,
+      'livestream_id': targetId,
+      'stream_id': targetId,
+      'global_banner_type': bannerData['global_banner_type'],
+      if (_asMap(bannerData['global_lucky_event']).isNotEmpty)
+        'global_lucky_event': _asMap(bannerData['global_lucky_event']),
+      if (_asMap(bannerData['global_lucky_bag_packet']).isNotEmpty)
+        'global_lucky_bag_packet': _asMap(
+          bannerData['global_lucky_bag_packet'],
+        ),
+    };
+    debugPrint(
+      'BANNER_TARGET_LOOKUP_DONE target=$targetId source=$source '
+      'elapsed=${stopwatch.elapsedMilliseconds}ms host=${_ownerUserId(result)} '
+      'channel=${_normalChannel(result)}',
+    );
+    return result;
+  }
+
+  Map<String, dynamic> _sanitizeGlobalBannerRoomData(Map<String, dynamic> raw) {
+    if (!_isGlobalBannerNavigation(raw)) return raw;
+    final clean = Map<String, dynamic>.from(raw);
+    for (final key in const <String>[
+      'livestream_callers',
+      'callers',
+      'accepted_callers',
+      'pending_call',
+      'pending_calls',
+      'available_seats',
+      'viewer_list',
+      'viewers',
+      'muted_users',
+      'audio_muted_users',
+      'locked_seats',
+      'guardian_list',
+      'guardians',
+      'room_admins',
+      'cp_connections',
+    ]) {
+      clean.remove(key);
+    }
+    final nested = _asMap(clean['livestreamdata']);
+    if (nested.isNotEmpty) {
+      clean['livestreamdata'] =
+          _sanitizeGlobalBannerRoomData({
+              ...nested,
+              'global_lucky_event': clean['global_lucky_event'],
+              'global_lucky_bag_packet': clean['global_lucky_bag_packet'],
+            })
+            ..remove('global_lucky_event')
+            ..remove('global_lucky_bag_packet');
+    }
+    return clean;
+  }
+
+  bool _truthy(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value.toInt() == 1;
+    final text = value?.toString().trim().toLowerCase() ?? '';
+    return text == '1' || text == 'true' || text == 'yes';
+  }
+
+  bool _currentRoomIsPermanent() {
+    final candidates = <Map<String, dynamic>>[
+      _asMap(livestreamController.createStreamData),
+      _asMap(livestreamController.createData),
+      _asMap(Get.arguments),
+    ];
+    for (final item in candidates) {
+      if (_truthy(item['is_permanent']) ||
+          _truthy(item['permanent_room']) ||
+          _safeText(item['stream_type']).toLowerCase() == 'audio') {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  ({int generation, Future<void> cleanup}) _prepareFreshAudienceSession({
+    required int targetStreamId,
+    required bool isBannerNavigation,
+  }) {
+    final int oldStreamId = <int>[
+      livestreamController.streamId.value,
+      websocketController.streamID.value,
+      websocketController.activeAudioStreamId.value,
+    ].firstWhere((value) => value > 0, orElse: () => 0);
+    final int userId = authController.userProfile.value.user?.id?.toInt() ?? 0;
+    final bool wasBroadcaster =
+        livestreamController.isBroadcaster.value ||
+        livestreamController.isHost.value;
+    final int roomGeneration = livestreamController.beginRoomTransition(
+      targetStreamId: targetStreamId,
+    );
+    _pendingRoutePresentations.removeWhere(
+      (generation, _) => generation != roomGeneration,
+    );
+    _pendingSelfViewerResponses.removeWhere(
+      (generation, _) => generation != roomGeneration,
+    );
+    _pendingTargetRouteData.removeWhere(
+      (generation, _) => generation != roomGeneration,
+    );
+
+    final cleanup = websocketController.liveCleanupService.leaveBeforeJoining(
+      oldStreamId: oldStreamId,
+      targetStreamId: targetStreamId,
+      userId: userId,
+      generation: roomGeneration,
+      wasBroadcaster: wasBroadcaster,
+      wasPermanentRoom: _currentRoomIsPermanent(),
+      isBannerNavigation: isBannerNavigation,
+    );
+    return (generation: roomGeneration, cleanup: cleanup);
+  }
+
+  void _restoreTargetBannerEvent(Map<String, dynamic> liveData) {
+    final targetStreamId = _livestreamId(liveData);
+    if (targetStreamId <= 0 ||
+        livestreamController.streamId.value != targetStreamId) {
+      return;
+    }
+    final packet = _asMap(liveData['global_lucky_bag_packet']);
+    if (packet.isNotEmpty) {
+      final packetStreamId = _livestreamId(packet);
+      if (packetStreamId > 0 && packetStreamId != targetStreamId) return;
+      websocketController.currentRedPacket.value = packet;
+      websocketController.redPacketVisible.value = true;
+      websocketController.currentRedPacket.refresh();
+    }
+
+    final luckyEvent = _asMap(liveData['global_lucky_event']);
+    if (luckyEvent.isNotEmpty) {
+      final type = _safeText(liveData['global_banner_type']).toLowerCase();
+      if (type == 'rocket') {
+        final rocket = Get.isRegistered<RocketController>()
+            ? Get.find<RocketController>()
+            : Get.put(RocketController(), permanent: true);
+        rocket.restoreRoomLaunchPresentation(
+          livestreamId: _livestreamId(liveData),
+          payload: luckyEvent,
+        );
+      } else {
+        livestreamController.showLuckyGiftResult(luckyEvent);
+      }
+    }
+  }
+
+  void markTargetRouteReady({required int streamId}) {
+    final generation = livestreamController.roomSessionGeneration;
+    if (!livestreamController.isRoomSessionCurrent(
+      streamId: streamId,
+      generation: generation,
+    )) {
+      return;
+    }
+    _readyRouteStreamId = streamId;
+    _readyRouteGeneration = generation;
+    debugPrint('TARGET_ROUTE_READY stream=$streamId generation=$generation');
+
+    final viewerResponse = _pendingSelfViewerResponses.remove(generation);
+    if (viewerResponse != null) {
+      websocketController.reconcileSelfViewerJoinFromApi(
+        livestreamId: streamId,
+        viewerId: authController.userProfile.value.user?.id?.toInt() ?? 0,
+        response: viewerResponse,
+      );
+      debugPrint('ENTRY_PRESENTATION_SHOWN stream=$streamId');
+    }
+
+    final presentation = _pendingRoutePresentations.remove(generation);
+    final routeData = _pendingTargetRouteData.remove(generation);
+    if (routeData != null) {
+      final int userId = authController.userProfile.value.user?.id?.toInt() ?? 0;
+      bool isSelf(dynamic raw) {
+        if (raw is! Map) return false;
+        final map = Map<String, dynamic>.from(raw);
+        final user = _asMap(map['user']);
+        return _toInt(map['viewer_id'] ?? map['user_id'] ?? map['caller_id'] ?? user['id']) == userId;
+      }
+      final selfCalls = websocketController.liveCallList.where(isSelf).toList();
+      final selfSeatNo = selfCalls.fold<int>(0, (seat, raw) {
+        final map = Map<String, dynamic>.from(raw as Map);
+        return seat > 0 ? seat : _toInt(map['seat_no'] ?? map['seat_number']);
+      });
+      final viewerSelfCount = livestreamController.liveViewerList.where(isSelf).length;
+      final int canonicalStreamId = _livestreamId(routeData);
+      debugPrint(
+        'TARGET_UI_PARITY streamId=${livestreamController.streamId.value} '
+        'canonicalStreamId=$canonicalStreamId routeStreamId=$streamId '
+        'hostId=${_ownerUserId(routeData)} '
+        'displayedHostId=${livestreamController.broadcasterId.value} '
+        'selfUserId=$userId '
+        'displayedOwnerSeatUserId=${livestreamController.broadcasterId.value} '
+        'streamTitle=${_safeText(routeData['stream_title'] ?? routeData['title'])} '
+        'viewerCount=${livestreamController.liveViewerList.length} '
+        'viewerListCount=${livestreamController.liveViewerList.length} '
+        'viewerContainsSelf=${viewerSelfCount > 0} '
+        'viewerSelfCount=$viewerSelfCount selfSeatNo=$selfSeatNo '
+        'callListCount=${websocketController.liveCallList.length}',
+      );
+    }
+    if (presentation != null) {
+      final type = _safeText(presentation['global_banner_type']);
+      debugPrint(
+        'BANNER_PRESENTATION_RESTORE type=$type stream=$streamId '
+        'generation=$generation',
+      );
+      _restoreTargetBannerEvent(presentation);
+      debugPrint('BANNER_PRESENTATION_SHOWN type=$type stream=$streamId');
+    }
+  }
+
+  bool _isGlobalBannerNavigation(Map<String, dynamic> liveData) =>
+      _asMap(liveData['global_lucky_bag_packet']).isNotEmpty ||
+      _asMap(liveData['global_lucky_event']).isNotEmpty;
+
+  void _logJoinParity({
+    required Map<String, dynamic> liveData,
+    required int streamId,
+    required int generation,
+    required int userId,
+  }) {
+    bool isSelf(dynamic raw) {
+      if (raw is! Map) return false;
+      final map = Map<String, dynamic>.from(raw);
+      final user = _asMap(map['user']);
+      return _toInt(
+            map['viewer_id'] ??
+                map['user_id'] ??
+                map['caller_id'] ??
+                user['id'],
+          ) ==
+          userId;
+    }
+
+    final selfCalls = websocketController.liveCallList.where(isSelf).toList();
+    final pendingSelf = websocketController.pendingCall.where(isSelf).length;
+    final selfSeat = selfCalls.fold<int>(0, (seat, raw) {
+      final map = Map<String, dynamic>.from(raw as Map);
+      return seat > 0 ? seat : _toInt(map['seat_no'] ?? map['seat_number']);
+    });
+    final viewerSelfCount = livestreamController.liveViewerList
+        .where(isSelf)
+        .length;
+    final sourceType = _safeText(liveData['global_banner_type']).isNotEmpty
+        ? _safeText(liveData['global_banner_type'])
+        : _isGlobalBannerNavigation(liveData)
+        ? 'lucky'
+        : 'list';
+    debugPrint(
+      'JOIN_PARITY sourceType=$sourceType streamId=$streamId '
+      'sessionGeneration=$generation userId=$userId '
+      'isHost=${livestreamController.isHost.value} '
+      'isBroadcaster=${livestreamController.isBroadcaster.value} '
+      'viewerContainsSelf=${viewerSelfCount > 0} '
+      'viewerSelfCount=$viewerSelfCount selfSeatNo=$selfSeat '
+      'selfAcceptedCallCount=${selfCalls.length} '
+      'pendingSelfCallCount=$pendingSelf '
+      'guardian=${livestreamController.isMyGuardian.value} '
+      'muted=${websocketController.audioMutedUserMap[userId] == true} '
+      'agoraRole=audience callListCount=${websocketController.liveCallList.length}',
+    );
+  }
 
   int _toInt(dynamic value) {
     if (value is int) return value;
@@ -517,10 +826,24 @@ class AudienceJoinController extends GetxController {
     required String channelName,
     required dynamic data,
   }) async {
-    final Map<String, dynamic> initialLiveData = _asMap(data);
+    final Map<String, dynamic> initialLiveData = _sanitizeGlobalBannerRoomData(
+      _asMap(data),
+    );
     final int requestedLivestreamId = _livestreamId(initialLiveData);
     if (requestedLivestreamId <= 0 ||
         _joiningLivestreamIds.contains(requestedLivestreamId)) {
+      return;
+    }
+
+    final int currentStreamId = <int>[
+      livestreamController.streamId.value,
+      websocketController.streamID.value,
+      websocketController.activeAudioStreamId.value,
+    ].firstWhere((value) => value > 0, orElse: () => 0);
+    if (currentStreamId == requestedLivestreamId &&
+        (_isGlobalBannerNavigation(initialLiveData) ||
+            AgoraService().isJoinedChannel)) {
+      _restoreTargetBannerEvent(initialLiveData);
       return;
     }
 
@@ -541,15 +864,93 @@ class AudienceJoinController extends GetxController {
     isLoading.value = true;
     _setJoinProgress('Preparing live room...');
     timing('join_validation_done');
-    _warmAudioEngineForFastJoin();
+    final bool isBannerNavigation = _isGlobalBannerNavigation(initialLiveData);
+    if (!isBannerNavigation) _warmAudioEngineForFastJoin();
 
     try {
-      final Map<String, dynamic> liveData = _asMap(data);
+      Map<String, dynamic> liveData = initialLiveData;
 
       final int userId =
           authController.userProfile.value.user?.id?.toInt() ?? 0;
 
       final int originalLivestreamId = _livestreamId(liveData);
+      if (userId == 0 || originalLivestreamId == 0) {
+        Get.snackbar(
+          ('Error').appTr,
+          ('Live join data missing. Please refresh and try again.').appTr,
+          snackPosition: SnackPosition.BOTTOM,
+        );
+        return;
+      }
+
+      final transition = _prepareFreshAudienceSession(
+        targetStreamId: requestedLivestreamId,
+        isBannerNavigation: isBannerNavigation,
+      );
+      final int roomGeneration = transition.generation;
+
+      late Future<Map<String, dynamic>> resultFuture;
+      if (isBannerNavigation) {
+        await transition.cleanup;
+        if (!isCurrentJoin()) return;
+
+        final bool sourceStateCleared =
+            livestreamController.streamId.value == 0 &&
+            websocketController.streamID.value == 0 &&
+            websocketController.activeAudioStreamId.value == 0 &&
+            !livestreamController.isHost.value &&
+            !livestreamController.isBroadcaster.value &&
+            websocketController.liveCallList.isEmpty &&
+            websocketController.pendingCall.isEmpty;
+        assert(requestedLivestreamId != currentStreamId);
+        assert(sourceStateCleared);
+        if (!sourceStateCleared) {
+          debugPrint(
+            'TARGET_JOIN_BLOCKED source=$currentStreamId target=$requestedLivestreamId '
+            'stream=${livestreamController.streamId.value} '
+            'ws=${websocketController.streamID.value} '
+            'audio=${websocketController.activeAudioStreamId.value} '
+            'host=${livestreamController.isHost.value} '
+            'broadcaster=${livestreamController.isBroadcaster.value} '
+            'calls=${websocketController.liveCallList.length} '
+            'pending=${websocketController.pendingCall.length}',
+          );
+          return;
+        }
+
+        // Remove the inactive Room A surface before any Room B work starts.
+        // The legacy Multi view explicitly ignores shared-state disposal while
+        // this authoritative transition is in progress.
+        if (currentStreamId > 0 && Get.key.currentState?.canPop() == true) {
+          Get.back(closeOverlays: false);
+          await WidgetsBinding.instance.endOfFrame;
+          if (!isCurrentJoin()) return;
+        }
+
+        liveData = await _canonicalBannerTargetData(initialLiveData);
+        if (!isCurrentJoin()) return;
+        _warmAudioEngineForFastJoin();
+        debugPrint(
+          'TARGET_JOIN_START source=$currentStreamId target=$requestedLivestreamId '
+          'generation=$roomGeneration',
+        );
+        _setJoinProgress('Checking room access...');
+        timing('join_api_start');
+        resultFuture = livestreamController.checkCanJoinLivestream(
+          requestedLivestreamId,
+          userId,
+        );
+      } else {
+        final canonicalFuture = _canonicalBannerTargetData(initialLiveData);
+        _setJoinProgress('Checking room access...');
+        timing('join_api_start');
+        resultFuture = livestreamController.checkCanJoinLivestream(
+          requestedLivestreamId,
+          userId,
+        );
+        liveData = await canonicalFuture;
+      }
+      if (!isCurrentJoin()) return;
       final bool isPkRunning = _isPkLive(liveData);
       final int pkId = _pkId(liveData);
 
@@ -589,9 +990,7 @@ class AudienceJoinController extends GetxController {
         'pk=$isPkRunning channel=$finalAgoraChannel',
       );
 
-      if (userId == 0 ||
-          originalLivestreamId == 0 ||
-          finalAgoraChannel.isEmpty) {
+      if (finalAgoraChannel.isEmpty) {
         Get.snackbar(
           ('Error').appTr,
           ('Live join data missing. Please refresh and try again.').appTr,
@@ -600,8 +999,12 @@ class AudienceJoinController extends GetxController {
         return;
       }
 
-      // The room owner must rejoin as broadcaster, never as a normal viewer.
-      if (_ownerUserId(liveData) == userId) {
+      // A global banner is an audience navigation intent. In particular, Lucky
+      // receiver data must never turn this into a permanent-room host rejoin.
+      if (!_isGlobalBannerNavigation(liveData) &&
+          _ownerUserId(liveData) == userId) {
+        await transition.cleanup;
+        if (!isCurrentJoin()) return;
         livestreamController.streamId.value = originalLivestreamId;
         websocketController.streamID.value = originalLivestreamId;
         await livestreamController.rejoinPermanentRoom(
@@ -611,13 +1014,11 @@ class AudienceJoinController extends GetxController {
         return;
       }
 
-      _setJoinProgress('Checking room access...');
-      timing('join_api_start');
-      final result = await livestreamController.checkCanJoinLivestream(
-        originalLivestreamId,
-        userId,
-      );
+      final result = await resultFuture;
       timing('join_api_done');
+      if (!isCurrentJoin()) return;
+
+      if (!isBannerNavigation) await transition.cleanup;
       if (!isCurrentJoin()) return;
 
       if (result['can_join'] != true) {
@@ -636,10 +1037,6 @@ class AudienceJoinController extends GetxController {
           force: true,
         );
       }
-
-      // Original live state set first. PK id kokhono streamId e boshbe na.
-      livestreamController.streamId.value = originalLivestreamId;
-      websocketController.streamID.value = originalLivestreamId;
 
       if (isPkRunning) {
         _syncAudiencePkState(
@@ -661,7 +1058,13 @@ class AudienceJoinController extends GetxController {
         streamId: originalLivestreamId,
         viewerId: userId,
         syncState: false,
+        activateRoom: false,
       );
+      if (isBannerNavigation) {
+        viewerAddFuture.then((_) {
+          debugPrint('TARGET_ADD_VIEWER_DONE target=$originalLivestreamId');
+        });
+      }
 
       final tokenFuture = agoraTokenController.tryToGenerateBroadcasterToken(
         isBroadcaster: false,
@@ -702,6 +1105,31 @@ class AudienceJoinController extends GetxController {
         );
         return;
       }
+
+      livestreamController.activateRoomSession(
+        streamId: originalLivestreamId,
+        generation: roomGeneration,
+      );
+      if (isBannerNavigation) {
+        debugPrint(
+          'TARGET_SESSION_ACTIVATED target=$originalLivestreamId '
+          'generation=$roomGeneration',
+        );
+      }
+      websocketController.activateRoomTransition(
+        generation: roomGeneration,
+        streamId: originalLivestreamId,
+      );
+      livestreamController.streamId.value = originalLivestreamId;
+      websocketController.prepareViewerRejoin(
+        livestreamId: originalLivestreamId,
+        viewerId: userId,
+      );
+      livestreamController.startLivePresenceHeartbeat(
+        livestreamId: originalLivestreamId,
+        role: 'viewer',
+        isOnSeat: false,
+      );
 
       /// ✅ FAST AUDIO ROOM OPEN:
       /// Do not block navigation with caller/viewer/seat APIs.
@@ -753,22 +1181,49 @@ class AudienceJoinController extends GetxController {
       final String streamType = rawStreamType.isEmpty ? 'audio' : rawStreamType;
       routeArguments['stream_type'] = streamType;
 
+      // Publish one complete target-room display snapshot before constructing
+      // the route. Membership responses remain separate and must not replace
+      // canonical host/title/image identity.
+      livestreamController.createStreamData.value = Map<String, dynamic>.from(
+        routeArguments,
+      );
+      livestreamController.createStreamData.refresh();
+      livestreamController.broadcasterId.value = _ownerUserId(routeArguments);
+
       liveLog(
         '✅ Audience route hydrated => stream=$originalLivestreamId '
         'seat=$safeRouteSeatCount bg=${routeArguments['room_background']} '
         'theme=${routeArguments['room_theme']}',
       );
 
+      debugPrint(
+        'BANNER_TARGET_ROUTE_DATA stream=$originalLivestreamId '
+        'host=${_ownerUserId(routeArguments)} '
+        'title=${_safeText(routeArguments['stream_title'] ?? routeArguments['title'])} '
+        'bannerType=${_safeText(routeArguments['global_banner_type'])}',
+      );
+      _readyRouteStreamId = 0;
+      _readyRouteGeneration = 0;
+      if (_isGlobalBannerNavigation(routeArguments)) {
+        _pendingRoutePresentations[roomGeneration] = routeArguments;
+      }
+      _pendingTargetRouteData[roomGeneration] = routeArguments;
+
       _setJoinProgress('Opening room...');
       timing('join_navigation');
+      if (isBannerNavigation) {
+        debugPrint('TARGET_NAVIGATION target=$originalLivestreamId');
+      }
 
       if (streamType == 'audio') {
         Get.to(
           () => AudioLiveView(
+            key: ValueKey('audio_live_$originalLivestreamId'),
             channelName: finalAgoraChannel,
             isBroadcaster: false,
             token: agoraTokenController.getTokenString(),
             seatCount: safeRouteSeatCount,
+            roomData: routeArguments,
           ),
           arguments: routeArguments,
         );
@@ -777,19 +1232,23 @@ class AudienceJoinController extends GetxController {
 
         Get.to(
           () => MultiLiveView(
+            key: ValueKey('multi_live_$originalLivestreamId'),
             channelName: finalAgoraChannel,
             isBroadcaster: false,
             token: agoraTokenController.getTokenString(),
             seatCount: safeRouteSeatCount,
+            roomData: routeArguments,
           ),
           arguments: routeArguments,
         );
       } else {
         Get.to(
           () => PopularLiveView(
+            key: ValueKey('popular_live_$originalLivestreamId'),
             channelName: finalAgoraChannel,
             isBroadcaster: false,
             token: agoraTokenController.getTokenString(),
+            roomData: routeArguments,
           ),
           arguments: routeArguments,
         );
@@ -810,6 +1269,27 @@ class AudienceJoinController extends GetxController {
             viewerAddResponse == null) {
           return;
         }
+        if (_readyRouteStreamId == originalLivestreamId &&
+            _readyRouteGeneration == roomGeneration) {
+          websocketController.reconcileSelfViewerJoinFromApi(
+            livestreamId: originalLivestreamId,
+            viewerId: userId,
+            response: viewerAddResponse,
+          );
+          debugPrint('ENTRY_PRESENTATION_SHOWN stream=$originalLivestreamId');
+        } else {
+          _pendingSelfViewerResponses[roomGeneration] = viewerAddResponse;
+          debugPrint(
+            'ENTRY_PRESENTATION_QUEUED stream=$originalLivestreamId '
+            'generation=$roomGeneration',
+          );
+        }
+        _logJoinParity(
+          liveData: liveData,
+          streamId: originalLivestreamId,
+          generation: roomGeneration,
+          userId: userId,
+        );
         livestreamController.warmLiveRoomStateFast(
           streamId: originalLivestreamId,
           source: 'audience_presence_ready',

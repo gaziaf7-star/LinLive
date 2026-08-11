@@ -7,7 +7,7 @@ import '../../../../constants/color_constants.dart';
 import '../../../../constants/layout_constant.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../controllers/livestream_controller.dart';
-import '../controllers/websocket_controller.dart';
+import '../socket/websocket_controller.dart';
 import 'go_to_live_audio.dart';
 import 'goto_live_multi.dart';
 import 'goto_live_popular.dart';

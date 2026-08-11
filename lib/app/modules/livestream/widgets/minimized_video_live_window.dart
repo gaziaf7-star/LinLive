@@ -6,7 +6,7 @@ import 'package:get/get.dart';
 import '../../../../constants/image_helper.dart';
 import '../../../services/agora_service.dart';
 import '../controllers/livestream_controller.dart';
-import '../controllers/websocket_controller.dart';
+import '../socket/websocket_controller.dart';
 import '../views/popular_live_view.dart';
 
 class MinimizedVideoLiveWindow extends StatefulWidget {

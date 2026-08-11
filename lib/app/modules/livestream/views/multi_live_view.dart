@@ -24,7 +24,8 @@ import '../../../services/agora_service.dart';
 import '../../ranking/views/allrank.dart';
 import '../controllers/livestream_action_controller.dart';
 import '../controllers/livestream_controller.dart';
-import '../controllers/websocket_controller.dart';
+import '../controllers/audience_join_controller.dart';
+import '../socket/websocket_controller.dart';
 import '../widgets/LiveProfile_AppBar.dart';
 import '../widgets/entry_animation.dart';
 import '../widgets/live_comments.dart';
@@ -39,6 +40,7 @@ class MultiLiveView extends StatefulWidget {
   final bool isBroadcaster;
   final int? seatCount;
   final String token;
+  final Map<String, dynamic>? roomData;
 
   const MultiLiveView({
     super.key,
@@ -46,6 +48,7 @@ class MultiLiveView extends StatefulWidget {
     this.seatCount,
     required this.isBroadcaster,
     required this.token,
+    this.roomData,
   });
 
   @override
@@ -61,7 +64,7 @@ class _MultiLiveViewState extends State<MultiLiveView> {
 
   final AgoraService _agoraService = AgoraService();
 
-  final streamData = Get.arguments;
+  late final dynamic streamData;
 
   final streamInfo = {}.obs;
   final broadcasterData = {}.obs;
@@ -115,35 +118,22 @@ class _MultiLiveViewState extends State<MultiLiveView> {
   }
 
   void setLiveStreamDataAsAudience() async {
-    // print('stream data $streamData');
-    // // Ensure call list is populated for first-time audience members
-    await liveController.tryToGetCallList(streamId: streamData['id']);
-    // Check if livestream_callers exists and is not empty
-    if (streamData != null &&
-        streamData['livestream_callers'] != null &&
-        streamData['livestream_callers'].isNotEmpty) {
-      broadcasterData.value = streamData['livestream_callers'][0];
-      liveController.broadcasterId.value = broadcasterData['user']['id'];
-      print(
-        'this is broadcaster data ${streamData['livestream_callers'][0]['user']['name']}',
-      );
-    } else {
-      // Fallback: try to get broadcaster data from other sources
-      broadcasterData.value = streamData['broadcaster_call_data'] ?? {};
-      if (broadcasterData.value.isNotEmpty &&
-          broadcasterData.value['user'] != null) {
-        liveController.broadcasterId.value = broadcasterData['user']['id'];
-      }
-      print('Using fallback broadcaster data');
-    }
+    final live = streamData['livestreamdata'] is Map
+        ? Map<String, dynamic>.from(streamData['livestreamdata'])
+        : streamData['livestream'] is Map
+        ? Map<String, dynamic>.from(streamData['livestream'])
+        : <String, dynamic>{};
+    final user = streamData['user'] is Map
+        ? Map<String, dynamic>.from(streamData['user'])
+        : live['user'] is Map
+        ? Map<String, dynamic>.from(live['user'])
+        : <String, dynamic>{};
+    streamInfo.value = streamData;
+    broadcasterData.value = <String, dynamic>{...live, ...streamData, 'user': user};
+    liveController.broadcasterId.value =
+        int.tryParse('${streamData['owner_user_id'] ?? streamData['user_id'] ?? user['id'] ?? 0}') ?? 0;
 
-    // Set streamInfo with proper fallback
-    if (streamData != null) {
-      streamInfo.value = streamData;
-    } else {
-      streamInfo.value = {};
-      print('Warning: streamData is null in setLiveStreamDataAsAudience');
-    }
+    await liveController.tryToGetCallList(streamId: streamData['id']);
 
     // Set the stream ID in WebSocket controller and fetch initial gift total
     if (streamData != null && streamData['id'] != null) {
@@ -290,6 +280,11 @@ class _MultiLiveViewState extends State<MultiLiveView> {
 
   @override
   void initState() {
+    streamData = widget.roomData != null
+        ? Map<String, dynamic>.from(widget.roomData!)
+        : Get.arguments is Map
+        ? Map<String, dynamic>.from(Get.arguments)
+        : <String, dynamic>{};
     // Enable wake lock to keep screen on during live streaming
 
     print('Sagor seat test data ${liveController.seatCount.value}');
@@ -301,8 +296,8 @@ class _MultiLiveViewState extends State<MultiLiveView> {
     createdAt = liveController.createData['viewer']?['created_at'];
 
     // যদি createData থেকে না পাই, তাহলে arguments থেকে check করি
-    if (createdAt == null && Get.arguments != null) {
-      createdAt = Get.arguments['created_at'];
+    if (createdAt == null) {
+      createdAt = streamData['created_at'];
     }
 
     // যদি এখনো না পাই, তাহলে current time use করি
@@ -325,6 +320,18 @@ class _MultiLiveViewState extends State<MultiLiveView> {
     // Setup red packet callbacks
     _setupRedPacketCallbacks();
 
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !Get.isRegistered<AudienceJoinController>()) return;
+      final args = streamData;
+      final streamId = int.tryParse(
+            '${args['livestream_id'] ?? args['stream_id'] ?? args['id'] ?? 0}',
+          ) ??
+          0;
+      Get.find<AudienceJoinController>().markTargetRouteReady(
+        streamId: streamId,
+      );
+    });
+
     super.initState();
   }
 
@@ -333,6 +340,21 @@ class _MultiLiveViewState extends State<MultiLiveView> {
     // ✅ BATTERY OPTIMIZATION: Cancel UI update timer to prevent memory leaks
     _uiUpdateTimer?.cancel();
     _uiUpdateTimer = null;
+
+    final int disposedStreamId =
+        int.tryParse(
+          '${streamData['livestream_id'] ?? streamData['stream_id'] ?? streamData['id'] ?? 0}',
+        ) ??
+        0;
+    final int activeStreamId = liveController.streamId.value;
+    if (disposedStreamId > 0 &&
+        ((activeStreamId == 0 && liveController.roomTransitionInProgress) ||
+            (activeStreamId > 0 && disposedStreamId != activeStreamId))) {
+      // Room A is being replaced after Room B activation. Its legacy dispose
+      // must not clear Room B's shared viewer/caller/Agora state.
+      super.dispose();
+      return;
+    }
 
     // Disable wake lock to restore normal screen behavior
     WakelockPlus.disable();

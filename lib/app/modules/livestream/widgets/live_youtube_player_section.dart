@@ -5,7 +5,7 @@ import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:meetlivepro/app/modules/livestream/controllers/livestream_controller.dart';
-import 'package:meetlivepro/app/modules/livestream/controllers/websocket_controller.dart';
+import 'package:meetlivepro/app/modules/livestream/socket/websocket_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 /// BIGO-style YouTube section for live room.

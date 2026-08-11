@@ -32,6 +32,7 @@ import '../../ranking/views/allrank.dart';
 import '../controllers/home_controller.dart';
 import 'all_live_live_view.dart';
 import 'audio_live_stream_list_view.dart';
+import 'widgets/country_live_list_view.dart';
 
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
@@ -235,6 +236,10 @@ class _HomeViewState extends State<HomeView> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+
+      // Account/Profile API country -> Home PK-er porer dynamic country tab.
+      // This also handles the case where auth profile restores a little late.
+      homeController.bootstrapSelectedLiveCountryFromProfile();
 
       // Home Ranking card -> Daily Sending ranking.
       final RankingController rankingController =
@@ -2307,7 +2312,7 @@ class _HomeViewState extends State<HomeView> {
     final RankingController controller = Get.put(RankingController());
 
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: PreferredSize(
@@ -2425,6 +2430,7 @@ class _HomeViewState extends State<HomeView> {
                     PopularLiveListView(),
                     AudioLiveListView(),
                     PkLiveListView(),
+                    const CountryLiveListView(),
                   ],
                 ),
               ),

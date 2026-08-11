@@ -40,8 +40,8 @@ class NotificationView extends StatelessWidget {
           decoration: const BoxDecoration(
             gradient: LinearGradient(
               colors: [
-                kAppColor1,
-                kAppColor2,
+                Color(0xFF3B072F),
+                Color(0xFF3B072F),
               ],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,

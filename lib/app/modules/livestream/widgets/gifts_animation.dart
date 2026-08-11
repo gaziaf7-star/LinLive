@@ -12,7 +12,7 @@ import 'package:meetlivepro/app/modules/appmenu/views/widgets/imageColor.dart';
 
 import '../../../../apis/api_endpoints.dart';
 import '../../../../constants/image_helper.dart';
-import '../controllers/websocket_controller.dart';
+import '../socket/websocket_controller.dart';
 import 'LiveView_Circle_Container.dart';
 
 class GiftAnimationWidget extends StatefulWidget {

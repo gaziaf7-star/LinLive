@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../controllers/websocket_controller.dart';
+import '../socket/websocket_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 class EmojiAnimationWidget extends StatelessWidget {

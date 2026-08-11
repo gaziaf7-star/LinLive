@@ -229,7 +229,7 @@ class FruitGameController extends GetxController {
         }
 
         final dynamic payload = _decodePayload(data['data']);
-        // print('Sagor $payload');
+
         if (channel != null) {
           _handleChannelMessage(channel, event, payload);
         } else {
@@ -390,8 +390,7 @@ class FruitGameController extends GetxController {
   // Handle action-specific messages based on event name
   void _handleActionMessage(String eventName, dynamic data) {
     final payload = _decodePayload(data);
-    // print('sagor from action socket');
-    // print(payload);
+
     switch (eventName) {
       case "game.winner":
         print(payload);

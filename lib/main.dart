@@ -25,7 +25,7 @@ import 'app/modules/auth/views/login_view.dart';
 import 'app/modules/home/controllers/home_controller.dart';
 import 'app/modules/livestream/controllers/agoraTokenController.dart';
 import 'app/modules/livestream/controllers/livestream_controller.dart';
-import 'app/modules/livestream/controllers/websocket_controller.dart';
+import 'app/modules/livestream/socket/websocket_controller.dart';
 
 import 'app/services/account_block_service.dart';
 import 'app/services/device_identity_service.dart';
@@ -36,6 +36,7 @@ import 'app/modules/livestream/controllers/audience_join_controller.dart';
 import 'app/modules/livestream/widgets/GlobalLuckyBagBanner.dart';
 import 'app/modules/livestream/widgets/GlobalLuckyWinBanner.dart';
 import 'app/modules/livestream/widgets/GlobalRocketLaunchBanner.dart';
+import 'app/modules/livestream/widgets/GlobalBigGiftBanner.dart';
 import 'app/modules/livestream/widgets/minimized_video_live_window.dart';
 import 'app/modules/messanger/views/audio_call_view.dart';
 import 'app/modules/messanger/views/video_call_view.dart';
@@ -856,6 +857,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           : _safeText(packet['stream_type']),
       if (sender.isNotEmpty) 'user': sender,
       if (sender.isNotEmpty) 'User': sender,
+      'global_lucky_bag_packet': Map<String, dynamic>.from(packet),
+      'global_banner_type': 'lucky_bag',
     };
 
     final AudienceJoinController joinController =
@@ -870,8 +873,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   /// Uses the same AudienceJoinController path as Global Lucky Bag.
   void _openGlobalLuckyGiftLiveRoom(
     int livestreamId,
-    Map<String, dynamic> result,
-  ) {
+    Map<String, dynamic> result, {
+    String bannerType = 'lucky',
+  }) {
     debugPrint(
       '🍀 Global Lucky Gift click => livestreamId=$livestreamId '
       'event=${result['event_id'] ?? result['result_event_id']}',
@@ -917,9 +921,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       }
     } catch (_) {}
 
-    final Map<String, dynamic> receiver = result['receiver'] is Map
-        ? Map<String, dynamic>.from(result['receiver'])
-        : <String, dynamic>{};
     final Map<String, dynamic> broadcaster = result['broadcaster'] is Map
         ? Map<String, dynamic>.from(result['broadcaster'])
         : <String, dynamic>{};
@@ -930,7 +931,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         : <String, dynamic>{};
 
     final Map<String, dynamic> roomUser = <String, dynamic>{
-      ...receiver,
       ...broadcaster,
       ...cachedUser,
     };
@@ -941,7 +941,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           result['owner_user_id'] ??
           result['host_id'] ??
           result['broadcaster_id'] ??
-          result['receiver_id'] ??
           roomUser['id'] ??
           roomUser['user_id'],
     );
@@ -961,6 +960,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         result['stream_type'],
         'audio',
       ]),
+      'global_lucky_event': Map<String, dynamic>.from(result),
+      'global_banner_type': bannerType,
     };
 
     final String channelName = _firstText([
@@ -992,7 +993,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       '🚀 Global Rocket click => livestreamId=$livestreamId '
       'level=${data['level_no'] ?? data['level']}',
     );
-    _openGlobalLuckyGiftLiveRoom(livestreamId, data);
+    _openGlobalLuckyGiftLiveRoom(livestreamId, data, bannerType: 'rocket');
+  }
+
+  void _openGlobalBigGiftLiveRoom(
+    int livestreamId,
+    Map<String, dynamic> data,
+  ) {
+    _openGlobalLuckyGiftLiveRoom(
+      livestreamId,
+      data,
+      bannerType: 'big_gift',
+    );
   }
 
   @override
@@ -1042,6 +1054,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             GlobalLuckyBagBanner(onOpenLive: _openGlobalLuckyBagLiveRoom),
             GlobalLuckyWinBanner(onOpenLive: _openGlobalLuckyGiftLiveRoom),
             GlobalRocketLaunchBanner(onOpenLive: _openGlobalRocketLiveRoom),
+            GlobalBigGiftBanner(onOpenLive: _openGlobalBigGiftLiveRoom),
             const MinimizedVideoLiveWindow(),
           ],
         );

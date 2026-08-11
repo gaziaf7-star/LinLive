@@ -16,9 +16,10 @@ import '../../../../constants/layout_constant.dart';
 import '../../../../widgets/after/CustomButtons.dart';
 import '../../../../widgets/setheight.dart';
 import '../../../../widgets/small_text_widgets.dart';
-import '../../../services/google_auth_service.dart';
 import '../../registersteps/controllers/registersteps_controller.dart';
 import '../../registersteps/views/set_nickname.dart';
+
+import 'google_country_select_view.dart';
 import 'login_view.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
@@ -49,8 +50,18 @@ class _WelcomeViewState extends State<WelcomeView> {
       return;
     }
 
-    if (controller.isLoading.value) return;
-    await GoogleAuthService.signInWithGoogle();
+    if (controller.isLoading.value || controller.googleLoading.value) return;
+
+    final GoogleLoginDestination destination = await controller.googleSign();
+    if (!mounted) return;
+
+    if (destination == GoogleLoginDestination.onboarding) {
+      Get.offAll(
+            () => const GoogleCountrySelectView(),
+        transition: Transition.rightToLeftWithFade,
+        duration: const Duration(milliseconds: 280),
+      );
+    }
   }
 
   void _continueWithPhone() {
@@ -144,7 +155,8 @@ class _WelcomeViewState extends State<WelcomeView> {
 
                     Obx(
                           () => CustomButtons(
-                        text: registerstepsController.isLoading.value
+                        text: (registerstepsController.isLoading.value ||
+                            registerstepsController.googleLoading.value)
                             ? 'Loading...'
                             : 'Continue with Google',
 
@@ -172,7 +184,8 @@ class _WelcomeViewState extends State<WelcomeView> {
                         ),
 
                         image: 'assets/audio_live/google.png',
-                        isLoading: registerstepsController.isLoading.value,
+                        isLoading: registerstepsController.isLoading.value ||
+                            registerstepsController.googleLoading.value,
                         showArrow: true,
                         borderWidth: 3,
                         height: 64,

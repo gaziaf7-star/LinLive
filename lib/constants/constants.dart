@@ -4,7 +4,7 @@ import '../app/modules/auth/controllers/auth_controller.dart';
 import '../app/modules/home/controllers/home_controller.dart';
 import '../app/modules/informationcollection/controllers/informationcollection_controller.dart';
 import '../app/modules/livestream/controllers/livestream_controller.dart';
-import '../app/modules/livestream/controllers/websocket_controller.dart';
+import '../app/modules/livestream/socket/websocket_controller.dart';
 import '../app/modules/moments/controllers/moments_controller.dart';
 import '../app/modules/myprofile/controllers/myprofile_controller.dart';
 import '../app/modules/registersteps/controllers/registersteps_controller.dart';

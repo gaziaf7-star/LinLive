@@ -426,7 +426,7 @@ class MomentsController extends GetxController {
     try {
       // Create a FormData object
       FormData formData = FormData.fromMap({
-        'name': 'sagor',
+        'name': 'alamin',
         'price': '500',
         'type': 'all',
         'status': 'active',

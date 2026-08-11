@@ -7,7 +7,7 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:meetlivepro/app/modules/auth/controllers/auth_controller.dart';
 import 'package:meetlivepro/app/modules/livestream/controllers/livestream_controller.dart';
-import 'package:meetlivepro/app/modules/livestream/controllers/websocket_controller.dart';
+import 'package:meetlivepro/app/modules/livestream/socket/websocket_controller.dart';
 import 'package:meetlivepro/widgets/after/CastomText.dart';
 import '../../../../constants/constants.dart';
 import '../../../../constants/image_helper.dart';

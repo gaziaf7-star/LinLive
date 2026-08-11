@@ -12,7 +12,10 @@ import 'live_performance_config.dart';
 class LiveTestingLogger {
   LiveTestingLogger._();
 
-  static const bool enabled = true;
+  // Building/sanitizing large websocket and API payloads is expensive even
+  // when the final log sink is disabled. Keep the entire diagnostics pipeline
+  // behind the same compile-time live-debug switch.
+  static const bool enabled = kLiveDebug;
   static const int defaultMaxChars = 16000;
   static const int _chunkSize = 850;
 

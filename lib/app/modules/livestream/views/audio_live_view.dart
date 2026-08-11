@@ -12,7 +12,7 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'package:meetlivepro/app/modules/livestream/controllers/livestream_controller.dart';
-import 'package:meetlivepro/app/modules/livestream/controllers/websocket_controller.dart';
+import 'package:meetlivepro/app/modules/livestream/socket/websocket_controller.dart';
 import 'package:meetlivepro/app/modules/livestream/controllers/audience_join_controller.dart';
 import 'package:meetlivepro/app/modules/livestream/widgets/audioText.dart';
 import 'package:meetlivepro/app/modules/livestream/widgets/entry_animation.dart';
@@ -67,6 +67,7 @@ class AudioLiveView extends StatefulWidget {
   final int roomLayout;
   final int roomTheme;
   final int roomBackground;
+  final Map<String, dynamic>? roomData;
 
   const AudioLiveView({
     super.key,
@@ -77,6 +78,7 @@ class AudioLiveView extends StatefulWidget {
     this.roomLayout = 0,
     this.roomTheme = 0,
     this.roomBackground = -1,
+    this.roomData,
   });
 
   @override
@@ -278,7 +280,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
       : Get.put<WebsocketController>(WebsocketController(), permanent: true);
 
   final AgoraService _agoraService = AgoraService();
-  final streamData = Get.arguments;
+  late final dynamic streamData;
   String? _currentToken;
 
   /// CP base image is now a fixed local asset.
@@ -437,7 +439,8 @@ class _AudioLiveViewState extends State<AudioLiveView>
   /// Agora speaking wave state.
   /// Backend chara Agora volume indication diye detect hobe ke kotha bolse.
   final Set<int> _speakingUserIds = <int>{};
-  final Map<int, Timer> _speakingOffTimers = <int, Timer>{};
+  final Map<int, int> _speakingUntilMs = <int, int>{};
+  Timer? _speakingExpiryTimer;
   static const int _speakingVolumeThreshold = 8;
 
   int _normalizeAgoraUid(int uid) {
@@ -1295,13 +1298,9 @@ class _AudioLiveViewState extends State<AudioLiveView>
     }
 
     if (isSpeaking) {
-      _speakingOffTimers[userId]?.cancel();
-      _speakingOffTimers[userId] = Timer(
-        const Duration(milliseconds: 1200),
-            () {
-          _setSpeakingStatus(uid: userId, isSpeaking: false);
-        },
-      );
+      _speakingUntilMs[userId] =
+          DateTime.now().millisecondsSinceEpoch + 1200;
+      _ensureSpeakingExpiryTimer();
 
       if (!alreadySpeaking) {
         _speakingUserIds.add(userId);
@@ -1309,8 +1308,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
         _scheduleUIUpdate();
       }
     } else {
-      _speakingOffTimers[userId]?.cancel();
-      _speakingOffTimers.remove(userId);
+      _speakingUntilMs.remove(userId);
 
       if (alreadySpeaking) {
         _speakingUserIds.remove(userId);
@@ -1318,6 +1316,29 @@ class _AudioLiveViewState extends State<AudioLiveView>
         _scheduleUIUpdate();
       }
     }
+  }
+
+  void _ensureSpeakingExpiryTimer() {
+    if (_speakingExpiryTimer?.isActive == true) return;
+    _speakingExpiryTimer = Timer.periodic(
+      const Duration(milliseconds: 250),
+      (timer) {
+        if (!mounted || _speakingUntilMs.isEmpty) {
+          timer.cancel();
+          _speakingExpiryTimer = null;
+          return;
+        }
+
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        final expired = _speakingUntilMs.entries
+            .where((entry) => entry.value <= nowMs)
+            .map((entry) => entry.key)
+            .toList(growable: false);
+        for (final userId in expired) {
+          _setSpeakingStatus(uid: userId, isSpeaking: false);
+        }
+      },
+    );
   }
 
   void _updateLiveCallSpeakingStatus({
@@ -2586,8 +2607,9 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
       _configureContinuousAgoraTokenRenewal(currentStreamIdForAgora);
 
-      _speakingOffTimers.forEach((_, timer) => timer.cancel());
-      _speakingOffTimers.clear();
+      _speakingExpiryTimer?.cancel();
+      _speakingExpiryTimer = null;
+      _speakingUntilMs.clear();
       _speakingUserIds.clear();
 
       liveLog("🎧 Configuring Agora for low-heat audio live...");
@@ -3967,8 +3989,19 @@ class _AudioLiveViewState extends State<AudioLiveView>
   @override
   void initState() {
     super.initState();
+    streamData = widget.roomData != null
+        ? Map<String, dynamic>.from(widget.roomData!)
+        : Get.arguments is Map
+        ? Map<String, dynamic>.from(Get.arguments)
+        : <String, dynamic>{};
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !kDebugMode) return;
+      if (!mounted) return;
+      if (Get.isRegistered<AudienceJoinController>()) {
+        Get.find<AudienceJoinController>().markTargetRouteReady(
+          streamId: _currentStreamIdFromArgs(),
+        );
+      }
+      if (!kDebugMode) return;
       final String prefix = _effectiveBroadcaster ? 'create' : 'join';
       debugPrint(
         '${prefix}_first_ui_ready=${DateTime.now().microsecondsSinceEpoch}',
@@ -4541,10 +4574,9 @@ class _AudioLiveViewState extends State<AudioLiveView>
     _postJoinMicRestoreTimer?.cancel();
     _postJoinMicRestoreConfirmTimer?.cancel();
 
-    for (final timer in _speakingOffTimers.values) {
-      timer.cancel();
-    }
-    _speakingOffTimers.clear();
+    _speakingExpiryTimer?.cancel();
+    _speakingExpiryTimer = null;
+    _speakingUntilMs.clear();
     _speakingUserIds.clear();
 
     // Disable wake lock to restore normal screen behavior

@@ -9,7 +9,7 @@ import 'package:meetlivepro/constants/layout_constant.dart';
 
 import '../../../../constants/image_helper.dart';
 import '../controllers/livestream_controller.dart';
-import '../controllers/websocket_controller.dart';
+import '../socket/websocket_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 class RedPacketLiveOverlay extends StatefulWidget {

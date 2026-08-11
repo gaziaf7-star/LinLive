@@ -13,8 +13,10 @@ Widget premiumShortcutMenu({
   required double kWeight,
 }) {
   return Obx(() {
-    // Keep this card group reactive to the selected application language.
+    // Keep this card group reactive to language and account-role changes.
     AppLanguageController.to.currentLocaleKey.value;
+    authController.userProfile.value.user?.hostType;
+    authController.userProfile.value.user?.agencyType;
 
     return _PremiumShortcutMenu(
       kHeight: kHeight,
@@ -45,7 +47,13 @@ class _PremiumShortcutMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final currentUser = authController.userProfile.value.user;
+
+    // Agency has first priority.
+    // Agency + Host => Creator visible.
+    // Host only => Creator hidden.
+    final bool isAgency = currentUser?.isAgencyAccount ?? false;
     final bool isHost = currentUser?.isHostAccount ?? false;
+    final bool canShowCreator = isAgency || !isHost;
 
     final items = <_PremiumItem>[
       if (_canShowRecharge)
@@ -83,7 +91,7 @@ class _PremiumShortcutMenu extends StatelessWidget {
           );
         },
       ),
-      if (!isHost)
+      if (canShowCreator)
         _PremiumItem(
           title: 'Creator'.appTr,
           image: 'assets/flaticons/government.png',

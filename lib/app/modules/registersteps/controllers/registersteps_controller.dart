@@ -19,11 +19,13 @@ import '../../../services/device_identity_service.dart';
 import '../../auth/views/welcome_view.dart';
 import '../../bottomnav/views/bottomnav_view.dart';
 import '../../messanger/views/messages/components/firestore_service.dart';
-import '../../livestream/controllers/websocket_controller.dart';
+import '../../livestream/socket/websocket_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 
 enum InviteCodeValidationState { idle, checking, valid, invalid }
+
+enum GoogleLoginDestination { cancelled, home, onboarding, failed }
 
 class RegisterstepsController extends GetxController {
   final isLoading = false.obs;
@@ -51,6 +53,20 @@ class RegisterstepsController extends GetxController {
   final inviterName = ''.obs;
   final inviterProfileImageUrl = ''.obs;
   final googleLoading = false.obs;
+
+  // Google first-login onboarding state. These values stay local until the
+  // user taps Submit, so country/profile steps remain instant and smooth.
+  final googleSelectedCountryName = ''.obs;
+  final googleSelectedCountryCode = ''.obs;
+  final googleProfileGender = ''.obs;
+  final googleProfileDateOfBirth = ''.obs;
+  final googleProfileImagePath = ''.obs;
+  final googleProfilePhotoUrl = ''.obs;
+  final googleProfileSaving = false.obs;
+  final googleEnteringApp = false.obs;
+  final googleProfileNameController = TextEditingController();
+  bool _googleProfileSubmitInProgress = false;
+  bool _googleEnterInProgress = false;
 
   Timer? _inviteValidationDebounce;
   CancelToken? _inviteValidationCancelToken;
@@ -573,8 +589,10 @@ class RegisterstepsController extends GetxController {
     scopes: ['email', 'profile'],
   );
 
-  Future<void> googleSign({String? inviteCode}) async {
-    if (googleLoading.value || isLoading.value) return;
+  Future<GoogleLoginDestination> googleSign({String? inviteCode}) async {
+    if (googleLoading.value || isLoading.value) {
+      return GoogleLoginDestination.cancelled;
+    }
     googleLoading.value = true;
 
     try {
@@ -590,14 +608,14 @@ class RegisterstepsController extends GetxController {
             _showError(
               inviteCodeError.value ?? ('Invalid invite code.').appTr,
             );
-            return;
+            return GoogleLoginDestination.failed;
           }
         }
       }
 
       await _googleSignIn.signOut();
       final GoogleSignInAccount? result = await _googleSignIn.signIn();
-      if (result == null) return;
+      if (result == null) return GoogleLoginDestination.cancelled;
 
       final GoogleSignInAuthentication googleAuth =
       await result.authentication;
@@ -606,7 +624,7 @@ class RegisterstepsController extends GetxController {
 
       if (googleToken.isEmpty) {
         _showError(('Google token is unavailable. Please try again.').appTr);
-        return;
+        return GoogleLoginDestination.failed;
       }
 
       final data = <String, dynamic>{
@@ -636,7 +654,7 @@ class RegisterstepsController extends GetxController {
 
       if (response.statusCode != 200 && response.statusCode != 201) {
         _showError(('Google login failed.').appTr);
-        return;
+        return GoogleLoginDestination.failed;
       }
 
       final responseData = _asMap(response.data);
@@ -654,40 +672,321 @@ class RegisterstepsController extends GetxController {
                 : authController.deviceSessionError.value,
           );
         }
-        return;
+        return GoogleLoginDestination.failed;
+      }
+
+      await _clearPendingInviteCode();
+
+      final bool needsOnboarding = _shouldShowGoogleOnboarding(responseData);
+      if (needsOnboarding) {
+        // Do not persist a half-completed Google profile. If the app closes
+        // during onboarding, next launch safely returns to Welcome instead of
+        // bypassing required profile setup.
+        _prepareGoogleOnboarding(
+          googleName: result.displayName,
+          googlePhotoUrl: result.photoUrl,
+        );
+        return GoogleLoginDestination.onboarding;
       }
 
       await authController.preferences.setString(
         'profile',
         jsonEncode(authController.userProfile.value.toJson()),
       );
-      await _clearPendingInviteCode();
 
+      await enterAppAfterGoogleOnboarding();
+      return GoogleLoginDestination.home;
+    } on DioException catch (e) {
+      _handleRegistrationDioError(e);
+      return GoogleLoginDestination.failed;
+    } catch (error) {
+      debugPrint('Google sign-in error: $error');
+      _showError(('Something went wrong during Google login.').appTr);
+      return GoogleLoginDestination.failed;
+    } finally {
+      googleLoading.value = false;
+    }
+  }
+
+  bool _shouldShowGoogleOnboarding(Map<String, dynamic> responseData) {
+    final Map<String, dynamic> nestedData = _asMap(responseData['data']);
+
+    final dynamic explicitNewUser = responseData['is_new_user'] ??
+        responseData['new_user'] ??
+        nestedData['is_new_user'] ??
+        nestedData['new_user'];
+    if (explicitNewUser != null && _truthy(explicitNewUser)) {
+      return true;
+    }
+
+    final dynamic explicitProfileComplete =
+        responseData['profile_completed'] ??
+            responseData['profile_complete'] ??
+            nestedData['profile_completed'] ??
+            nestedData['profile_complete'];
+    if (explicitProfileComplete != null && !_truthy(explicitProfileComplete)) {
+      return true;
+    }
+
+    final user = authController.userProfile.value.user;
+    if (user == null) return true;
+
+    return _isMissingProfileValue(
+      user.country,
+      const <String>['unknown', 'add country', 'select country'],
+    ) ||
+        _isMissingProfileValue(
+          user.gender,
+          const <String>['add gender', 'unknown', 'not set'],
+        ) ||
+        _isMissingProfileValue(
+          user.dateofbirth,
+          const <String>['add date of birth', 'unknown', 'not set'],
+        );
+  }
+
+  bool _isMissingProfileValue(dynamic value, List<String> placeholders) {
+    final String clean = value?.toString().trim().toLowerCase() ?? '';
+    if (clean.isEmpty || clean == 'null' || clean == '0') return true;
+    return placeholders.contains(clean);
+  }
+
+  void _prepareGoogleOnboarding({
+    String? googleName,
+    String? googlePhotoUrl,
+  }) {
+    final user = authController.userProfile.value.user;
+
+    googleSelectedCountryName.value = '';
+    googleSelectedCountryCode.value = '';
+    googleProfileGender.value = '';
+    googleProfileDateOfBirth.value = '';
+    googleProfileImagePath.value = '';
+    googleProfilePhotoUrl.value = (googlePhotoUrl ?? '').trim();
+
+    final String currentName = user?.name?.toString().trim() ?? '';
+    googleProfileNameController.text = currentName.isNotEmpty
+        ? currentName
+        : (googleName?.trim().isNotEmpty == true ? googleName!.trim() : 'User');
+
+    final String currentGender = user?.gender?.toString().trim() ?? '';
+    if (currentGender.toLowerCase() == 'male') {
+      googleProfileGender.value = 'Male';
+    } else if (currentGender.toLowerCase() == 'female') {
+      googleProfileGender.value = 'Female';
+    }
+
+    final String currentDob = user?.dateofbirth?.toString().trim() ?? '';
+    if (!_isMissingProfileValue(
+      currentDob,
+      const <String>['add date of birth', 'unknown', 'not set'],
+    )) {
+      googleProfileDateOfBirth.value = currentDob;
+    }
+
+    final String profileUrl = user?.profileImageUrl?.toString().trim() ?? '';
+    if (profileUrl.isNotEmpty && profileUrl.toLowerCase() != 'null') {
+      googleProfilePhotoUrl.value = profileUrl;
+    }
+  }
+
+  void selectGoogleCountry({
+    required String name,
+    required String countryCode,
+  }) {
+    googleSelectedCountryName.value = name.trim();
+    googleSelectedCountryCode.value = countryCode.trim().toUpperCase();
+  }
+
+  void selectGoogleGender(String value) {
+    if (value == 'Male' || value == 'Female') {
+      googleProfileGender.value = value;
+    }
+  }
+
+  void setGoogleDateOfBirth(DateTime date) {
+    final String year = date.year.toString().padLeft(4, '0');
+    final String month = date.month.toString().padLeft(2, '0');
+    final String day = date.day.toString().padLeft(2, '0');
+    googleProfileDateOfBirth.value = '$year-$month-$day';
+  }
+
+  Future<void> pickGoogleProfileImage() async {
+    try {
+      final FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+      );
+      final String? path = result?.files.single.path;
+      if (path == null || path.trim().isEmpty) return;
+      googleProfileImagePath.value = path;
+    } catch (error) {
+      debugPrint('Google onboarding image select failed: $error');
+      _showError(('Image select failed').appTr);
+    }
+  }
+
+  Future<bool> submitGoogleProfileOnboarding() async {
+    if (_googleProfileSubmitInProgress || googleProfileSaving.value) {
+      return false;
+    }
+
+    final int userId = authController.userProfile.value.user?.id?.toInt() ?? 0;
+    final String token =
+        authController.userProfile.value.token?.toString().trim() ?? '';
+    final String name = googleProfileNameController.text.trim();
+    final String country = googleSelectedCountryName.value.trim();
+    final String gender = googleProfileGender.value.trim();
+    final String dateOfBirth = googleProfileDateOfBirth.value.trim();
+
+    if (userId <= 0 || token.isEmpty) {
+      _showError(('Your login session is unavailable. Please login again.').appTr);
+      return false;
+    }
+    if (country.isEmpty) {
+      _showError(('Please select country').appTr);
+      return false;
+    }
+    if (name.isEmpty) {
+      _showError(('Please enter nickname').appTr);
+      return false;
+    }
+    if (dateOfBirth.isEmpty) {
+      _showError(('Please select date of birth').appTr);
+      return false;
+    }
+    if (gender.isEmpty) {
+      _showError(('Please select gender').appTr);
+      return false;
+    }
+
+    _googleProfileSubmitInProgress = true;
+    googleProfileSaving.value = true;
+
+    try {
+      final Map<String, dynamic> fields = <String, dynamic>{
+        'name': name,
+        'country': country,
+        'gender': gender,
+        'dateofbirth': dateOfBirth,
+      };
+
+      final String localImage = googleProfileImagePath.value.trim();
+      dynamic requestData = fields;
+      if (localImage.isNotEmpty) {
+        fields['profile_image'] = await MultipartFile.fromFile(
+          localImage,
+          filename: localImage.split(RegExp(r'[/\\]')).last,
+        );
+        requestData = FormData.fromMap(fields);
+      }
+
+      final response = await dio.post(
+        kProfileUpdate(id: userId),
+        data: requestData,
+        options: Options(
+          headers: <String, dynamic>{
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $token',
+            if (localImage.isEmpty) 'Content-Type': 'application/json',
+          },
+          sendTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 15),
+        ),
+      );
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        _showError(('Profile update failed').appTr);
+        return false;
+      }
+
+      final dynamic user = authController.userProfile.value.user;
+      if (user != null) {
+        user.name = name;
+        user.country = country;
+        user.gender = gender;
+        user.dateofbirth = dateOfBirth;
+        authController.userProfile.refresh();
+      }
+
+      // Server is source of truth. Force one fresh read after the single edit
+      // request, then persist that profile. This avoids stale Google-login data.
+      await refreshAuthUserData(force: true, persist: true);
+
+      await authController.preferences.setString(
+        'profile',
+        jsonEncode(authController.userProfile.value.toJson()),
+      );
+
+      return true;
+    } on DioException catch (error) {
+      final Map<String, dynamic> body = _asMap(error.response?.data);
+      final String message = _firstError(body, const <String>[
+        'name',
+        'country',
+        'gender',
+        'dateofbirth',
+        'profile_image',
+      ]) ??
+          _apiMessage(body, ('Profile update failed').appTr);
+      _showError(message);
+      return false;
+    } catch (error) {
+      debugPrint('Google onboarding profile update failed: $error');
+      _showError(('Something went wrong').appTr);
+      return false;
+    } finally {
+      googleProfileSaving.value = false;
+      _googleProfileSubmitInProgress = false;
+    }
+  }
+
+  Future<void> enterAppAfterGoogleOnboarding() async {
+    if (_googleEnterInProgress || googleEnteringApp.value) return;
+    _googleEnterInProgress = true;
+    googleEnteringApp.value = true;
+
+    try {
       createDeviceToken();
       await _startAuthenticatedRealtimeAfterAuth();
       _ensureRechargeRealtimeAfterAuth();
+
       if (!Get.isRegistered<FirestoreService>()) {
         Get.put(FirestoreService());
       }
 
-      Fluttertoast.showToast(
-        msg: _registrationSuccessMessage(responseData),
-        backgroundColor: Colors.green,
-        textColor: Colors.white,
-      );
-
       Get.offAll(
             () => const BottomnavView(),
-        transition: Transition.rightToLeft,
+        transition: Transition.rightToLeftWithFade,
+        duration: const Duration(milliseconds: 280),
       );
-    } on DioException catch (e) {
-      _handleRegistrationDioError(e);
-    } catch (error) {
-      debugPrint('Google sign-in error: $error');
-      _showError(('Something went wrong during Google login.').appTr);
     } finally {
-      googleLoading.value = false;
+      googleEnteringApp.value = false;
+      _googleEnterInProgress = false;
     }
+  }
+
+  Future<void> cancelGoogleOnboarding() async {
+    if (googleProfileSaving.value) return;
+
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {}
+
+    await authController.clearStoredAuthSession();
+    googleSelectedCountryName.value = '';
+    googleSelectedCountryCode.value = '';
+    googleProfileGender.value = '';
+    googleProfileDateOfBirth.value = '';
+    googleProfileImagePath.value = '';
+    googleProfilePhotoUrl.value = '';
+    googleProfileNameController.clear();
+
+    Get.offAll(
+          () => WelcomeView(),
+      transition: Transition.leftToRightWithFade,
+      duration: const Duration(milliseconds: 260),
+    );
   }
 
   Future<void> _startAuthenticatedRealtimeAfterAuth() async {
@@ -1080,6 +1379,7 @@ class RegisterstepsController extends GetxController {
     passwordController.dispose();
     addressController.dispose();
     inviteCodeController.dispose();
+    googleProfileNameController.dispose();
     _inviteValidationDebounce?.cancel();
     _inviteValidationCancelToken?.cancel('Controller closed');
 
