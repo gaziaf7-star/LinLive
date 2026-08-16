@@ -2,18 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'package:meetlivepro/app/modules/store/views/store1_view.dart';
+
 import 'package:meetlivepro/app/modules/withdraw/views/withdraw_view.dart';
 import 'package:meetlivepro/constants/constants.dart';
-import 'package:meetlivepro/constants/layout_constant.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
+
+import '../../../store/views/mall_category_page.dart';
+import 'base_medal_view.dart';
+
 Widget premiumShortcutMenu({
   required double kHeight,
   required double kWeight,
 }) {
   return Obx(() {
-    // Keep this card group reactive to language and account-role changes.
     AppLanguageController.to.currentLocaleKey.value;
     authController.userProfile.value.user?.hostType;
     authController.userProfile.value.user?.agencyType;
@@ -36,7 +38,6 @@ class _PremiumShortcutMenu extends StatelessWidget {
 
   num get _userCoins {
     final dynamic coinValue = authController.userProfile.value.user?.levelCoins;
-
     return coinValue is num
         ? coinValue
         : num.tryParse(coinValue?.toString() ?? '0') ?? 0;
@@ -48,9 +49,6 @@ class _PremiumShortcutMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final currentUser = authController.userProfile.value.user;
 
-    // Agency has first priority.
-    // Agency + Host => Creator visible.
-    // Host only => Creator hidden.
     final bool isAgency = currentUser?.isAgencyAccount ?? false;
     final bool isHost = currentUser?.isHostAccount ?? false;
     final bool canShowCreator = isAgency || !isHost;
@@ -61,14 +59,9 @@ class _PremiumShortcutMenu extends StatelessWidget {
           title: 'Host Center'.appTr,
           image: 'assets/frame/retreat.png',
           fallbackIcon: Icons.account_balance_wallet_rounded,
-          bgColors: const [
-            Color(0xff3203a1),
-            Color(0xff5306c5),
-          ],
-          glowColor: const Color(0xff86EFAC),
+          tileColor: const Color(0xFFF3EDFF),
           onTap: () {
             if (_userCoins < 1) return;
-
             Get.to(
               WithdrawView(),
               transition: Transition.rightToLeft,
@@ -79,14 +72,10 @@ class _PremiumShortcutMenu extends StatelessWidget {
         title: 'Mall'.appTr,
         image: 'assets/icons/online-shopping.png',
         fallbackIcon: Icons.shopping_bag_rounded,
-        bgColors: const [
-          Color(0xffF59E0B),
-          Color(0xff92400E),
-        ],
-        glowColor: const Color(0xffFDE68A),
+        tileColor: const Color(0xFFEAF4FF),
         onTap: () {
           Get.to(
-            Store1View(),
+            MallCategoryPage(),
             transition: Transition.rightToLeft,
           );
         },
@@ -96,11 +85,7 @@ class _PremiumShortcutMenu extends StatelessWidget {
           title: 'Creator'.appTr,
           image: 'assets/flaticons/government.png',
           fallbackIcon: Icons.verified_user_rounded,
-          bgColors: const [
-            Color(0xff38BDF8),
-            Color(0xff1E3A8A),
-          ],
-          glowColor: const Color(0xffBAE6FD),
+          tileColor: const Color(0xFFFFF2E2),
           onTap: () {
             verifiedController.showNewAgenctList();
           },
@@ -109,426 +94,198 @@ class _PremiumShortcutMenu extends StatelessWidget {
         title: 'Badge'.appTr,
         image: 'assets/icons/verify.png',
         fallbackIcon: Icons.workspace_premium_rounded,
-        bgColors: const [
-          Color(0xfffa0d0d),
-          Color(0xff831843),
-        ],
-        glowColor: const Color(0xffF9A8D4),
+        tileColor: const Color(0xFFFFECF7),
         onTap: () {
-          // Get.to(BadgeView());
+          Get.to(
+                () => const BaseMedalView(),
+            transition: Transition.rightToLeft,
+            duration: const Duration(milliseconds: 220),
+          );
         },
       ),
     ];
 
-    return SizedBox(
-      height: kHeight * 0.084,
-      child: Row(
-        children: List.generate(items.length, (index) {
-          return Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(
-                right: index == items.length - 1 ? 0 : kWeight * 0.014,
-              ),
-              child: _PremiumMiniCard(
-                item: items[index],
-                index: index,
-                kHeight: kHeight,
-                kWeight: kWeight,
-              ),
-            ),
-          );
-        }),
-      ),
+    return _ShortcutRow(
+      items: items,
+      kHeight: kHeight,
+      kWeight: kWeight,
     );
   }
 }
 
-class _PremiumMiniCard extends StatefulWidget {
-  final _PremiumItem item;
-  final int index;
+class _ShortcutRow extends StatelessWidget {
+  final List<_PremiumItem> items;
   final double kHeight;
   final double kWeight;
 
-  const _PremiumMiniCard({
-    required this.item,
-    required this.index,
+  const _ShortcutRow({
+    required this.items,
     required this.kHeight,
     required this.kWeight,
   });
 
   @override
-  State<_PremiumMiniCard> createState() => _PremiumMiniCardState();
-}
-
-class _PremiumMiniCardState extends State<_PremiumMiniCard>
-    with SingleTickerProviderStateMixin {
-  bool _isPressed = false;
-  late final AnimationController _shineController;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _shineController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _shineController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final double cardHeight = widget.kHeight * 0.074;
-    final double radius = widget.kHeight * 0.016;
+    if (items.isEmpty) return const SizedBox.shrink();
 
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: 1),
-      duration: Duration(milliseconds: 360 + (widget.index * 80)),
-      curve: Curves.easeOutBack,
-      builder: (context, value, child) {
-        return Transform.translate(
-          offset: Offset(0, 13 * (1 - value)),
-          child: Opacity(
-            opacity: value.clamp(0.0, 1.0),
-            child: child,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Same 4-column slot system used by the second shortcut row.
+        // This keeps every icon exactly under the matching column instead of
+        // letting a shorter first row get pushed/compressed to the right.
+        final double slotWidth = constraints.maxWidth / 4;
+        final double rowHeight =
+        (kHeight * .122).clamp(92.0, 112.0).toDouble();
+
+        if (items.length <= 4) {
+          return SizedBox(
+            height: rowHeight,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: List.generate(items.length, (index) {
+                return SizedBox(
+                  width: slotWidth,
+                  child: Center(
+                    child: _ShortcutItem(
+                      item: items[index],
+                      kHeight: kHeight,
+                    ),
+                  ),
+                );
+              }),
+            ),
+          );
+        }
+
+        return SizedBox(
+          height: rowHeight,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              return SizedBox(
+                width: slotWidth,
+                child: Center(
+                  child: _ShortcutItem(
+                    item: items[index],
+                    kHeight: kHeight,
+                  ),
+                ),
+              );
+            },
           ),
         );
       },
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => setState(() => _isPressed = true),
-        onTapCancel: () => setState(() => _isPressed = false),
-        onTapUp: (_) {
-          setState(() => _isPressed = false);
-          widget.item.onTap();
-        },
-        child: AnimatedScale(
-          scale: _isPressed ? 0.955 : 1.0,
-          duration: const Duration(milliseconds: 130),
-          curve: Curves.easeOut,
-          child: Container(
-            height: cardHeight,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(radius),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: widget.item.bgColors,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: widget.item.bgColors.last.withOpacity(0.28),
-                  blurRadius: 13,
-                  spreadRadius: 0,
-                  offset: const Offset(0, 6),
-                ),
-                BoxShadow(
-                  color: widget.item.glowColor.withOpacity(0.16),
-                  blurRadius: 10,
-                  spreadRadius: -2,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(radius),
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  /// Soft premium surface.
-                  Positioned.fill(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Colors.white.withOpacity(0.20),
-                            Colors.white.withOpacity(0.035),
-                            Colors.black.withOpacity(0.12),
-                          ],
-                          stops: const [0.0, 0.48, 1.0],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  /// Big category watermark icon.
-                  Positioned(
-                    right: -widget.kHeight * 0.018,
-                    bottom: -widget.kHeight * 0.020,
-                    child: Icon(
-                      widget.item.fallbackIcon,
-                      size: widget.kHeight * 0.082,
-                      color: Colors.white.withOpacity(0.085),
-                    ),
-                  ),
-
-                  /// Bottom glow shape.
-                  Positioned(
-                    right: -widget.kHeight * 0.012,
-                    bottom: -widget.kHeight * 0.026,
-                    child: Container(
-                      height: widget.kHeight * 0.072,
-                      width: widget.kHeight * 0.072,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: RadialGradient(
-                          colors: [
-                            widget.item.glowColor.withOpacity(0.36),
-                            widget.item.glowColor.withOpacity(0.16),
-                            Colors.transparent,
-                          ],
-                          stops: const [0.0, 0.48, 1.0],
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  /// Small top glow.
-                  Positioned(
-                    left: -widget.kHeight * 0.020,
-                    top: -widget.kHeight * 0.035,
-                    child: Container(
-                      height: widget.kHeight * 0.075,
-                      width: widget.kHeight * 0.075,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white.withOpacity(0.09),
-                      ),
-                    ),
-                  ),
-
-                  /// Animated shine overlay.
-                  AnimatedBuilder(
-                    animation: _shineController,
-                    builder: (context, child) {
-                      return Positioned.fill(
-                        child: ShaderMask(
-                          blendMode: BlendMode.srcATop,
-                          shaderCallback: (bounds) {
-                            return LinearGradient(
-                              begin: Alignment.centerLeft,
-                              end: Alignment.centerRight,
-                              colors: [
-                                Colors.transparent,
-                                Colors.white.withOpacity(0.20),
-                                Colors.transparent,
-                              ],
-                              stops: const [0.25, 0.50, 0.75],
-                              transform: _SlidingGradientTransform(
-                                slidePercent: _shineController.value,
-                              ),
-                            ).createShader(bounds);
-                          },
-                          child: Container(
-                            color: Colors.white.withOpacity(0.035),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-
-
-                  /// Title - full visible on every card.
-                  /// The title uses FittedBox so Withdraw / Mall / Creator / Badge
-                  /// will not be clipped on small card width.
-                  Positioned(
-                    top: widget.kHeight * 0.008,
-                    left: widget.kWeight * 0.014,
-                    right: widget.kWeight * 0.014,
-                    child: SizedBox(
-                      height: widget.kHeight * 0.020,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          widget.item.title,
-                          maxLines: 1,
-                          softWrap: false,
-                          style: GoogleFonts.poppins(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: widget.kHeight * 0.0130,
-                            height: 1.0,
-                            letterSpacing: 0.05,
-                            shadows: [
-                              Shadow(
-                                color: Colors.black.withOpacity(0.22),
-                                blurRadius: 5,
-                                offset: const Offset(0, 1.2),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  // /// Small subtitle line.
-
-                  //
-                  /// Visible asset icon area.
-                  Positioned(
-                    right: widget.kWeight * 0.004,
-                    bottom: widget.kHeight * 0.003,
-                    child: _CardVisibleIconArea(
-                      item: widget.item,
-                      kHeight: widget.kHeight,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
 
-class _CardVisibleIconArea extends StatelessWidget {
+class _ShortcutItem extends StatefulWidget {
   final _PremiumItem item;
   final double kHeight;
 
-  const _CardVisibleIconArea({
+  const _ShortcutItem({
     required this.item,
     required this.kHeight,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final double boxSize = kHeight * 0.049;
-    final double iconSize = kHeight * 0.034;
-
-    return SizedBox(
-      height: boxSize,
-      width: boxSize,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          /// White glass badge keeps every image visible on any card color.
-          Container(
-            height: kHeight * 0.045,
-            width: kHeight * 0.045,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: [
-                  Colors.white.withOpacity(0.48),
-                  Colors.white.withOpacity(0.22),
-                  item.glowColor.withOpacity(0.13),
-                  Colors.transparent,
-                ],
-                stops: const [0.0, 0.45, 0.78, 1.0],
-              ),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.28),
-                width: 0.8,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.14),
-                  blurRadius: 7,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-          ),
-
-          /// Icon shadow.
-          Transform.translate(
-            offset: Offset(kHeight * 0.0018, kHeight * 0.0028),
-            child: Opacity(
-              opacity: 0.18,
-              child: Image.asset(
-                item.image,
-                height: iconSize,
-                width: iconSize,
-                fit: BoxFit.contain,
-                color: Colors.black,
-                errorBuilder: (context, error, stackTrace) {
-                  return Icon(
-                    item.fallbackIcon,
-                    size: iconSize,
-                    color: Colors.black,
-                  );
-                },
-              ),
-            ),
-          ),
-
-          /// Main icon/image. No ShaderMask here, so image will not vanish.
-          Transform.rotate(
-            angle: -0.055,
-            child: Image.asset(
-              item.image,
-              height: iconSize,
-              width: iconSize,
-              fit: BoxFit.contain,
-              opacity: const AlwaysStoppedAnimation<double>(0.96),
-              errorBuilder: (context, error, stackTrace) {
-                return Container(
-                  height: iconSize,
-                  width: iconSize,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(0.12),
-                  ),
-                  child: Icon(
-                    item.fallbackIcon,
-                    size: iconSize * 0.72,
-                    color: Colors.white.withOpacity(0.95),
-                  ),
-                );
-              },
-            ),
-          ),
-
-          /// Tiny gloss highlight.
-          Positioned(
-            top: kHeight * 0.006,
-            left: kHeight * 0.010,
-            child: Container(
-              height: kHeight * 0.008,
-              width: kHeight * 0.017,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(50),
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.white.withOpacity(0.48),
-                    Colors.white.withOpacity(0.04),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  State<_ShortcutItem> createState() => _ShortcutItemState();
 }
 
-class _ParticleDot extends StatelessWidget {
-  final double size;
-
-  const _ParticleDot({
-    required this.size,
-  });
+class _ShortcutItemState extends State<_ShortcutItem> {
+  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: size,
-      width: size,
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.26),
-        shape: BoxShape.circle,
+    final double iconBox = (widget.kHeight * .060).clamp(48.0, 60.0).toDouble();
+    final double iconSize = iconBox * .56;
+    final Color tileColor = widget.item.tileColor;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTapUp: (_) {
+        setState(() => _pressed = false);
+        widget.item.onTap();
+      },
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+        scale: _pressed ? .96 : 1,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: iconBox,
+              height: iconBox,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(iconBox * .30),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withOpacity(.92),
+                    tileColor,
+                  ],
+                ),
+                border: Border.all(
+                  color: Colors.white.withOpacity(.95),
+                  width: 1.0,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: tileColor.withOpacity(.30),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              alignment: Alignment.center,
+              child: Container(
+                width: iconBox * .78,
+                height: iconBox * .78,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(iconBox * .24),
+                  color: tileColor.withOpacity(.35),
+                ),
+                alignment: Alignment.center,
+                child: Image.asset(
+                  widget.item.image,
+                  width: iconSize,
+                  height: iconSize,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => Icon(
+                    widget.item.fallbackIcon,
+                    size: iconSize,
+                    color: const Color(0xFF6A6E77),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(height: widget.kHeight * .008),
+            SizedBox(
+              height: widget.kHeight * .036,
+              child: Center(
+                child: Text(
+                  widget.item.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFF2E2F33),
+                    fontWeight: FontWeight.w500,
+                    fontSize: (widget.kHeight * .0142).clamp(11.0, 13.2).toDouble(),
+                    height: 1.15,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -538,33 +295,14 @@ class _PremiumItem {
   final String title;
   final String image;
   final IconData fallbackIcon;
-  final List<Color> bgColors;
-  final Color glowColor;
+  final Color tileColor;
   final VoidCallback onTap;
 
   const _PremiumItem({
     required this.title,
     required this.image,
     required this.fallbackIcon,
-    required this.bgColors,
-    required this.glowColor,
+    required this.tileColor,
     required this.onTap,
   });
-}
-
-class _SlidingGradientTransform extends GradientTransform {
-  final double slidePercent;
-
-  const _SlidingGradientTransform({
-    required this.slidePercent,
-  });
-
-  @override
-  Matrix4? transform(Rect bounds, {TextDirection? textDirection}) {
-    return Matrix4.translationValues(
-      bounds.width * (slidePercent * 2.6 - 1.3),
-      0,
-      0,
-    );
-  }
 }

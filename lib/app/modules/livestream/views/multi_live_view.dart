@@ -30,7 +30,7 @@ import '../widgets/LiveProfile_AppBar.dart';
 import '../widgets/entry_animation.dart';
 import '../widgets/live_comments.dart';
 import '../widgets/live_viewer_list.dart';
-import '../widgets/red_packet_animation.dart';
+import '../widgets/RedPacketLiveOverlay.dart';
 import '../widgets/write_comments.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
@@ -1361,34 +1361,13 @@ class _MultiLiveViewState extends State<MultiLiveView> {
                         }
                       }),
 
-                      // Red Packet Animation
-                      Obx(
-                        () =>
-                            websocketController.redPacketVisible.value &&
-                                websocketController
-                                    .currentRedPacket
-                                    .value
-                                    .isNotEmpty
-                            ? Positioned.fill(
-                                child: RedPacketAnimation(
-                                  isVisible: websocketController
-                                      .redPacketVisible
-                                      .value,
-                                  onTap: () async {
-                                    // Collect red packet
-                                    final redPacket = websocketController
-                                        .currentRedPacket
-                                        .value;
-                                    if (redPacket.isNotEmpty) {
-                                      await liveController.collectRedPacket(
-                                        redPacket['id'],
-                                      );
-                                      websocketController.hideRedPacket();
-                                    }
-                                  },
-                                ),
-                              )
-                            : Container(),
+                      RedPacketLiveOverlay(
+                        livestreamId: liveController.streamId.value > 0
+                            ? liveController.streamId.value
+                            : int.tryParse(
+                                  '${streamInfo['id'] ?? streamData['livestream_id'] ?? streamData['stream_id'] ?? streamData['id'] ?? 0}',
+                                ) ??
+                                0,
                       ),
 
                       _agoraService.engine == null

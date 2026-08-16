@@ -1,14 +1,17 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:meetlivepro/app/localization/app_localizer.dart';
 
 import '../../../../constants/image_helper.dart';
 import '../controllers/livestream_controller.dart';
 import '../socket/websocket_controller.dart';
+import 'vip_required_prompt.dart';
 
-import 'package:meetlivepro/app/localization/app_localizer.dart';
 void showLiveImogiBottomSheet({
   required BuildContext context,
   required int streamId,
@@ -24,17 +27,14 @@ void showLiveImogiBottomSheet({
 class LiveImogiBottomSheet extends StatefulWidget {
   final int streamId;
 
-  const LiveImogiBottomSheet({
-    super.key,
-    required this.streamId,
-  });
+  const LiveImogiBottomSheet({super.key, required this.streamId});
 
   @override
   State<LiveImogiBottomSheet> createState() => _LiveImogiBottomSheetState();
 }
 
 class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
-  final dynamic controller = Get.find<LivestreamController>();
+  final LivestreamController controller = Get.find<LivestreamController>();
 
   /// App process চলাকালীন parsed emoji/category data memory-তে থাকবে।
   /// ফলে bottom sheet দ্বিতীয়বার খুললে API/JSON grouping-এর জন্য অপেক্ষা করতে হবে না।
@@ -52,7 +52,7 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
 
     /// আগে memory cache থেকে instantly show, তারপর background-এ API refresh।
     _restoreMemoryCategories();
-    _loadImogies();
+    unawaited(_loadImogies());
   }
 
   _ImogiCategory _cloneCategory(_ImogiCategory category) {
@@ -77,7 +77,7 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
     _loading = false;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _precacheVisibleImogies(0);
+      unawaited(_precacheVisibleImogies(0));
     });
   }
 
@@ -87,7 +87,7 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
       ..addAll(_categories.map(_cloneCategory));
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _precacheVisibleImogies(_selectedIndex);
+      unawaited(_precacheVisibleImogies(_selectedIndex));
     });
   }
 
@@ -96,11 +96,7 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
 
     try {
       await precacheImage(
-        ResizeImage(
-          CachedNetworkImageProvider(url),
-          width: 128,
-          height: 128,
-        ),
+        ResizeImage(CachedNetworkImageProvider(url), width: 128, height: 128),
         context,
       );
     } catch (_) {
@@ -108,32 +104,45 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
     }
   }
 
-  /// Selected tab-এর visible emoji এবং category icons আগে থেকেই image-cache-এ রাখে।
+  /// Selected tab-এর visible emoji আগে cache করি, তবে একসাথে অনেক image decode
+  /// চালাই না। এতে bottom sheet দ্রুত থাকে এবং low-end phone-এ CPU/memory spike কমে।
   Future<void> _precacheVisibleImogies(int categoryIndex) async {
     if (!mounted || _categories.isEmpty) return;
 
-    final int safeIndex = categoryIndex.clamp(0, _categories.length - 1).toInt();
+    final int safeIndex = categoryIndex
+        .clamp(0, _categories.length - 1)
+        .toInt();
     final urls = <String>{};
 
-    for (final category in _categories) {
-      if (category.icon.isNotEmpty) urls.add(category.icon);
+    // Category icon কম সংখ্যায় cache করা যথেষ্ট।
+    for (final category in _categories.take(10)) {
+      final icon = category.icon;
+      if (icon.isNotEmpty) urls.add(icon);
     }
 
-    final selectedItems = _categories[safeIndex].items.take(24);
-    for (final item in selectedItems) {
+    // Current tab-এর প্রথম visible items.
+    for (final item in _categories[safeIndex].items.take(18)) {
       final image = _itemImage(item);
       if (image.isNotEmpty) urls.add(image);
     }
 
-    /// Next tab-এর কয়েকটি image-ও আগে load হবে।
+    // Next tab-এর অল্প কয়েকটি item warm-up.
     if (safeIndex + 1 < _categories.length) {
-      for (final item in _categories[safeIndex + 1].items.take(8)) {
+      for (final item in _categories[safeIndex + 1].items.take(4)) {
         final image = _itemImage(item);
         if (image.isNotEmpty) urls.add(image);
       }
     }
 
-    await Future.wait(urls.take(36).map(_precacheUrl));
+    final pending = urls.take(24).toList(growable: false);
+
+    // 4টি করে preload: 20-30টি network/decode task একসাথে শুরু হবে না।
+    const batchSize = 4;
+    for (var start = 0; start < pending.length; start += batchSize) {
+      if (!mounted) return;
+      final int end = (start + batchSize).clamp(0, pending.length).toInt();
+      await Future.wait(pending.sublist(start, end).map(_precacheUrl));
+    }
   }
 
   String _safeText(dynamic value, {String fallback = ''}) {
@@ -192,8 +201,8 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
 
   int _itemId(Map<String, dynamic> item) {
     return int.tryParse(
-      (item['id'] ?? item['imogi_id'] ?? item['emoji_id'] ?? 0).toString(),
-    ) ??
+          (item['id'] ?? item['imogi_id'] ?? item['emoji_id'] ?? 0).toString(),
+        ) ??
         0;
   }
 
@@ -205,6 +214,17 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
         key.contains('v7') ||
         key.contains('v&v');
   }
+
+  bool _isVipItem(Map<String, dynamic> item) {
+    final raw = item['is_vip'] ?? item['vip_only'] ?? item['requires_vip'];
+    return _isVip(_categoryNameFromItem(item)) ||
+        raw == true ||
+        raw == 1 ||
+        raw?.toString().toLowerCase() == 'true' ||
+        raw?.toString() == '1';
+  }
+
+  bool get _canUseVipEmoji => controller.currentVipPrivileges.vipEmoji;
 
   bool _isRoot(String name) {
     final key = name.toLowerCase();
@@ -241,7 +261,7 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
 
       grouped.putIfAbsent(
         key,
-            () => _ImogiCategory(
+        () => _ImogiCategory(
           name: categoryName,
           icon: _itemImage(item),
           items: <Map<String, dynamic>>[],
@@ -261,15 +281,17 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
     list.sort((a, b) {
       if (a.priority != b.priority) return a.priority.compareTo(b.priority);
 
-      final aSort = int.tryParse(
-        (a.items.first['sort_order'] ?? a.items.first['sort'] ?? 999)
-            .toString(),
-      ) ??
+      final aSort =
+          int.tryParse(
+            (a.items.first['sort_order'] ?? a.items.first['sort'] ?? 999)
+                .toString(),
+          ) ??
           999;
-      final bSort = int.tryParse(
-        (b.items.first['sort_order'] ?? b.items.first['sort'] ?? 999)
-            .toString(),
-      ) ??
+      final bSort =
+          int.tryParse(
+            (b.items.first['sort_order'] ?? b.items.first['sort'] ?? 999)
+                .toString(),
+          ) ??
           999;
 
       if (aSort != bSort) return aSort.compareTo(bSort);
@@ -291,17 +313,18 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
       final cat = _asMap(raw);
       if (cat.isEmpty) continue;
 
-      final rawItems = cat['imogies'] ??
+      final rawItems =
+          cat['imogies'] ??
           cat['imogi'] ??
           cat['emojis'] ??
           cat['emoji'] ??
           cat['items'] ??
           cat['list'];
 
-      final items = _asList(rawItems)
-          .map(_asMap)
+      final List<Map<String, dynamic>> items = _asList(rawItems)
+          .map<Map<String, dynamic>>(_asMap)
           .where((item) => item.isNotEmpty)
-          .toList();
+          .toList(growable: false);
 
       if (items.isEmpty) continue;
 
@@ -348,7 +371,8 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
 
       if (cachedList.isNotEmpty) {
         final cachedFirst = _asMap(cachedList.first);
-        final cachedHasNestedItems = cachedFirst.containsKey('imogies') ||
+        final cachedHasNestedItems =
+            cachedFirst.containsKey('imogies') ||
             cachedFirst.containsKey('imogi') ||
             cachedFirst.containsKey('emojis') ||
             cachedFirst.containsKey('emoji') ||
@@ -374,7 +398,8 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
       final rawList = _readCachedImogiList();
 
       final first = rawList.isNotEmpty ? _asMap(rawList.first) : {};
-      final hasNestedItems = first.containsKey('imogies') ||
+      final hasNestedItems =
+          first.containsKey('imogies') ||
           first.containsKey('imogi') ||
           first.containsKey('emojis') ||
           first.containsKey('emoji') ||
@@ -391,7 +416,9 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
         setState(() => _loading = false);
       }
 
-      debugPrint('✅ Imogi category tabs => ${_categories.map((e) => e.name).toList()}');
+      debugPrint(
+        '✅ Imogi category tabs => ${_categories.map((e) => e.name).toList()}',
+      );
     } catch (e) {
       debugPrint('❌ _loadImogies error: $e');
       if (mounted && _categories.isEmpty) {
@@ -403,29 +430,49 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
     }
   }
 
-  List<dynamic> _readCachedImogiList() {
+  /// Controller field List, nullable List, RxList বা Rx<List> যাই হোক,
+  /// এখানে non-null List<dynamic> এ normalize হয়।
+  /// তাই nullable `.isNotEmpty` এবং nullable list argument error হয় না।
+  List<dynamic> _normalizeListSource(dynamic source) {
+    if (source == null) return <dynamic>[];
+
+    if (source is List) {
+      return List<dynamic>.from(source);
+    }
+
+    // Rx/List wrapper support. `dynamic` ব্যবহার করা হয়েছে যাতে controller-এর
+    // concrete reactive type-এর সাথে এই widget tightly coupled না হয়।
     try {
-      final raw = controller.imogiList;
-      if (raw is List && raw.isNotEmpty) return List<dynamic>.from(raw);
-      final value = raw?.value;
-      if (value is List && value.isNotEmpty) return List<dynamic>.from(value);
-    } catch (_) {}
+      final dynamic value = source.value;
+      if (value is List) {
+        return List<dynamic>.from(value);
+      }
+    } catch (_) {
+      // Unsupported wrapper => empty list.
+    }
+
+    return <dynamic>[];
+  }
+
+  List<dynamic> _readCachedImogiList() {
+    final imogies = _normalizeListSource(controller.imogiList);
+    if (imogies.isNotEmpty) return imogies;
 
     /// Nested category cache থাকলে flatten না করে original structure রাখি।
     /// এতে category name/icon হারায় না এবং প্রথমবারের tab layout-ও সঠিক থাকে।
-    try {
-      final raw = controller.imogiCategoryList;
-      if (raw is List && raw.isNotEmpty) return List<dynamic>.from(raw);
-
-      final value = raw?.value;
-      if (value is List && value.isNotEmpty) return List<dynamic>.from(value);
-    } catch (_) {}
+    final categories = _normalizeListSource(controller.imogiCategoryList);
+    if (categories.isNotEmpty) return categories;
 
     return <dynamic>[];
   }
 
   Future<void> _sendImogi(Map<String, dynamic> item) async {
     if (_sending) return;
+
+    if (_isVipItem(item) && !_canUseVipEmoji) {
+      await showVipRequired(('VIP Emoji').appTr);
+      return;
+    }
 
     final imogiId = _itemId(item);
 
@@ -516,19 +563,11 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
                 children: [
                   Expanded(
                     child: Center(
-                      child: _shimmerBox(
-                        height: 34,
-                        width: 34,
-                        radius: 18,
-                      ),
+                      child: _shimmerBox(height: 34, width: 34, radius: 18),
                     ),
                   ),
                   const SizedBox(height: 4),
-                  _shimmerBox(
-                    height: 8,
-                    width: 34,
-                    radius: 6,
-                  ),
+                  _shimmerBox(height: 8, width: 34, radius: 6),
                 ],
               );
             },
@@ -550,11 +589,7 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
                 width: 52,
                 margin: const EdgeInsets.only(right: 8),
                 padding: const EdgeInsets.all(9),
-                child: _shimmerBox(
-                  height: 30,
-                  width: 30,
-                  radius: 16,
-                ),
+                child: _shimmerBox(height: 30, width: 30, radius: 16),
               );
             },
           ),
@@ -565,6 +600,13 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
+    return Obx(() {
+      controller.currentVipRevision.value;
+      return _buildContent(context);
+    });
+  }
+
+  Widget _buildContent(BuildContext context) {
     final media = MediaQuery.of(context);
     final width = media.size.width;
     final height = media.size.height;
@@ -576,7 +618,12 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
         ? 6
         : 7;
 
-    final selected = _categories.isEmpty ? null : _categories[_selectedIndex];
+    final int safeSelectedIndex = _categories.isEmpty
+        ? 0
+        : _selectedIndex.clamp(0, _categories.length - 1).toInt();
+    final List<Map<String, dynamic>> selectedItems = _categories.isEmpty
+        ? const <Map<String, dynamic>>[]
+        : _categories[safeSelectedIndex].items;
 
     return SafeArea(
       top: false,
@@ -617,168 +664,195 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
                   ? _buildShimmerGrid(width)
                   : _categories.isEmpty
                   ? Center(
-                child: Text(
-                  ('No imogi found').appTr,
-                  style: GoogleFonts.poppins(
-                    color: Colors.black54,
-                    fontSize: 13,
-                  ),
-                ),
-              )
-                  : Column(
-                children: [
-                  Expanded(
-                    child: GridView.builder(
-                      padding: const EdgeInsets.only(top: 0),
-                      physics: const BouncingScrollPhysics(),
-                      gridDelegate:
-                      SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: crossAxisCount,
-                        mainAxisSpacing: 6,
-                        crossAxisSpacing: 6,
-                        childAspectRatio: .82,
+                      child: Text(
+                        ('No imogi found').appTr,
+                        style: GoogleFonts.poppins(
+                          color: Colors.black54,
+                          fontSize: 13,
+                        ),
                       ),
-                      itemCount: selected!.items.length,
-                      itemBuilder: (context, index) {
-                        final item = selected.items[index];
-                        final image = _itemImage(item);
-                        final name = _itemName(item);
+                    )
+                  : Column(
+                      children: [
+                        Expanded(
+                          child: GridView.builder(
+                            padding: const EdgeInsets.only(top: 0),
+                            physics: const BouncingScrollPhysics(),
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: crossAxisCount,
+                                  mainAxisSpacing: 6,
+                                  crossAxisSpacing: 6,
+                                  childAspectRatio: .82,
+                                ),
+                            itemCount: selectedItems.length,
+                            itemBuilder: (context, index) {
+                              final item = selectedItems[index];
+                              final image = _itemImage(item);
+                              final name = _itemName(item);
+                              final vipLocked =
+                                  _isVipItem(item) && !_canUseVipEmoji;
 
-                        return GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () => _sendImogi(item),
-                          child: Column(
-                            mainAxisAlignment:
-                            MainAxisAlignment.center,
-                            children: [
-                              Expanded(
-                                child: Center(
-                                  child: image.isEmpty
-                                      ? Icon(
-                                    Icons.emoji_emotions_rounded,
-                                    color: Colors.black54,
-                                    size: 28,
-                                  )
-                                      : CachedNetworkImage(
-                                    imageUrl: image,
-                                    fit: BoxFit.contain,
-                                    memCacheWidth: 128,
-                                    memCacheHeight: 128,
-                                    maxWidthDiskCache: 256,
-                                    maxHeightDiskCache: 256,
-                                    fadeInDuration: Duration.zero,
-                                    placeholder:
-                                        (_, __) => _shimmerBox(
-                                      height: 28,
-                                      width: 28,
-                                      radius: 16,
+                              return GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () => _sendImogi(item),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Expanded(
+                                      child: Center(
+                                        child: Stack(
+                                          alignment: Alignment.center,
+                                          children: [
+                                            image.isEmpty
+                                                ? Icon(
+                                                    Icons
+                                                        .emoji_emotions_rounded,
+                                                    color: Colors.black54,
+                                                    size: 28,
+                                                  )
+                                                : CachedNetworkImage(
+                                                    imageUrl: image,
+                                                    fit: BoxFit.contain,
+                                                    memCacheWidth: 128,
+                                                    memCacheHeight: 128,
+                                                    maxWidthDiskCache: 256,
+                                                    maxHeightDiskCache: 256,
+                                                    fadeInDuration:
+                                                        Duration.zero,
+                                                    placeholder: (_, __) =>
+                                                        _shimmerBox(
+                                                          height: 28,
+                                                          width: 28,
+                                                          radius: 16,
+                                                        ),
+                                                    errorWidget: (_, __, ___) =>
+                                                        Icon(
+                                                          Icons
+                                                              .emoji_emotions_rounded,
+                                                          color: Colors.black54,
+                                                          size: 28,
+                                                        ),
+                                                  ),
+                                            if (vipLocked)
+                                              Positioned(
+                                                top: 0,
+                                                right: 0,
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(
+                                                    3,
+                                                  ),
+                                                  decoration:
+                                                      const BoxDecoration(
+                                                        color: Color(
+                                                          0xFFEDE7F6,
+                                                        ),
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                  child: const Icon(
+                                                    Icons.lock_rounded,
+                                                    size: 12,
+                                                    color: Color(0xFF6A3FC7),
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
-                                    errorWidget:
-                                        (_, __, ___) => Icon(
-                                      Icons
-                                          .emoji_emotions_rounded,
-                                      color: Colors.black54,
-                                      size: 28,
+                                    const SizedBox(height: 1),
+                                    Text(
+                                      name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.center,
+                                      style: GoogleFonts.poppins(
+                                        color: Colors.black87,
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w500,
+                                        height: 1,
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ),
-                              ),
-                              const SizedBox(height: 1),
-                              Text(
-                                name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.center,
-                                style: GoogleFonts.poppins(
-                                  color: Colors.black87,
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.w500,
-                                  height: 1,
-                                ),
-                              ),
-                            ],
+                              );
+                            },
                           ),
-                        );
-                      },
-                    ),
-                  ),
-                  Container(
-                    height: 1,
-                    margin: const EdgeInsets.symmetric(vertical: 5),
-                    color: const Color(0xFFE8EAEE),
-                  ),
-                  SizedBox(
-                    height: 54,
-                    child: ListView.builder(
-                      physics: const BouncingScrollPhysics(),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _categories.length,
-                      itemBuilder: (context, index) {
-                        final category = _categories[index];
-                        final isSelected = index == _selectedIndex;
+                        ),
+                        Container(
+                          height: 1,
+                          margin: const EdgeInsets.symmetric(vertical: 5),
+                          color: const Color(0xFFE8EAEE),
+                        ),
+                        SizedBox(
+                          height: 54,
+                          child: ListView.builder(
+                            physics: const BouncingScrollPhysics(),
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _categories.length,
+                            itemBuilder: (context, index) {
+                              final category = _categories[index];
+                              final isSelected = index == _selectedIndex;
 
-                        return GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () {
-                            if (_selectedIndex == index) return;
-                            setState(() => _selectedIndex = index);
-                            _precacheVisibleImogies(index);
-                          },
-                          child: AnimatedContainer(
-                            duration:
-                            const Duration(milliseconds: 160),
-                            width: 52,
-                            margin: const EdgeInsets.only(right: 7),
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: isSelected
-                                  ? const Color(0xFFF1F3F6)
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(13),
-                              border: Border.all(
-                                color: isSelected
-                                    ? const Color(0xFFDDE1E7)
-                                    : Colors.transparent,
-                              ),
-                            ),
-                            child: category.icon.isEmpty
-                                ? Icon(
-                              Icons.emoji_emotions_rounded,
-                              color: isSelected
-                                  ? const Color(0xFFFF4D91)
-                                  : Colors.black54,
-                              size: 25,
-                            )
-                                : CachedNetworkImage(
-                              imageUrl: category.icon,
-                              fit: BoxFit.contain,
-                              memCacheWidth: 96,
-                              memCacheHeight: 96,
-                              maxWidthDiskCache: 192,
-                              maxHeightDiskCache: 192,
-                              fadeInDuration: Duration.zero,
-                              placeholder: (_, __) =>
-                                  _shimmerBox(
-                                    height: 25,
-                                    width: 25,
-                                    radius: 14,
-                                  ),
-                              errorWidget: (_, __, ___) =>
-                                  Icon(
-                                    Icons.emoji_emotions_rounded,
+                              return GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: () {
+                                  if (_selectedIndex == index) return;
+                                  setState(() => _selectedIndex = index);
+                                  unawaited(_precacheVisibleImogies(index));
+                                },
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 160),
+                                  width: 52,
+                                  margin: const EdgeInsets.only(right: 7),
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
                                     color: isSelected
-                                        ? const Color(0xFFFF4D91)
-                                        : Colors.black54,
-                                    size: 25,
+                                        ? const Color(0xFFF1F3F6)
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(13),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? const Color(0xFFDDE1E7)
+                                          : Colors.transparent,
+                                    ),
                                   ),
-                            ),
+                                  child: category.icon.isEmpty
+                                      ? Icon(
+                                          Icons.emoji_emotions_rounded,
+                                          color: isSelected
+                                              ? const Color(0xFFFF4D91)
+                                              : Colors.black54,
+                                          size: 25,
+                                        )
+                                      : CachedNetworkImage(
+                                          imageUrl: category.icon,
+                                          fit: BoxFit.contain,
+                                          memCacheWidth: 96,
+                                          memCacheHeight: 96,
+                                          maxWidthDiskCache: 192,
+                                          maxHeightDiskCache: 192,
+                                          fadeInDuration: Duration.zero,
+                                          placeholder: (_, __) => _shimmerBox(
+                                            height: 25,
+                                            width: 25,
+                                            radius: 14,
+                                          ),
+                                          errorWidget: (_, __, ___) => Icon(
+                                            Icons.emoji_emotions_rounded,
+                                            color: isSelected
+                                                ? const Color(0xFFFF4D91)
+                                                : Colors.black54,
+                                            size: 25,
+                                          ),
+                                        ),
+                                ),
+                              );
+                            },
                           ),
-                        );
-                      },
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
             ),
           ],
         ),

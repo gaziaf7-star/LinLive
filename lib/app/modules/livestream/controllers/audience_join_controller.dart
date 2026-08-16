@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
@@ -37,6 +39,8 @@ class AudienceJoinController extends GetxController {
   int _readyRouteStreamId = 0;
   int _readyRouteGeneration = 0;
 
+  bool get isJoinInProgress => _joiningLivestreamIds.isNotEmpty;
+
   bool _hasCanonicalRoomIdentity(Map<String, dynamic> room, int targetId) {
     return _livestreamId(room) == targetId &&
         _ownerUserId(room) > 0 &&
@@ -44,8 +48,8 @@ class AudienceJoinController extends GetxController {
   }
 
   Future<Map<String, dynamic>> _canonicalBannerTargetData(
-    Map<String, dynamic> bannerData,
-  ) async {
+      Map<String, dynamic> bannerData,
+      ) async {
     if (!_isGlobalBannerNavigation(bannerData)) return bannerData;
     final int targetId = _livestreamId(bannerData);
     final stopwatch = Stopwatch()..start();
@@ -58,7 +62,7 @@ class AudienceJoinController extends GetxController {
       try {
         canonical =
             await controller.findActiveLivestreamById(targetId) ??
-            <String, dynamic>{};
+                <String, dynamic>{};
       } catch (_) {
         debugPrint(
           'BANNER_TARGET_LOOKUP_FAILED target=$targetId reason=network',
@@ -68,9 +72,7 @@ class AudienceJoinController extends GetxController {
     }
     if (!_hasCanonicalRoomIdentity(canonical, targetId)) {
       final reason = canonical.isEmpty ? 'not_found' : 'invalid_data';
-      debugPrint(
-        'BANNER_TARGET_LOOKUP_FAILED target=$targetId reason=$reason',
-      );
+      debugPrint('BANNER_TARGET_LOOKUP_FAILED target=$targetId reason=$reason');
       throw StateError('Canonical livestream data unavailable for $targetId');
     }
     final result = <String, dynamic>{
@@ -88,8 +90,8 @@ class AudienceJoinController extends GetxController {
     };
     debugPrint(
       'BANNER_TARGET_LOOKUP_DONE target=$targetId source=$source '
-      'elapsed=${stopwatch.elapsedMilliseconds}ms host=${_ownerUserId(result)} '
-      'channel=${_normalChannel(result)}',
+          'elapsed=${stopwatch.elapsedMilliseconds}ms host=${_ownerUserId(result)} '
+          'channel=${_normalChannel(result)}',
     );
     return result;
   }
@@ -119,13 +121,13 @@ class AudienceJoinController extends GetxController {
     final nested = _asMap(clean['livestreamdata']);
     if (nested.isNotEmpty) {
       clean['livestreamdata'] =
-          _sanitizeGlobalBannerRoomData({
-              ...nested,
-              'global_lucky_event': clean['global_lucky_event'],
-              'global_lucky_bag_packet': clean['global_lucky_bag_packet'],
-            })
-            ..remove('global_lucky_event')
-            ..remove('global_lucky_bag_packet');
+      _sanitizeGlobalBannerRoomData({
+        ...nested,
+        'global_lucky_event': clean['global_lucky_event'],
+        'global_lucky_bag_packet': clean['global_lucky_bag_packet'],
+      })
+        ..remove('global_lucky_event')
+        ..remove('global_lucky_bag_packet');
     }
     return clean;
   }
@@ -165,18 +167,18 @@ class AudienceJoinController extends GetxController {
     final int userId = authController.userProfile.value.user?.id?.toInt() ?? 0;
     final bool wasBroadcaster =
         livestreamController.isBroadcaster.value ||
-        livestreamController.isHost.value;
+            livestreamController.isHost.value;
     final int roomGeneration = livestreamController.beginRoomTransition(
       targetStreamId: targetStreamId,
     );
     _pendingRoutePresentations.removeWhere(
-      (generation, _) => generation != roomGeneration,
+          (generation, _) => generation != roomGeneration,
     );
     _pendingSelfViewerResponses.removeWhere(
-      (generation, _) => generation != roomGeneration,
+          (generation, _) => generation != roomGeneration,
     );
     _pendingTargetRouteData.removeWhere(
-      (generation, _) => generation != roomGeneration,
+          (generation, _) => generation != roomGeneration,
     );
 
     final cleanup = websocketController.liveCleanupService.leaveBeforeJoining(
@@ -248,40 +250,50 @@ class AudienceJoinController extends GetxController {
     final presentation = _pendingRoutePresentations.remove(generation);
     final routeData = _pendingTargetRouteData.remove(generation);
     if (routeData != null) {
-      final int userId = authController.userProfile.value.user?.id?.toInt() ?? 0;
+      final int userId =
+          authController.userProfile.value.user?.id?.toInt() ?? 0;
       bool isSelf(dynamic raw) {
         if (raw is! Map) return false;
         final map = Map<String, dynamic>.from(raw);
         final user = _asMap(map['user']);
-        return _toInt(map['viewer_id'] ?? map['user_id'] ?? map['caller_id'] ?? user['id']) == userId;
+        return _toInt(
+          map['viewer_id'] ??
+              map['user_id'] ??
+              map['caller_id'] ??
+              user['id'],
+        ) ==
+            userId;
       }
+
       final selfCalls = websocketController.liveCallList.where(isSelf).toList();
       final selfSeatNo = selfCalls.fold<int>(0, (seat, raw) {
         final map = Map<String, dynamic>.from(raw as Map);
         return seat > 0 ? seat : _toInt(map['seat_no'] ?? map['seat_number']);
       });
-      final viewerSelfCount = livestreamController.liveViewerList.where(isSelf).length;
+      final viewerSelfCount = livestreamController.liveViewerList
+          .where(isSelf)
+          .length;
       final int canonicalStreamId = _livestreamId(routeData);
       debugPrint(
         'TARGET_UI_PARITY streamId=${livestreamController.streamId.value} '
-        'canonicalStreamId=$canonicalStreamId routeStreamId=$streamId '
-        'hostId=${_ownerUserId(routeData)} '
-        'displayedHostId=${livestreamController.broadcasterId.value} '
-        'selfUserId=$userId '
-        'displayedOwnerSeatUserId=${livestreamController.broadcasterId.value} '
-        'streamTitle=${_safeText(routeData['stream_title'] ?? routeData['title'])} '
-        'viewerCount=${livestreamController.liveViewerList.length} '
-        'viewerListCount=${livestreamController.liveViewerList.length} '
-        'viewerContainsSelf=${viewerSelfCount > 0} '
-        'viewerSelfCount=$viewerSelfCount selfSeatNo=$selfSeatNo '
-        'callListCount=${websocketController.liveCallList.length}',
+            'canonicalStreamId=$canonicalStreamId routeStreamId=$streamId '
+            'hostId=${_ownerUserId(routeData)} '
+            'displayedHostId=${livestreamController.broadcasterId.value} '
+            'selfUserId=$userId '
+            'displayedOwnerSeatUserId=${livestreamController.broadcasterId.value} '
+            'streamTitle=${_safeText(routeData['stream_title'] ?? routeData['title'])} '
+            'viewerCount=${livestreamController.liveViewerList.length} '
+            'viewerListCount=${livestreamController.liveViewerList.length} '
+            'viewerContainsSelf=${viewerSelfCount > 0} '
+            'viewerSelfCount=$viewerSelfCount selfSeatNo=$selfSeatNo '
+            'callListCount=${websocketController.liveCallList.length}',
       );
     }
     if (presentation != null) {
       final type = _safeText(presentation['global_banner_type']);
       debugPrint(
         'BANNER_PRESENTATION_RESTORE type=$type stream=$streamId '
-        'generation=$generation',
+            'generation=$generation',
       );
       _restoreTargetBannerEvent(presentation);
       debugPrint('BANNER_PRESENTATION_SHOWN type=$type stream=$streamId');
@@ -290,7 +302,7 @@ class AudienceJoinController extends GetxController {
 
   bool _isGlobalBannerNavigation(Map<String, dynamic> liveData) =>
       _asMap(liveData['global_lucky_bag_packet']).isNotEmpty ||
-      _asMap(liveData['global_lucky_event']).isNotEmpty;
+          _asMap(liveData['global_lucky_event']).isNotEmpty;
 
   void _logJoinParity({
     required Map<String, dynamic> liveData,
@@ -303,11 +315,11 @@ class AudienceJoinController extends GetxController {
       final map = Map<String, dynamic>.from(raw);
       final user = _asMap(map['user']);
       return _toInt(
-            map['viewer_id'] ??
-                map['user_id'] ??
-                map['caller_id'] ??
-                user['id'],
-          ) ==
+        map['viewer_id'] ??
+            map['user_id'] ??
+            map['caller_id'] ??
+            user['id'],
+      ) ==
           userId;
     }
 
@@ -327,16 +339,16 @@ class AudienceJoinController extends GetxController {
         : 'list';
     debugPrint(
       'JOIN_PARITY sourceType=$sourceType streamId=$streamId '
-      'sessionGeneration=$generation userId=$userId '
-      'isHost=${livestreamController.isHost.value} '
-      'isBroadcaster=${livestreamController.isBroadcaster.value} '
-      'viewerContainsSelf=${viewerSelfCount > 0} '
-      'viewerSelfCount=$viewerSelfCount selfSeatNo=$selfSeat '
-      'selfAcceptedCallCount=${selfCalls.length} '
-      'pendingSelfCallCount=$pendingSelf '
-      'guardian=${livestreamController.isMyGuardian.value} '
-      'muted=${websocketController.audioMutedUserMap[userId] == true} '
-      'agoraRole=audience callListCount=${websocketController.liveCallList.length}',
+          'sessionGeneration=$generation userId=$userId '
+          'isHost=${livestreamController.isHost.value} '
+          'isBroadcaster=${livestreamController.isBroadcaster.value} '
+          'viewerContainsSelf=${viewerSelfCount > 0} '
+          'viewerSelfCount=$viewerSelfCount selfSeatNo=$selfSeat '
+          'selfAcceptedCallCount=${selfCalls.length} '
+          'pendingSelfCallCount=$pendingSelf '
+          'guardian=${livestreamController.isMyGuardian.value} '
+          'muted=${websocketController.audioMutedUserMap[userId] == true} '
+          'agoraRole=audience callListCount=${websocketController.liveCallList.length}',
     );
   }
 
@@ -529,10 +541,10 @@ class AudienceJoinController extends GetxController {
     /// `livestream_id`. Prefer livestream_id for packet-like payloads.
     final bool looksLikeRedPacket =
         data['red_packet_id'] != null ||
-        data['packet_type'] != null ||
-        data['amount'] != null ||
-        data['remaining_quantity'] != null ||
-        data['sender_id'] != null;
+            data['packet_type'] != null ||
+            data['amount'] != null ||
+            data['remaining_quantity'] != null ||
+            data['sender_id'] != null;
 
     if (looksLikeRedPacket) {
       final liveId = _firstInt([
@@ -680,9 +692,9 @@ class AudienceJoinController extends GetxController {
   }
 
   int _pkSenderLivestreamId(
-    Map<String, dynamic> data,
-    int originalLivestreamId,
-  ) {
+      Map<String, dynamic> data,
+      int originalLivestreamId,
+      ) {
     return _firstInt([
       data['pk_sender_livestream_id'],
       data['sender_livestream_id'],
@@ -742,7 +754,7 @@ class AudienceJoinController extends GetxController {
           ? data['opponent_livestream']['user_id']
           : null,
       data['opponent_livestream'] is Map &&
-              data['opponent_livestream']['user'] is Map
+          data['opponent_livestream']['user'] is Map
           ? data['opponent_livestream']['user']['id']
           : null,
       data['pk'] is Map ? data['pk']['receiver_host_id'] : null,
@@ -852,18 +864,29 @@ class AudienceJoinController extends GetxController {
     final Stopwatch joinStopwatch = Stopwatch()..start();
     void timing(String label) {
       if (kDebugMode) {
-        debugPrint('$label=${joinStopwatch.elapsedMilliseconds}ms');
+        debugPrint('[LIVE_JOIN] $label ${joinStopwatch.elapsedMilliseconds}ms');
       }
     }
 
     bool isCurrentJoin() =>
         generation == _joinGeneration &&
-        _joiningLivestreamIds.contains(requestedLivestreamId) &&
-        !isClosed;
+            _joiningLivestreamIds.contains(requestedLivestreamId) &&
+            !isClosed;
+
+    // ✅ FIX: see abortRoomTransition/abortRoomSession. beginRoomTransition
+    // (called inside _prepareFreshAudienceSession below) locks out realtime
+    // events for every stream until a matching activate call lands. This
+    // pair of variables lets the finally block detect "we opened a
+    // transition but this join returned/threw before ever activating it"
+    // and safely roll it back, instead of leaving every future join/seat/
+    // entry update silently dropped.
+    int? startedRoomGeneration;
+    bool transitionActivated = false;
 
     isLoading.value = true;
+    timing('join_tap');
     _setJoinProgress('Preparing live room...');
-    timing('join_validation_done');
+    timing('controller_ready');
     final bool isBannerNavigation = _isGlobalBannerNavigation(initialLiveData);
     if (!isBannerNavigation) _warmAudioEngineForFastJoin();
 
@@ -888,6 +911,7 @@ class AudienceJoinController extends GetxController {
         isBannerNavigation: isBannerNavigation,
       );
       final int roomGeneration = transition.generation;
+      startedRoomGeneration = roomGeneration;
 
       late Future<Map<String, dynamic>> resultFuture;
       if (isBannerNavigation) {
@@ -896,24 +920,24 @@ class AudienceJoinController extends GetxController {
 
         final bool sourceStateCleared =
             livestreamController.streamId.value == 0 &&
-            websocketController.streamID.value == 0 &&
-            websocketController.activeAudioStreamId.value == 0 &&
-            !livestreamController.isHost.value &&
-            !livestreamController.isBroadcaster.value &&
-            websocketController.liveCallList.isEmpty &&
-            websocketController.pendingCall.isEmpty;
+                websocketController.streamID.value == 0 &&
+                websocketController.activeAudioStreamId.value == 0 &&
+                !livestreamController.isHost.value &&
+                !livestreamController.isBroadcaster.value &&
+                websocketController.liveCallList.isEmpty &&
+                websocketController.pendingCall.isEmpty;
         assert(requestedLivestreamId != currentStreamId);
         assert(sourceStateCleared);
         if (!sourceStateCleared) {
           debugPrint(
             'TARGET_JOIN_BLOCKED source=$currentStreamId target=$requestedLivestreamId '
-            'stream=${livestreamController.streamId.value} '
-            'ws=${websocketController.streamID.value} '
-            'audio=${websocketController.activeAudioStreamId.value} '
-            'host=${livestreamController.isHost.value} '
-            'broadcaster=${livestreamController.isBroadcaster.value} '
-            'calls=${websocketController.liveCallList.length} '
-            'pending=${websocketController.pendingCall.length}',
+                'stream=${livestreamController.streamId.value} '
+                'ws=${websocketController.streamID.value} '
+                'audio=${websocketController.activeAudioStreamId.value} '
+                'host=${livestreamController.isHost.value} '
+                'broadcaster=${livestreamController.isBroadcaster.value} '
+                'calls=${websocketController.liveCallList.length} '
+                'pending=${websocketController.pendingCall.length}',
           );
           return;
         }
@@ -932,10 +956,11 @@ class AudienceJoinController extends GetxController {
         _warmAudioEngineForFastJoin();
         debugPrint(
           'TARGET_JOIN_START source=$currentStreamId target=$requestedLivestreamId '
-          'generation=$roomGeneration',
+              'generation=$roomGeneration',
         );
         _setJoinProgress('Checking room access...');
         timing('join_api_start');
+        if (kDebugMode) debugPrint('[LIVE_JOIN] access_start');
         resultFuture = livestreamController.checkCanJoinLivestream(
           requestedLivestreamId,
           userId,
@@ -944,6 +969,7 @@ class AudienceJoinController extends GetxController {
         final canonicalFuture = _canonicalBannerTargetData(initialLiveData);
         _setJoinProgress('Checking room access...');
         timing('join_api_start');
+        if (kDebugMode) debugPrint('[LIVE_JOIN] access_start');
         resultFuture = livestreamController.checkCanJoinLivestream(
           requestedLivestreamId,
           userId,
@@ -987,7 +1013,7 @@ class AudienceJoinController extends GetxController {
       liveLog('================ AUDIENCE JOIN START ================');
       liveLog(
         '👀 join => user=$userId stream=$originalLivestreamId '
-        'pk=$isPkRunning channel=$finalAgoraChannel',
+            'pk=$isPkRunning channel=$finalAgoraChannel',
       );
 
       if (finalAgoraChannel.isEmpty) {
@@ -1014,9 +1040,46 @@ class AudienceJoinController extends GetxController {
         return;
       }
 
+      // Access and fallback RTC-token generation are independent once the
+      // canonical channel/uid are known. Run them concurrently so two slow
+      // backend calls do not add their latencies together. Access remains the
+      // authority: a rejection below discards this token result.
+      final Stopwatch tokenStopwatch = Stopwatch()..start();
+      final Future<bool> parallelFallbackTokenFuture = agoraTokenController
+          .tryToGenerateBroadcasterToken(
+        isBroadcaster: false,
+        userId: userId,
+        channelName: finalAgoraChannel,
+        streamId: '$originalLivestreamId',
+        pkId: isPkRunning ? pkId : null,
+      );
+
       final result = await resultFuture;
       timing('join_api_done');
+      if (kDebugMode) {
+        debugPrint(
+          '[LIVE_JOIN] access_done duration_ms=${joinStopwatch.elapsedMilliseconds}',
+        );
+      }
       if (!isCurrentJoin()) return;
+
+      final bool tokenFromJoinResponse = agoraTokenController
+          .adoptTokenResponseIfValid(
+        response: result,
+        isBroadcaster: false,
+        userId: userId,
+        channelName: finalAgoraChannel,
+        streamId: '$originalLivestreamId',
+        pkId: isPkRunning ? pkId : null,
+      );
+      if (kDebugMode) {
+        debugPrint(
+          '[LIVE_JOIN][ACCESS_RESPONSE] '
+              'duration_ms=${joinStopwatch.elapsedMilliseconds} '
+              'has_rtc_token=$tokenFromJoinResponse '
+              'token_source=${tokenFromJoinResponse ? 'join_response' : 'parallel_token_api'}',
+        );
+      }
 
       if (!isBannerNavigation) await transition.cleanup;
       if (!isCurrentJoin()) return;
@@ -1054,6 +1117,15 @@ class AudienceJoinController extends GetxController {
       // - Register viewer and generate Agora token in parallel.
       // - Heavy room snapshot/list sync runs after navigation in background.
       _setJoinProgress('Entering live room...');
+      // The unified listener is idempotent and normally already connected.
+      // Prepare it and clear stale leave guards before add-viewer so realtime
+      // events cannot be missed in the join/snapshot gap.
+      unawaited(websocketController.tryToConnectToUnifiedLiveStreamEventWs());
+      websocketController.prepareViewerRejoin(
+        livestreamId: originalLivestreamId,
+        viewerId: userId,
+      );
+      timing('socket_ready');
       final viewerAddFuture = livestreamController.tryToAddViewer(
         streamId: originalLivestreamId,
         viewerId: userId,
@@ -1066,16 +1138,21 @@ class AudienceJoinController extends GetxController {
         });
       }
 
-      final tokenFuture = agoraTokenController.tryToGenerateBroadcasterToken(
-        isBroadcaster: false,
-        userId: userId,
-        channelName: finalAgoraChannel,
-        streamId: '$originalLivestreamId',
-        pkId: isPkRunning ? pkId : null,
-      );
+      final Future<bool> tokenFuture = tokenFromJoinResponse
+          ? Future<bool>.value(true)
+          : parallelFallbackTokenFuture;
 
       _setJoinProgress('Connecting audio...');
       final bool tokenReady = await tokenFuture;
+      tokenStopwatch.stop();
+      timing('agora_token');
+      if (kDebugMode) {
+        debugPrint(
+          '[LIVE_JOIN][TOKEN_READY] room=$originalLivestreamId '
+              'duration_ms=${tokenStopwatch.elapsedMilliseconds} '
+              'source=${tokenFromJoinResponse ? 'join_response' : 'token_api'}',
+        );
+      }
       if (!isCurrentJoin()) {
         final viewerAddResponse = await viewerAddFuture;
         if (viewerAddResponse != null) {
@@ -1113,18 +1190,43 @@ class AudienceJoinController extends GetxController {
       if (isBannerNavigation) {
         debugPrint(
           'TARGET_SESSION_ACTIVATED target=$originalLivestreamId '
-          'generation=$roomGeneration',
+              'generation=$roomGeneration',
         );
       }
       websocketController.activateRoomTransition(
         generation: roomGeneration,
         streamId: originalLivestreamId,
       );
+      transitionActivated = true;
       livestreamController.streamId.value = originalLivestreamId;
-      websocketController.prepareViewerRejoin(
-        livestreamId: originalLivestreamId,
-        viewerId: userId,
+
+      // ✅ FIX (rejoin shows stale "muted"): a previous full-exit's cleanup
+      // (see clearSpecificUserStreamData's shouldDemoteCurrentUserMedia
+      // branch) intentionally sets mute/isMuted/isAudioEnabled and
+      // audioMutedUserMap[myId] to "muted" as a safety measure — it
+      // prevents this device from silently republishing its mic if a
+      // background/resume recovery ran after leaving a seat. That flag has
+      // no expiry of its own, so it was still "muted" the next time this
+      // user rejoined, even as a fresh plain viewer who never touched mute
+      // this session. A confirmed successful join always starts from a
+      // clean, unmuted local state.
+      livestreamController.mute.value = false;
+      livestreamController.isMuted.value = false;
+      livestreamController.isAudioEnabled.value = true;
+      if (websocketController.audioMutedUserMap.containsKey(userId)) {
+        websocketController.audioMutedUserMap.remove(userId);
+        websocketController.audioMutedUserMap.refresh();
+      }
+      // Admin state is persistent but ancillary to opening/audio. Restore it
+      // asynchronously; room-scoped mutation guards reject a late old-room
+      // response, while the UI updates immediately when the result arrives.
+      unawaited(
+        livestreamController.syncGuardianStateForRoom(
+          streamId: originalLivestreamId,
+          userId: userId,
+        ),
       );
+
       livestreamController.startLivePresenceHeartbeat(
         livestreamId: originalLivestreamId,
         role: 'viewer',
@@ -1192,15 +1294,15 @@ class AudienceJoinController extends GetxController {
 
       liveLog(
         '✅ Audience route hydrated => stream=$originalLivestreamId '
-        'seat=$safeRouteSeatCount bg=${routeArguments['room_background']} '
-        'theme=${routeArguments['room_theme']}',
+            'seat=$safeRouteSeatCount bg=${routeArguments['room_background']} '
+            'theme=${routeArguments['room_theme']}',
       );
 
       debugPrint(
         'BANNER_TARGET_ROUTE_DATA stream=$originalLivestreamId '
-        'host=${_ownerUserId(routeArguments)} '
-        'title=${_safeText(routeArguments['stream_title'] ?? routeArguments['title'])} '
-        'bannerType=${_safeText(routeArguments['global_banner_type'])}',
+            'host=${_ownerUserId(routeArguments)} '
+            'title=${_safeText(routeArguments['stream_title'] ?? routeArguments['title'])} '
+            'bannerType=${_safeText(routeArguments['global_banner_type'])}',
       );
       _readyRouteStreamId = 0;
       _readyRouteGeneration = 0;
@@ -1211,13 +1313,20 @@ class AudienceJoinController extends GetxController {
 
       _setJoinProgress('Opening room...');
       timing('join_navigation');
+      if (kDebugMode) {
+        debugPrint(
+          '[LIVE_JOIN][NAVIGATION] room=$originalLivestreamId '
+              'elapsed_ms=${joinStopwatch.elapsedMilliseconds} '
+              'token_source=${tokenFromJoinResponse ? 'join_response' : 'token_api'}',
+        );
+      }
       if (isBannerNavigation) {
         debugPrint('TARGET_NAVIGATION target=$originalLivestreamId');
       }
 
       if (streamType == 'audio') {
         Get.to(
-          () => AudioLiveView(
+              () => AudioLiveView(
             key: ValueKey('audio_live_$originalLivestreamId'),
             channelName: finalAgoraChannel,
             isBroadcaster: false,
@@ -1231,7 +1340,7 @@ class AudienceJoinController extends GetxController {
         livestreamController.seatCount.value = safeRouteSeatCount;
 
         Get.to(
-          () => MultiLiveView(
+              () => MultiLiveView(
             key: ValueKey('multi_live_$originalLivestreamId'),
             channelName: finalAgoraChannel,
             isBroadcaster: false,
@@ -1243,7 +1352,7 @@ class AudienceJoinController extends GetxController {
         );
       } else {
         Get.to(
-          () => PopularLiveView(
+              () => PopularLiveView(
             key: ValueKey('popular_live_$originalLivestreamId'),
             channelName: finalAgoraChannel,
             isBroadcaster: false,
@@ -1281,7 +1390,7 @@ class AudienceJoinController extends GetxController {
           _pendingSelfViewerResponses[roomGeneration] = viewerAddResponse;
           debugPrint(
             'ENTRY_PRESENTATION_QUEUED stream=$originalLivestreamId '
-            'generation=$roomGeneration',
+                'generation=$roomGeneration',
           );
         }
         _logJoinParity(
@@ -1295,7 +1404,7 @@ class AudienceJoinController extends GetxController {
           source: 'audience_presence_ready',
         );
       });
-      timing('join_first_ready');
+      timing('first_room_ui');
 
       liveLog('================ AUDIENCE JOIN END ==================');
     } catch (e, stack) {
@@ -1309,6 +1418,26 @@ class AudienceJoinController extends GetxController {
       );
     } finally {
       _joiningLivestreamIds.remove(requestedLivestreamId);
+
+      // ✅ FIX: this is the actual bug behind "second join into a room shows
+      // nothing" — see abortRoomTransition/abortRoomSession for the full
+      // explanation. Whatever caused this join to exit early (a guard
+      // returning, or the catch block above), if a room transition was
+      // opened for this join and never activated, clear it now so the next
+      // join/seat/entry event is not silently dropped forever.
+      if (startedRoomGeneration != null && !transitionActivated) {
+        liveLog(
+          '⚠️ Rolling back stuck room transition => '
+              'generation=$startedRoomGeneration stream=$requestedLivestreamId',
+        );
+        websocketController.abortRoomTransition(
+          generation: startedRoomGeneration!,
+        );
+        livestreamController.abortRoomSession(
+          generation: startedRoomGeneration!,
+        );
+      }
+
       if (generation == _joinGeneration && !isClosed) {
         isLoading.value = false;
         _setJoinProgress('Joining live...');
@@ -1369,29 +1498,29 @@ class AudienceJoinController extends GetxController {
 
     livestreamController.getTokens.isNotEmpty
         ? data['peeredUserCallType'] == 'audio'
-              ? Get.to(
-                  () => AudioCallView(
-                    channelName: channelName,
-                    isBroadcaster: false,
-                    token: livestreamController.getTokens['token'],
-                    profile: null,
-                  ),
-                  arguments: data,
-                )
-              : Get.to(
-                  () => VideoCallView(
-                    channelName: channelName,
-                    isBroadcaster: false,
-                    token: livestreamController.getTokens['token'],
-                    profile: null,
-                  ),
-                  arguments: data,
-                )
+        ? Get.to(
+          () => AudioCallView(
+        channelName: channelName,
+        isBroadcaster: false,
+        token: livestreamController.getTokens['token'],
+        profile: null,
+      ),
+      arguments: data,
+    )
+        : Get.to(
+          () => VideoCallView(
+        channelName: channelName,
+        isBroadcaster: false,
+        token: livestreamController.getTokens['token'],
+        profile: null,
+      ),
+      arguments: data,
+    )
         : Get.snackbar(
-            ('Error').appTr,
-            ('Failed to generate token. Please try again later.').appTr,
-            snackPosition: SnackPosition.BOTTOM,
-          );
+      ('Error').appTr,
+      ('Failed to generate token. Please try again later.').appTr,
+      snackPosition: SnackPosition.BOTTOM,
+    );
 
     isLoading.value = false;
   }

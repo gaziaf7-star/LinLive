@@ -3,8 +3,11 @@ import 'dart:collection';
 
 import 'package:get/get.dart';
 
+import '../../auth/controllers/auth_controller.dart';
 import 'audience_join_controller.dart';
 import 'livestream_controller.dart';
+import 'red_packet_controller.dart';
+import 'roket_controller.dart';
 
 enum GlobalLiveBannerType { luckyBag, luckyWin, rocket, bigGift }
 
@@ -29,6 +32,8 @@ class GlobalLiveBannerItem {
 /// duplicate suppression and Lucky banner navigation intent.
 class LiveBannerController extends GetxController {
   static const int maxVisibleBanners = 2;
+  static const int _maxPendingBanners = 24;
+  static const int _maxPendingLuckyBanners = 12;
 
   final visibleBanners = <GlobalLiveBannerItem>[].obs;
   final Queue<GlobalLiveBannerItem> _pending = Queue<GlobalLiveBannerItem>();
@@ -45,6 +50,121 @@ class LiveBannerController extends GetxController {
 
   Timer? _luckyPromotionTimer;
   bool _navigationInFlight = false;
+  final RxBool _presentationEnabled = false.obs;
+  String _currentRoute = '';
+  bool _appIsActive = true;
+  bool _wasAuthenticated = false;
+  Worker? _authWorker;
+
+  /// The single auth/route/lifecycle gate for every app-global banner.
+  /// Reading this inside an Obx rebuilds only the banner overlay layer.
+  bool canPresentGlobalBanner() {
+    _presentationEnabled.value;
+    return _computePresentationEligibility();
+  }
+
+  static const Set<String> _blockedRouteMarkers = <String>{
+    'splash',
+    'welcome',
+    'login',
+    'register',
+    'create-account',
+    'create_account',
+    'onboarding',
+    'otp',
+    'forgot-password',
+    'reset-password',
+  };
+
+  bool get _isAuthenticated {
+    if (!Get.isRegistered<AuthController>()) return false;
+    return (Get.find<AuthController>()
+            .userProfile
+            .value
+            .token
+            ?.toString()
+            .trim() ??
+        '')
+        .isNotEmpty;
+  }
+
+  bool get hasAuthenticatedSession => _isAuthenticated;
+
+  String _gateReason() {
+    if (!_isAuthenticated) return 'unauthenticated';
+    if (!_appIsActive) return 'app_inactive';
+    final route = _currentRoute.trim().toLowerCase();
+    if (route == '/auth' ||
+        _blockedRouteMarkers.any((marker) => route.contains(marker))) {
+      return 'auth_route';
+    }
+    // Empty routes are transient during Get navigation and are not a reason
+    // to disable an otherwise authenticated foreground session.
+    return 'allowed';
+  }
+
+  bool _computePresentationEligibility() => _gateReason() == 'allowed';
+
+  void _logGate() {
+    final reason = _gateReason();
+    print(
+      '[BANNER_GATE] authenticated=$_isAuthenticated route=$_currentRoute '
+      'app_active=$_appIsActive allowed=${reason == 'allowed'} reason=$reason',
+    );
+  }
+
+  void updatePresentationRoute(String? route) {
+    final next = route?.trim() ?? '';
+    if (next.isNotEmpty) _currentRoute = next;
+    _syncPresentationEligibility();
+  }
+
+  void updateAppActive(bool active) {
+    _appIsActive = active;
+    _syncPresentationEligibility();
+  }
+
+  void _syncPresentationEligibility() {
+    final authenticated = _isAuthenticated;
+    final isEnabled = _computePresentationEligibility();
+    if (_wasAuthenticated && !authenticated) clearSessionPresentation();
+    _wasAuthenticated = authenticated;
+    _presentationEnabled.value = isEnabled;
+    _logGate();
+    if (isEnabled) {
+      _promotePending();
+      if (!globalLuckyWinBannerVisible.value && _luckyPending.isNotEmpty) {
+        _showNextLucky();
+      }
+    }
+  }
+
+  /// Drops all UI presentation state so one auth session cannot leak into the
+  /// next. Gift, Lucky Gift, Rocket and room business state are not changed.
+  void clearSessionPresentation() {
+    clearAll();
+    resetLuckyPresentation(clearSeen: true);
+    if (Get.isRegistered<RedPacketController>()) {
+      Get.find<RedPacketController>().hideGlobalLuckyBagBanner();
+    }
+    if (Get.isRegistered<RocketController>()) {
+      Get.find<RocketController>().clearGlobalLaunchPresentation();
+    }
+  }
+
+  @override
+  void onInit() {
+    super.onInit();
+    _currentRoute = Get.currentRoute;
+    _wasAuthenticated = _isAuthenticated;
+    if (Get.isRegistered<AuthController>()) {
+      _authWorker = ever(
+        Get.find<AuthController>().userProfile,
+        (_) => _syncPresentationEligibility(),
+      );
+    }
+    _syncPresentationEligibility();
+  }
 
   LivestreamController get _live => Get.find<LivestreamController>();
 
@@ -61,7 +181,28 @@ class LiveBannerController extends GetxController {
     int displaySeconds = 5,
   }) {
     final normalizedId = id.trim();
-    if (normalizedId.isEmpty || _seenIds.contains(normalizedId)) return;
+    final typeName = type.name;
+    print('[BANNER][RECEIVED] type=$typeName event_id=$normalizedId');
+    final authenticated = _isAuthenticated;
+    final allowed = canPresentGlobalBanner();
+    print(
+      '[BANNER][GATE] type=$typeName allowed=$allowed reason=${_gateReason()}',
+    );
+    if (!authenticated) {
+      return;
+    }
+    if (normalizedId.isEmpty) {
+      if (type == GlobalLiveBannerType.bigGift) {
+        print('[BIG_GIFT][DROP] reason=missing_event_id event_id=');
+      }
+      return;
+    }
+    if (_seenIds.contains(normalizedId)) {
+      if (type == GlobalLiveBannerType.bigGift) {
+        print('[BIG_GIFT][DROP] reason=duplicate event_id=$normalizedId');
+      }
+      return;
+    }
     _remember(normalizedId);
 
     final item = GlobalLiveBannerItem(
@@ -70,10 +211,20 @@ class LiveBannerController extends GetxController {
       payload: Map<String, dynamic>.from(payload),
       displaySeconds: displaySeconds.clamp(3, 15).toInt(),
     );
-    if (_canShowNow(item)) {
-      visibleBanners.add(item);
+    if (allowed && _canShowNow(item)) {
+      _show(item);
     } else {
+      if (_pending.length >= _maxPendingBanners) {
+        _pending.removeFirst();
+      }
       _pending.addLast(item);
+    }
+    print('[BANNER][QUEUED] type=$typeName event_id=$normalizedId');
+    if (type == GlobalLiveBannerType.bigGift) {
+      print(
+        '[BIG_GIFT][QUEUE] event_id=$normalizedId '
+        'queue_length=${visibleBanners.length + _pending.length}',
+      );
     }
   }
 
@@ -87,9 +238,35 @@ class LiveBannerController extends GetxController {
   int slotOf(String id) => visibleBanners.indexWhere((item) => item.id == id);
 
   void finish(String id) {
+    GlobalLiveBannerItem? closing;
+    for (final item in visibleBanners) {
+      if (item.id == id) {
+        closing = item;
+        break;
+      }
+    }
     final oldLength = visibleBanners.length;
     visibleBanners.removeWhere((item) => item.id == id);
-    if (visibleBanners.length != oldLength) _promotePending();
+    if (visibleBanners.length != oldLength) {
+      if (closing?.type == GlobalLiveBannerType.bigGift) {
+        print('[BIG_GIFT][CLOSE] event_id=$id');
+      }
+      if (closing != null) {
+        print('[BANNER][CLOSED] type=${closing.type.name} event_id=$id');
+      }
+      _promotePending();
+    }
+  }
+
+  void _show(GlobalLiveBannerItem item) {
+    visibleBanners.add(item);
+    print('[BANNER][SHOWN] type=${item.type.name} event_id=${item.id}');
+    if (item.type == GlobalLiveBannerType.bigGift) {
+      print('[BIG_GIFT][SHOW] event_id=${item.id}');
+    }
+    if (item.type == GlobalLiveBannerType.luckyWin) {
+      print('[LUCKY_BANNER][SHOWN] event_id=${item.id}');
+    }
   }
 
   bool _canShowNow(GlobalLiveBannerItem item) {
@@ -98,6 +275,7 @@ class LiveBannerController extends GetxController {
   }
 
   void _promotePending() {
+    if (!canPresentGlobalBanner()) return;
     while (visibleBanners.length < maxVisibleBanners && _pending.isNotEmpty) {
       final candidates = _pending.length;
       GlobalLiveBannerItem? selected;
@@ -110,7 +288,7 @@ class LiveBannerController extends GetxController {
         _pending.addLast(candidate);
       }
       if (selected == null) break;
-      visibleBanners.add(selected);
+      _show(selected);
     }
   }
 
@@ -151,10 +329,27 @@ class LiveBannerController extends GetxController {
     final gift = _map(
       data['gift'] ?? data['gift_data'] ?? data['gift_info'] ?? data['asset'],
     );
+    final preliminaryEventId = _text(
+      data['client_event_id'] ??
+          data['client_request_id'] ??
+          data['event_id'] ??
+          data['gift_event_id'] ??
+          data['transaction_id'] ??
+          data['message_id'] ??
+          data['gift_history_id'],
+    );
+    print('[BIG_GIFT][RECEIVED] event_id=$preliminaryEventId');
+    if (!_isAuthenticated) return;
 
     bool truthy(dynamic value) {
       final text = _text(value).toLowerCase();
       return value == true || text == '1' || text == 'true' || text == 'yes';
+    }
+
+    bool hasResult(dynamic value) {
+      if (value is Map) return value.isNotEmpty;
+      if (value is Iterable) return value.isNotEmpty;
+      return false;
     }
 
     final category = _text(
@@ -171,14 +366,15 @@ class LiveBannerController extends GetxController {
         truthy(gift['is_lucky']) ||
         truthy(gift['lucky']) ||
         category.contains('lucky') ||
-        data['lucky_result'] is Map ||
-        data['lucky_results'] is List ||
-        data['big_win_events'] is List;
-    if (isLucky) return;
+        hasResult(data['lucky_result']) ||
+        hasResult(data['lucky_results']) ||
+        hasResult(data['big_win_events']);
+    if (isLucky) {
+      print('[BIG_GIFT][DROP] reason=lucky event_id=$preliminaryEventId');
+      return;
+    }
 
-    // Only the authoritative per-item catalog/event value is eligible. Do not
-    // use amount, quantity, total_coins or sender wallet deduction here.
-    final perGiftCoins = _int(
+    final unitGiftCoins = _int(
       gift['gift_coin'] ??
           gift['gift_coins'] ??
           gift['coin'] ??
@@ -191,7 +387,34 @@ class LiveBannerController extends GetxController {
           data['gift_price'] ??
           data['gift_value'],
     );
-    if (perGiftCoins < 100000) return;
+    final quantity = _int(
+      data['quantity'] ??
+          data['qty'] ??
+          data['count'] ??
+          data['gift_count'] ??
+          data['gift_quantity'] ??
+          data['total_quantity'] ??
+          data['combo_count'] ??
+          gift['quantity'] ??
+          gift['qty'] ??
+          gift['count'] ??
+          gift['gift_count'],
+      fallback: 1,
+    ).clamp(1, 1000).toInt();
+    // These are the backend's per-send total fields. Room/receiver cumulative
+    // counters, wallet balances and Rocket progress are intentionally absent.
+    final authoritativeBatchTotal = _int(
+      data['batch_total'] ??
+          data['batch_total_coin'] ??
+          data['batch_total_coins'] ??
+          data['gift_total'] ??
+          data['gift_total_coin'] ??
+          data['gift_total_coins'],
+    );
+    final calculatedBatchTotal = unitGiftCoins * quantity;
+    final batchTotal = calculatedBatchTotal > 0
+        ? calculatedBatchTotal
+        : authoritativeBatchTotal;
 
     final sender = _map(data['sender'] ?? data['gifter'] ?? data['user']);
     final streamId = _int(
@@ -201,14 +424,20 @@ class LiveBannerController extends GetxController {
           root['livestream_id'] ??
           root['stream_id'],
     );
-    if (streamId <= 0) return;
+    if (streamId <= 0) {
+      print(
+        '[BIG_GIFT][DROP] reason=no_stream event_id=$preliminaryEventId',
+      );
+      return;
+    }
 
     final sourceEventId = _text(
-      data['event_id'] ??
+      data['client_event_id'] ??
+          data['client_request_id'] ??
+          data['event_id'] ??
           data['gift_event_id'] ??
           data['transaction_id'] ??
           data['message_id'] ??
-          data['client_event_id'] ??
           data['gift_history_id'],
     );
     final senderId = sender['id'] ?? sender['user_id'] ?? data['sender_id'];
@@ -217,13 +446,22 @@ class LiveBannerController extends GetxController {
       data['timestamp'] ?? data['created_at'] ?? data['sent_at'],
     );
     final fallbackSerial = _text(data['serial'] ?? data['combo_serial']);
-    if (sourceEventId.isEmpty && timestamp.isEmpty && fallbackSerial.isEmpty) {
-      return;
-    }
     final id = sourceEventId.isNotEmpty
         ? 'big_gift_$sourceEventId'
         : 'big_gift_${streamId}_${senderId}_${giftId}_${timestamp}_$fallbackSerial';
-
+    print(
+      '[BIG_GIFT][EVENT] room=$streamId event_id=$id '
+      'gift_id=$giftId unit_coin=$unitGiftCoins quantity=$quantity '
+      'batch_total=$batchTotal eligible=${batchTotal >= 100000}',
+    );
+    if (batchTotal < 100000) {
+      print('[BIG_GIFT][DROP] reason=below_threshold event_id=$id');
+      return;
+    }
+    if (sourceEventId.isEmpty && timestamp.isEmpty && fallbackSerial.isEmpty) {
+      print('[BIG_GIFT][DROP] reason=missing_event_id event_id=$id');
+      return;
+    }
     enqueue(
       id: id,
       type: GlobalLiveBannerType.bigGift,
@@ -234,7 +472,9 @@ class LiveBannerController extends GetxController {
         'stream_id': streamId,
         'sender': sender,
         'gift': gift,
-        'gift_value': perGiftCoins,
+        'gift_value': batchTotal,
+        'unit_gift_coin': unitGiftCoins,
+        'quantity': quantity,
         'channel_name': data['channel_name'],
         'room_id': data['room_id'],
         'stream_type': data['stream_type'],
@@ -401,6 +641,7 @@ class LiveBannerController extends GetxController {
   }
 
   void showGlobalLuckyWinBannerFromPayload(Map<String, dynamic> payload) {
+    if (!_isAuthenticated) return;
     final payloadKeys = <String>{};
     for (final candidate in _luckyCandidates(payload)) {
       final multiplier = _double(candidate['multiplier']);
@@ -416,7 +657,10 @@ class LiveBannerController extends GetxController {
       final payloadKey = realId.isNotEmpty
           ? 'id|$realId'
           : 'fallback|${_fingerprint(candidate)}|$timestamp';
-      if (payloadKeys.add(payloadKey)) _enqueueLucky(candidate);
+      if (payloadKeys.add(payloadKey)) {
+        print('[LUCKY_BANNER][RECEIVED] event_id=$payloadKey');
+        _enqueueLucky(candidate);
+      }
     }
   }
 
@@ -448,13 +692,21 @@ class LiveBannerController extends GetxController {
     _luckyRecentFingerprints.removeWhere((_, seenAt) => now - seenAt > 60000);
     data['global_lucky_banner_key'] = key;
     _luckyPendingKeys.add(key);
+    if (_luckyPending.length >= _maxPendingLuckyBanners) {
+      final removed = _luckyPending.removeFirst();
+      final removedKey = removed['global_lucky_banner_key']?.toString() ?? '';
+      if (removedKey.isNotEmpty) _luckyPendingKeys.remove(removedKey);
+    }
     _luckyPending.addLast(data);
-    if (!globalLuckyWinBannerVisible.value) _showNextLucky();
+    if (canPresentGlobalBanner() && !globalLuckyWinBannerVisible.value) {
+      _showNextLucky();
+    }
   }
 
   void _showNextLucky() {
     _luckyPromotionTimer?.cancel();
     _luckyPromotionTimer = null;
+    if (!canPresentGlobalBanner()) return;
     if (_luckyPending.isEmpty) {
       globalLuckyWinBannerVisible.value = false;
       globalLuckyWinBannerSeconds.value = 0;
@@ -573,6 +825,7 @@ class LiveBannerController extends GetxController {
 
   @override
   void onClose() {
+    _authWorker?.dispose();
     resetLuckyPresentation();
     super.onClose();
   }

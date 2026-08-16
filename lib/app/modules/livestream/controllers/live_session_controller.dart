@@ -40,6 +40,21 @@ class LiveSessionController extends GetxController {
     _transitionInProgress = false;
   }
 
+  /// ✅ FIX: beginRoomTransition() locks out all room mutations
+  /// (acceptsRoomMutation) until a matching activateRoomSession() call for
+  /// the SAME generation arrives. If the join flow that called
+  /// beginRoomTransition then aborts early (a guard/assert fails, or an
+  /// exception is thrown) without ever reaching activateRoomSession, this
+  /// lock stays stuck forever — every future join into that room (or any
+  /// room) silently has its viewer/seat/entry updates dropped. This clears
+  /// the lock, but only for the generation that actually opened it, so a
+  /// newer, still-legitimate transition is never clobbered.
+  void abortRoomSession({required int generation}) {
+    if (generation != _generation) return;
+    _transitionInProgress = false;
+    _transitionTargetStreamId = 0;
+  }
+
   bool acceptsRoomMutation(int candidateStreamId) {
     if (_transitionInProgress || candidateStreamId <= 0) return false;
     final activeStreamId = _activeSessionStreamId > 0

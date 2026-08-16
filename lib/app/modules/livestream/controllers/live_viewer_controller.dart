@@ -3,6 +3,7 @@ import 'package:get/get_state_manager/src/simple/get_controllers.dart';
 
 import '../../../../apis/api_endpoints.dart';
 import '../utils/live_performance_config.dart';
+import '../utils/live_flow_logger.dart';
 import 'livestream_controller.dart';
 
 /// Owns viewer membership API orchestration and duplicate request bookkeeping.
@@ -57,8 +58,14 @@ class LiveViewerController extends GetxController {
     required bool activateRoom,
   }) async {
     try {
+      final endpoint = addViewer(streamId, viewerId);
+      LiveFlowLogger.log('API_REQUEST', <String, dynamic>{
+        'function': 'tryToAddViewer', 'method': 'GET', 'endpoint': endpoint,
+        'room_id': streamId, 'livestream_id': streamId,
+        'user_id': viewerId, 'is_host': false, 'action': 'addviewer',
+      });
       final response = await livestreamController.dio.get(
-        addViewer(streamId, viewerId),
+        endpoint,
         options: Options(
           headers: {
             'Content-Type': 'application/json',
@@ -68,6 +75,11 @@ class LiveViewerController extends GetxController {
           },
         ),
       );
+      LiveFlowLogger.log('API_RESPONSE', <String, dynamic>{
+        'function': 'tryToAddViewer', 'method': 'GET', 'endpoint': endpoint,
+        'room_id': streamId, 'status': response.statusCode,
+        'response_data': response.data,
+      });
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         _addedViewerRooms.add('$streamId:$viewerId');

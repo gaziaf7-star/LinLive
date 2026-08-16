@@ -1974,14 +1974,37 @@ class _GiftAnimationWidgetState extends State<GiftAnimationWidget>
 
     final int declared = _declaredGiftDurationMs(fallback: 0);
 
+    // ✅ FIX (gift shows up 7-8+ seconds late during a burst): gifts play
+    // strictly one at a time. Previously, every gift — including ones deep
+    // in a backlog with several more already waiting behind it — used this
+    // same long "no one's waiting, no rush" safety-timer duration (8-20s
+    // for SVGA) as its outer bound. A burst of 5-6 gifts therefore drained
+    // seconds apart, each one only ever bounded by a timer sized for the
+    // empty-queue case. When something is already queued behind this gift,
+    // cap this gift's own wait to a much shorter, still-visible duration so
+    // the backlog actually drains at a reasonable pace. This never affects
+    // a gift shown with an empty queue — those still get their full,
+    // unhurried duration exactly as before.
+    final bool hasBacklog =
+        Get.find<WebsocketController>().giftAnimationQueueLength > 0;
+
     if (_isSvga) {
-      // onFinished normally advances immediately. This timer is only a deadlock
-      // guard for a corrupted/network-failed player and never shortens a normal
-      // valid animation.
+      // onFinished normally advances immediately; this is only a deadlock
+      // guard for a corrupted/network-failed player when nothing else is
+      // waiting. Under backlog, it doubles as the pacing control instead.
+      if (hasBacklog) {
+        final int backlogCap = declared > 0
+            ? declared.clamp(1200, 2200).toInt()
+            : 2000;
+        return backlogCap;
+      }
       final int expected = declared > 0 ? declared + 3500 : 20000;
       return expected.clamp(8000, 60000).toInt();
     }
 
+    if (hasBacklog) {
+      return _getImageFallbackDurationMs().clamp(900, 1800).toInt();
+    }
     return (_getImageFallbackDurationMs() + 1800).clamp(2500, 12000).toInt();
   }
 

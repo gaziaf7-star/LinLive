@@ -365,9 +365,18 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
 
   Future<void> _sendCommentFast() async {
     final text = addComments.text.trim();
+    final locked = livestreamController.liveCommentLocked.value == true;
+    final canModerate = livestreamController.canModerateLive == true;
+    debugPrint(
+      '[COMMENT][SEND_TAP] text_length=${text.length} locked=$locked '
+      'can_moderate=$canModerate sending=$_sendingComment',
+    );
+    debugPrint('[COMMENT][UI_HANDLER_ENTER]');
 
-    if (livestreamController.liveCommentLocked.value == true &&
-        livestreamController.canModerateLive != true) {
+    if (locked &&
+        !canModerate &&
+        !livestreamController.currentVipPrivileges.antiCommentMute) {
+      debugPrint('[COMMENT][UI_BLOCKED] reason=locked');
       addComments.clear();
       commentFocusNode.unfocus();
       _safeSetState(() {
@@ -377,7 +386,14 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
       return;
     }
 
-    if (text.isEmpty || _sendingComment) return;
+    if (text.isEmpty) {
+      debugPrint('[COMMENT][UI_BLOCKED] reason=empty');
+      return;
+    }
+    if (_sendingComment) {
+      debugPrint('[COMMENT][UI_BLOCKED] reason=already_sending');
+      return;
+    }
 
     _sendingComment = true;
 
@@ -438,19 +454,32 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
 
   Future<void> _sendCommentFromCompactSheet() async {
     final String text = addComments.text.trim();
+    final bool locked = livestreamController.liveCommentLocked.value == true;
+    final bool canModerate = livestreamController.canModerateLive == true;
+    debugPrint(
+      '[COMMENT][SEND_TAP] text_length=${text.length} locked=$locked '
+      'can_moderate=$canModerate sending=$_sendingComment',
+    );
+    debugPrint('[COMMENT][UI_HANDLER_ENTER]');
 
-    if (livestreamController.liveCommentLocked.value == true &&
-        livestreamController.canModerateLive != true) {
+    if (locked &&
+        !canModerate &&
+        !livestreamController.currentVipPrivileges.antiCommentMute) {
+      debugPrint('[COMMENT][UI_BLOCKED] reason=locked');
       addComments.clear();
       commentFocusNode.unfocus();
       Fluttertoast.showToast(msg: ('Chat is locked').appTr);
       return;
     }
 
-    if (_sendingComment) return;
+    if (_sendingComment) {
+      debugPrint('[COMMENT][UI_BLOCKED] reason=already_sending');
+      return;
+    }
 
     // Comment na likhe Send button chapleo keyboard + bottom sheet close hobe.
     if (text.isEmpty) {
+      debugPrint('[COMMENT][UI_BLOCKED] reason=empty');
       await _closeCompactCommentSheet();
       return;
     }
@@ -461,12 +490,19 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
     addComments.clear();
     commentFocusNode.unfocus();
 
+    // Start the one authoritative send before dismissing the root sheet. The
+    // parent input may rebuild during dismissal, but this Future retains the
+    // captured text and cannot be skipped by that lifecycle transition.
+    final Future<void> sendFuture = livestreamController.tryToAddComment(
+      comment: text,
+    );
+
     if (_isCompactCommentSheetOpen && mounted) {
       await _closeCompactCommentSheet();
     }
 
     try {
-      await livestreamController.tryToAddComment(comment: text);
+      await sendFuture;
     } catch (e) {
       debugPrint('❌ Comment send failed: $e');
       Fluttertoast.showToast(msg: ('Comment could not be sent').appTr);
@@ -477,7 +513,8 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
 
   void _openCompactCommentBottomSheet() {
     if (livestreamController.liveCommentLocked.value == true &&
-        livestreamController.canModerateLive != true) {
+        livestreamController.canModerateLive != true &&
+        !livestreamController.currentVipPrivileges.antiCommentMute) {
       Fluttertoast.showToast(msg: ('Chat is locked').appTr);
       return;
     }
@@ -992,7 +1029,10 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
                                 .liveCommentLocked
                                 .value ==
                                 true &&
-                                livestreamController.canModerateLive != true;
+                                livestreamController.canModerateLive != true &&
+                                !livestreamController
+                                    .currentVipPrivileges
+                                    .antiCommentMute;
 
                         return IconButton(
                           style: IconButton.styleFrom(

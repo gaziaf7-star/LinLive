@@ -144,7 +144,7 @@ class AboutUsPage extends StatelessWidget {
 
               Center(
                 child: Text(
-                  ('Last Updated: August 10, 2026').appTr,
+                  ('Last Updated: August 16, 2026').appTr,
                   style: GoogleFonts.poppins(
                     color: const Color(0xff7b7280),
                     fontSize: 12,

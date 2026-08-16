@@ -226,11 +226,15 @@ class VipLevel {
   final String titleImageUrl;
   final String entryBannerImageUrl;
   final String profileCardImageUrl;
+  final String nameImageUrl;
+  final String chatBubbleImageUrl;
   final String frameShowImageUrl;
   final String badgeImageShowImageUrl;
   final String titleImageShowImageUrl;
   final String entryBannerImageShowImageUrl;
   final String profileCardImageShowImageUrl;
+  final String nameImageShowImageUrl;
+  final String chatBubbleImageShowImageUrl;
   final Map<String, dynamic> privileges;
   final List<VipAssetItem> selectedAssets;
   final List<VipAssetItem> assets;
@@ -253,11 +257,15 @@ class VipLevel {
     required this.titleImageUrl,
     required this.entryBannerImageUrl,
     required this.profileCardImageUrl,
+    this.nameImageUrl = '',
+    this.chatBubbleImageUrl = '',
     this.frameShowImageUrl = '',
     this.badgeImageShowImageUrl = '',
     this.titleImageShowImageUrl = '',
     this.entryBannerImageShowImageUrl = '',
     this.profileCardImageShowImageUrl = '',
+    this.nameImageShowImageUrl = '',
+    this.chatBubbleImageShowImageUrl = '',
     required this.privileges,
     required this.selectedAssets,
     required this.assets,
@@ -338,6 +346,18 @@ class VipLevel {
         'profile_card_url',
         'profile_card_image',
       ]),
+      nameImageUrl: VipHelpers.firstStr(map, [
+        'name_image_url',
+        'nameImageUrl',
+        'name_url',
+        'name_image',
+      ]),
+      chatBubbleImageUrl: VipHelpers.firstStr(map, [
+        'chat_bubble_image_url',
+        'chatBubbleImageUrl',
+        'chat_bubble_url',
+        'chat_bubble_image',
+      ]),
       frameShowImageUrl: VipHelpers.firstStr(map, [
         'frame_show_image_url',
         'frameShowImageUrl',
@@ -363,6 +383,16 @@ class VipLevel {
         'profileCardImageShowImageUrl',
         'profile_card_image_show_image',
       ]),
+      nameImageShowImageUrl: VipHelpers.firstStr(map, [
+        'name_image_show_image_url',
+        'nameImageShowImageUrl',
+        'name_image_show_image',
+      ]),
+      chatBubbleImageShowImageUrl: VipHelpers.firstStr(map, [
+        'chat_bubble_image_show_image_url',
+        'chatBubbleImageShowImageUrl',
+        'chat_bubble_image_show_image',
+      ]),
       privileges: privilegeMap,
       selectedAssets: selectedList,
       assets: assetsList,
@@ -372,6 +402,17 @@ class VipLevel {
   }
 
   String get displayTitle => title.trim().isEmpty ? type.toUpperCase() : title;
+
+  /// True when this level belongs to the SVIP tier rather than the regular
+  /// VIP tier. The `/vip/levels` API returns both groups in one flat list,
+  /// and it does not always keep `type` unique between them (an SVIP record
+  /// can still carry a `vip7`-style type), so the human-readable title is
+  /// checked first as the most reliable signal, with `type` as a backup.
+  bool get isSvipTier {
+    final normalizedTitle = title.trim().toLowerCase();
+    final normalizedType = type.trim().toLowerCase();
+    return normalizedTitle.startsWith('svip') || normalizedType.startsWith('svip');
+  }
 
   String get mainMediaUrl {
     if (framePreviewUrl.isNotEmpty) return framePreviewUrl;
@@ -411,6 +452,16 @@ class VipLevel {
   String get profileCardPlayUrl => profileCardImageUrl.isNotEmpty
       ? profileCardImageUrl
       : profileCardImageShowImageUrl;
+  String get namePreviewUrl =>
+      nameImageShowImageUrl.isNotEmpty ? nameImageShowImageUrl : nameImageUrl;
+  String get namePlayUrl =>
+      nameImageUrl.isNotEmpty ? nameImageUrl : nameImageShowImageUrl;
+  String get chatBubblePreviewUrl => chatBubbleImageShowImageUrl.isNotEmpty
+      ? chatBubbleImageShowImageUrl
+      : chatBubbleImageUrl;
+  String get chatBubblePlayUrl => chatBubbleImageUrl.isNotEmpty
+      ? chatBubbleImageUrl
+      : chatBubbleImageShowImageUrl;
 
   List<VipAssetItem> get allAssets {
     final unique = <String, VipAssetItem>{};

@@ -105,6 +105,7 @@ class FruitGameController extends GetxController {
 
   // Single WebSocket channel for all communications
   IOWebSocketChannel? webSocketChannel;
+  StreamSubscription<dynamic>? _webSocketSubscription;
 
   // ✅ 25s professional round config
   static const int gameRoundSeconds = 25;
@@ -146,6 +147,8 @@ class FruitGameController extends GetxController {
     _reconnectTimer?.cancel();
 
     try {
+      await _webSocketSubscription?.cancel();
+      _webSocketSubscription = null;
       try {
         await webSocketChannel?.sink.close(status.normalClosure);
       } catch (_) {}
@@ -153,7 +156,7 @@ class FruitGameController extends GetxController {
       webSocketChannel = IOWebSocketChannel.connect(Uri.parse(kWsUrl));
       debugPrint('FruitGame WebSocket connected');
 
-      webSocketChannel!.stream.listen(
+      _webSocketSubscription = webSocketChannel!.stream.listen(
             (message) {
           _handleWebSocketMessage(message);
         },
@@ -550,6 +553,8 @@ class FruitGameController extends GetxController {
   void onClose() {
     _isSocketClosedManually = true;
     _reconnectTimer?.cancel();
+    _webSocketSubscription?.cancel();
+    _webSocketSubscription = null;
 
     _bgmPlayer.dispose();
     _spinPlayer.dispose();

@@ -49,6 +49,7 @@ class AudioRocketGameEntryButton extends StatefulWidget {
 class _AudioRocketGameEntryButtonState
     extends State<AudioRocketGameEntryButton> {
   late final RocketController controller;
+  double? _lastLoggedProgress;
 
   @override
   void initState() {
@@ -61,6 +62,15 @@ class _AudioRocketGameEntryButtonState
         controller.bindLivestream(widget.livestreamId);
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant AudioRocketGameEntryButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.livestreamId > 0 &&
+        widget.livestreamId != oldWidget.livestreamId) {
+      controller.bindLivestream(widget.livestreamId);
+    }
   }
 
   @override
@@ -83,6 +93,13 @@ class _AudioRocketGameEntryButtonState
 
       final double safeProgress =
       (controller.progressPercent.value / 100).clamp(0.0, 1.0).toDouble();
+      if (_lastLoggedProgress != controller.progressPercent.value) {
+        _lastLoggedProgress = controller.progressPercent.value;
+        debugPrint(
+          '[ROCKET_UI][PROGRESS] '
+          'percent=${controller.progressPercent.value.toStringAsFixed(2)}',
+        );
+      }
 
       return Padding(
         padding: EdgeInsets.only(top: kHeight * .010),

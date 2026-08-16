@@ -8,7 +8,9 @@ import 'package:get/get.dart';
 
 import '../../../../apis/api_endpoints.dart';
 import '../../auth/controllers/auth_controller.dart';
+import 'global_live_banner_queue_controller.dart';
 import '../utils/live_performance_config.dart';
+import '../utils/red_packet_timing.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 
@@ -77,31 +79,29 @@ class RedPacketController extends GetxController {
   /// without returning the amount; keep the amount from the first successful
   /// collection so the result card never falls back to 0.
   final Map<int, int> _redPacketMyAmountCache = <int, int>{};
+  final Set<int> _redPacketCollectInFlight = <int>{};
 
   void showGlobalLuckyBagBanner(
       Map<String, dynamic> packet, {
         int seconds = 5,
       }) {
-    final Map<String, dynamic> safePacket = Map<String, dynamic>.from(packet);
+    if (!globalLiveBannerQueue().hasAuthenticatedSession) return;
+    final Map<String, dynamic>? previousPacket =
+        globalLuckyBagData.isNotEmpty &&
+            redPacketIdOf(globalLuckyBagData) == redPacketIdOf(packet)
+        ? Map<String, dynamic>.from(globalLuckyBagData)
+        : null;
+    final Map<String, dynamic> safePacket = normalizeRedPacketTiming(
+      packet,
+      previousPacket: previousPacket,
+    );
     final int nowMs = DateTime.now().millisecondsSinceEpoch;
 
     /// ✅ Keep UI metadata so every page/banner/dialog can calculate correctly.
     /// Backend sometimes sends only unlock_after_seconds (example: 3s). Do not
     /// overwrite that with a hard 30s value, otherwise users reach the room late
     /// and OPEN can return already collected/expired.
-    safePacket['event_received_at_ms'] ??= nowMs;
     safePacket['banner_received_at_ms'] = nowMs;
-    final int serverUnlockSeconds = _redPacketInt(
-      safePacket['unlock_after_seconds'] ??
-          safePacket['open_after_seconds'] ??
-          safePacket['unlock_after'] ??
-          safePacket['open_after'],
-    );
-    final int safeOpenAfter = serverUnlockSeconds > 0
-        ? serverUnlockSeconds
-        : 30;
-    safePacket['open_after_seconds'] ??= safeOpenAfter;
-    safePacket['unlock_after_seconds'] ??= safeOpenAfter;
 
     _redPacketPrint('GLOBAL LUCKY BAG BANNER SHOW DATA', safePacket);
 
@@ -424,7 +424,7 @@ class RedPacketController extends GetxController {
     /// ✅ User will see minimum 30s countdown before OPEN.
     /// Backend `duration_seconds` is expiry time, so it must be longer than open time.
     /// If UI sends 30, we send 120 to backend so OPEN at 30s will not be expired.
-    final int safeOpenAfter = openAfterSeconds <= 0 ? 30 : openAfterSeconds;
+    final int safeOpenAfter = kRedPacketOpenAfterSeconds;
     final int requestedDuration = durationSeconds <= 0 ? 120 : durationSeconds;
     final int safeDuration = requestedDuration <= safeOpenAfter
         ? safeOpenAfter + 90
@@ -501,14 +501,11 @@ class RedPacketController extends GetxController {
         /// ✅ Enrich local packet immediately. Some websocket payloads may not include
         /// open_after_seconds, so keep it here too.
         if (redPacketData.isNotEmpty) {
-          redPacketData['open_after_seconds'] ??= safeOpenAfter;
-          redPacketData['unlock_after_seconds'] ??= safeOpenAfter;
-          redPacketData['event_received_at_ms'] ??=
-              DateTime.now().millisecondsSinceEpoch;
-          redPacketData['is_global'] = true;
+          final normalizedPacket = normalizeRedPacketTiming(redPacketData);
+          normalizedPacket['is_global'] = true;
 
           /// ✅ Sender device should also see the global banner immediately.
-          showGlobalLuckyBagBanner(redPacketData, seconds: 5);
+          showGlobalLuckyBagBanner(normalizedPacket, seconds: 5);
         }
 
         return true;
@@ -573,6 +570,11 @@ class RedPacketController extends GetxController {
         'red_packet_id': redPacketId,
       });
 
+      return null;
+    }
+
+    if (!_redPacketCollectInFlight.add(redPacketId)) {
+      liveLog('Duplicate Red Packet collect blocked => $redPacketId');
       return null;
     }
 
@@ -781,6 +783,8 @@ class RedPacketController extends GetxController {
         textColor: Colors.white,
       );
       return null;
+    } finally {
+      _redPacketCollectInFlight.remove(redPacketId);
     }
   }
 
@@ -842,21 +846,7 @@ class RedPacketController extends GetxController {
 
       if (data is List) {
         final list = data.whereType<Map>().map((e) {
-          final item = Map<String, dynamic>.from(e);
-          final int serverUnlockSeconds = _redPacketInt(
-            item['unlock_after_seconds'] ??
-                item['open_after_seconds'] ??
-                item['unlock_after'] ??
-                item['open_after'],
-          );
-          final int safeOpenAfter = serverUnlockSeconds > 0
-              ? serverUnlockSeconds
-              : 30;
-          item['open_after_seconds'] ??= safeOpenAfter;
-          item['unlock_after_seconds'] ??= safeOpenAfter;
-          item['event_received_at_ms'] ??=
-              DateTime.now().millisecondsSinceEpoch;
-          return item;
+          return normalizeRedPacketTiming(Map<String, dynamic>.from(e));
         }).toList();
         _redPacketPrint('RED PACKET LIVESTREAM LIST RESPONSE', {
           'livestream_id': livestreamId,
@@ -869,21 +859,7 @@ class RedPacketController extends GetxController {
 
       if (data is Map && data['data'] is List) {
         final list = (data['data'] as List).whereType<Map>().map((e) {
-          final item = Map<String, dynamic>.from(e);
-          final int serverUnlockSeconds = _redPacketInt(
-            item['unlock_after_seconds'] ??
-                item['open_after_seconds'] ??
-                item['unlock_after'] ??
-                item['open_after'],
-          );
-          final int safeOpenAfter = serverUnlockSeconds > 0
-              ? serverUnlockSeconds
-              : 30;
-          item['open_after_seconds'] ??= safeOpenAfter;
-          item['unlock_after_seconds'] ??= safeOpenAfter;
-          item['event_received_at_ms'] ??=
-              DateTime.now().millisecondsSinceEpoch;
-          return item;
+          return normalizeRedPacketTiming(Map<String, dynamic>.from(e));
         }).toList();
         _redPacketPrint('RED PACKET LIVESTREAM PAGINATED LIST RESPONSE', {
           'livestream_id': livestreamId,
@@ -909,6 +885,7 @@ class RedPacketController extends GetxController {
     globalLuckyBagBannerSeconds.value = 0;
     globalLuckyBagData.clear();
     _redPacketMyAmountCache.clear();
+    _redPacketCollectInFlight.clear();
   }
 
   @override

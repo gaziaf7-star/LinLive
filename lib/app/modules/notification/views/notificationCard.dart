@@ -15,11 +15,11 @@ class NotificationCardView extends StatelessWidget {
     final controller = Get.put(NotificationController());
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Colors.transparent,
       body: Stack(
         children: [
           const Positioned.fill(
-            child: _LightGlowBackground(),
+            child: ColoredBox(color: Colors.white),
           ),
 
           Obx(() {
@@ -129,10 +129,10 @@ class NotificationCardView extends StatelessWidget {
               left: BorderSide(color: Color(0xFF7F77DD), width: 3)),
           boxShadow: [
             BoxShadow(
-              color: Colors.grey.withOpacity(0.5),
-              spreadRadius: 1,
-              blurRadius: 4,
-              offset: const Offset(0, 2),
+              color: Colors.black.withOpacity(0.035),
+              spreadRadius: 0,
+              blurRadius: 8,
+              offset: const Offset(0, 3),
             ),
           ],
         ),
@@ -251,7 +251,7 @@ class NotificationCardView extends StatelessWidget {
                     color: Colors.grey[400], size: 20),
                 itemBuilder: (context) => [
                   if (!isRead)
-                     PopupMenuItem(
+                    PopupMenuItem(
                       value: 'mark_read',
                       child: Row(
                         children: [
@@ -262,7 +262,7 @@ class NotificationCardView extends StatelessWidget {
                         ],
                       ),
                     ),
-                   PopupMenuItem(
+                  PopupMenuItem(
                     value: 'delete',
                     child: Row(
                       children: [

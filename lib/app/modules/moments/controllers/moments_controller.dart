@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get.dart' hide FormData, MultipartFile;
@@ -493,7 +494,14 @@ class MomentsController extends GetxController {
     print(data);
     try {
       print(kLikeCreate);
-      print(authController.userProfile.value.token);
+      if (kDebugMode) {
+        final String token =
+            authController.userProfile.value.token?.toString().trim() ?? '';
+        debugPrint(
+          'Moments auth: token_present=${token.isNotEmpty} '
+          'token_length=${token.length}',
+        );
+      }
       final response = await dio.post(
         kLikeCreate,
         data: data,

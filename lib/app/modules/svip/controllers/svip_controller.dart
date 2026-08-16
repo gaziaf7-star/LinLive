@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:developer';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_svga_easyplayer/flutter_svga_easyplayer.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get.dart';
@@ -9,9 +11,24 @@ import 'package:meetlivepro/app/localization/app_localizer.dart';
 
 import '../../../../apis/api_endpoints.dart';
 import '../../../../constants/constants.dart';
+import '../../livestream/controllers/livestream_controller.dart';
 import '../views/vipModel.dart';
 
+/// Which tier of the VIP system a given [SvipController] / page instance is
+/// responsible for. The backend returns every VIP and SVIP level from the
+/// same `/vip/levels` endpoint, so the controller fetches everything once
+/// and then keeps only the levels that belong to this mode.
+enum VipSectionMode { vip, svip }
+
 class SvipController extends GetxController {
+  final VipSectionMode mode;
+
+  SvipController({this.mode = VipSectionMode.vip});
+
+  bool get isSvipMode => mode == VipSectionMode.svip;
+
+  String get sectionLabel => isSvipMode ? 'SVIP' : 'VIP';
+
   final List<Map<String, String>> gridItems = [
     {'image': 'assets/svga/Frame/Vip frame 1.svga', 'text': 'Vip1 Frame'},
     {'image': 'assets/Svip/Svip.png', 'text': 'VIP Title'},
@@ -30,18 +47,9 @@ class SvipController extends GetxController {
       'image': 'assets/svip_exclusive_image/svipLodo.png',
       'text': 'Anti-kick\nanti-ban',
     },
-    {
-      'image': 'assets/svip_exclusive_image/svipLodo.png',
-      'text': 'Anti-block',
-    },
-    {
-      'image': 'assets/svip_exclusive_image/svipeye.png',
-      'text': 'Invisible',
-    },
-    {
-      'image': 'assets/svip_exclusive_image/svip gift1.png',
-      'text': 'Vip Gift',
-    },
+    {'image': 'assets/svip_exclusive_image/svipLodo.png', 'text': 'Anti-block'},
+    {'image': 'assets/svip_exclusive_image/svipeye.png', 'text': 'Invisible'},
+    {'image': 'assets/svip_exclusive_image/svip gift1.png', 'text': 'Vip Gift'},
     {
       'image': 'assets/svip_exclusive_image/svipimaogi.png',
       'text': 'Vip emoji ',
@@ -121,8 +129,7 @@ class SvipController extends GetxController {
   }
 
   Map<String, String> get _authHeaders => {
-    'Authorization':
-    'Bearer ${authController.userProfile.value.token}',
+    'Authorization': 'Bearer ${authController.userProfile.value.token}',
     'Accept': 'application/json',
     'Content-Type': 'application/json',
   };
@@ -204,9 +211,13 @@ class SvipController extends GetxController {
         options: Options(headers: const {'Accept': 'application/json'}),
       );
 
-      final list = _extractList(response.data)
+      final list =
+      _extractList(response.data)
           .map(VipLevel.fromJson)
-          .where((item) => item.id > 0 && item.status)
+          .where(
+            (item) =>
+        item.id > 0 && item.status && item.isSvipTier == isSvipMode,
+      )
           .toList()
         ..sort((a, b) {
           final orderA = a.sortOrder > 0 ? a.sortOrder : a.levelNo;
@@ -215,6 +226,7 @@ class SvipController extends GetxController {
         });
 
       vipLevels.assignAll(list);
+      unawaited(_precacheAllLevelsMedia());
 
       final nestedPackages = <VipPackageItem>[];
       for (final level in list) {
@@ -262,7 +274,8 @@ class SvipController extends GetxController {
         options: Options(headers: const {'Accept': 'application/json'}),
       );
 
-      final list = _extractList(response.data)
+      final list =
+      _extractList(response.data)
           .map(VipPackageItem.fromJson)
           .where(
             (item) =>
@@ -317,10 +330,7 @@ class SvipController extends GetxController {
       }
     } catch (e) {
       if (!silent) {
-        showMessage(
-          _errorMessage(e, 'My VIP load failed'),
-          color: Colors.red,
-        );
+        showMessage(_errorMessage(e, 'My VIP load failed'), color: Colors.red);
       }
     } finally {
       isMyVipLoading.value = false;
@@ -336,7 +346,94 @@ class SvipController extends GetxController {
   void _applyCurrentVip(VipPurchaseInfo info) {
     currentVip.value = info;
     settingsScreen.value = info.settingsScreen;
-    settingValues.assignAll(info.settingsScreen.values);
+
+    final values = <String, bool>{
+      ...info.settingsScreen.values,
+      ..._permissionValuesFromRaw(info.raw),
+    };
+
+    settingValues.assignAll(values);
+  }
+
+  Map<String, bool> _permissionValuesFromRaw(Map<String, dynamic> raw) {
+    final values = <String, bool>{};
+
+    final permissionSettings = VipHelpers.asMap(raw['permission_settings']);
+    for (final entry in permissionSettings.entries) {
+      final key = entry.key.toString().trim();
+      if (key.isEmpty) continue;
+      values[key] = VipHelpers.toBool(entry.value);
+    }
+
+    final screen = VipHelpers.asMap(raw['settings_screen']);
+    final permissionSwitches = VipHelpers.asList(screen['permission_switches']);
+
+    for (final item in permissionSwitches) {
+      final map = VipHelpers.asMap(item);
+      final key = VipHelpers.firstStr(map, ['key', 'name']).trim();
+      if (key.isEmpty) continue;
+      values[key] = VipHelpers.toBool(
+        map['value'],
+        fallback: values[key] ?? false,
+      );
+    }
+
+    return values;
+  }
+
+  List<Map<String, dynamic>> get permissionSwitchItems {
+    final current = currentVip.value;
+    if (current == null) return const <Map<String, dynamic>>[];
+
+    final screen = VipHelpers.asMap(current.raw['settings_screen']);
+    final rawItems = VipHelpers.asList(screen['permission_switches']);
+    final result = <Map<String, dynamic>>[];
+
+    for (final rawItem in rawItems) {
+      final item = VipHelpers.asMap(rawItem);
+      final key = VipHelpers.firstStr(item, ['key', 'name']).trim();
+      if (key.isEmpty) continue;
+
+      result.add(<String, dynamic>{
+        ...item,
+        'key': key,
+        'label': VipHelpers.firstStr(item, [
+          'label',
+          'title',
+        ], fallback: key.replaceAll('_', ' ')),
+        'description': VipHelpers.firstStr(item, [
+          'description',
+          'subtitle',
+          'text',
+        ]),
+        'icon': VipHelpers.toStr(item['icon']),
+        'value': settingValue(key),
+      });
+    }
+
+    return result;
+  }
+
+  Set<String> get _availablePermissionSettingKeys {
+    final keys = <String>{};
+
+    for (final item in permissionSwitchItems) {
+      final key = VipHelpers.toStr(item['key']).trim();
+      if (key.isNotEmpty) keys.add(key);
+    }
+
+    final current = currentVip.value;
+    if (current != null) {
+      final permissionSettings = VipHelpers.asMap(
+        current.raw['permission_settings'],
+      );
+      for (final key in permissionSettings.keys) {
+        final clean = key.toString().trim();
+        if (clean.isNotEmpty) keys.add(clean);
+      }
+    }
+
+    return keys;
   }
 
   Future<void> fetchMyVipHistory() async {
@@ -346,9 +443,9 @@ class SvipController extends GetxController {
         options: Options(headers: _authHeaders),
       );
 
-      final list = _extractList(response.data)
-          .map(VipPurchaseInfo.fromJson)
-          .toList();
+      final list = _extractList(
+        response.data,
+      ).map(VipPurchaseInfo.fromJson).toList();
       vipHistory.assignAll(list);
     } catch (e) {
       showMessage(
@@ -386,8 +483,7 @@ class SvipController extends GetxController {
     if (isPurchaseLoading.value) return false;
 
     final package = vipPackages.firstWhereOrNull(
-          (item) =>
-      item.id == packageId && (vipId == null || item.vipId == vipId),
+          (item) => item.id == packageId && (vipId == null || item.vipId == vipId),
     );
     if (package == null || package.vipId <= 0) {
       showMessage(
@@ -401,10 +497,7 @@ class SvipController extends GetxController {
       isPurchaseLoading.value = true;
       final response = await _dio.post(
         kVipPurchaseUrl,
-        data: {
-          'package_id': package.id,
-          'vip_id': package.vipId,
-        },
+        data: {'package_id': package.id, 'vip_id': package.vipId},
         options: Options(headers: _authHeaders),
       );
 
@@ -437,10 +530,7 @@ class SvipController extends GetxController {
 
   Future<void> reloadBackpackOnce() async {
     try {
-      await _dio.get(
-        kBackPackList,
-        options: Options(headers: _authHeaders),
-      );
+      await _dio.get(kBackPackList, options: Options(headers: _authHeaders));
     } catch (e) {
       log('Backpack refresh after VIP change failed: $e');
     }
@@ -460,13 +550,18 @@ class SvipController extends GetxController {
     required String key,
     required bool value,
   }) async {
-    const supportedKeys = <String>{
+    const coreSupportedKeys = <String>{
       'is_enabled',
       'hide_visitor_records',
       'hide_online_status',
       'avoid_disturbing',
     };
-    if (!supportedKeys.contains(key) ||
+
+    final bool isSupported =
+        coreSupportedKeys.contains(key) ||
+            _availablePermissionSettingKeys.contains(key);
+
+    if (!isSupported ||
         isSettingsLoading.value ||
         savingSettingKeys.contains(key)) {
       return false;
@@ -491,6 +586,9 @@ class SvipController extends GetxController {
       final applied = _applySettingsResponse(data);
       if (!applied) {
         await reloadCurrentUserVip(silent: true);
+      }
+      if (Get.isRegistered<LivestreamController>()) {
+        Get.find<LivestreamController>().patchCurrentVipSetting(key, value);
       }
 
       final message = body is Map && body['message'] != null
@@ -523,29 +621,44 @@ class SvipController extends GetxController {
       source = Map<String, dynamic>.from(nestedCurrent);
     }
 
-    final hasCurrentVipShape = source.containsKey('vip_id') ||
-        source.containsKey('vip_level') ||
-        source.containsKey('package_id');
+    final hasCurrentVipShape =
+        source.containsKey('vip_id') ||
+            source.containsKey('vip_level') ||
+            source.containsKey('package_id');
     if (hasCurrentVipShape) {
       _applyCurrentVip(VipPurchaseInfo.fromJson(source));
       return true;
     }
 
-    final settings = VipHelpers.asMap(
-      source['settings'] ?? data['settings'],
-    );
+    final settings = VipHelpers.asMap(source['settings'] ?? data['settings']);
     final screenRaw = source['settings_screen'] ?? data['settings_screen'];
     if (screenRaw != null || settings.isNotEmpty) {
       final screen = VipSettingsScreenData.fromJson(
         screenRaw,
-        fallbackSettings: <String, dynamic>{
-          ...settingValues,
-          ...settings,
-        },
+        fallbackSettings: <String, dynamic>{...settingValues, ...settings},
         fallbackMasterValue: settingValue('is_enabled'),
       );
       settingsScreen.value = screen;
-      settingValues.assignAll(screen.values);
+
+      final mergedValues = <String, bool>{
+        ...screen.values,
+        ..._permissionValuesFromRaw(<String, dynamic>{
+          ...data,
+          ...source,
+          if (screenRaw != null) 'settings_screen': screenRaw,
+        }),
+      };
+
+      // Preserve existing permission values if this lightweight response
+      // does not include permission_settings/permission_switches.
+      for (final entry in settingValues.entries) {
+        if (_availablePermissionSettingKeys.contains(entry.key) &&
+            !mergedValues.containsKey(entry.key)) {
+          mergedValues[entry.key] = entry.value;
+        }
+      }
+
+      settingValues.assignAll(mergedValues);
       return true;
     }
 
@@ -563,9 +676,8 @@ class SvipController extends GetxController {
   }
 
   List<VipPackageItem> packagesForLevel(int vipId) {
-    final list = vipPackages
-        .where((item) => item.vipId == vipId && item.status)
-        .toList()
+    final list =
+    vipPackages.where((item) => item.vipId == vipId && item.status).toList()
       ..sort(_comparePackages);
     return list;
   }
@@ -633,6 +745,8 @@ class SvipController extends GetxController {
         level.titleImageUrl,
         level.entryBannerImageUrl,
         level.profileCardImageUrl,
+        level.nameImageUrl,
+        level.chatBubbleImageUrl,
         ...level.allAssets.map((e) => e.playUrl),
       ]) {
         if (VipHelpers.ext(url) == 'svga') urls.add(url);
@@ -640,6 +754,68 @@ class SvipController extends GetxController {
       if (urls.isNotEmpty) {
         SVGAPrecacheManager.shared.precache(urls);
       }
+    } catch (_) {}
+  }
+
+  /// Warms both the SVGA cache and the disk image cache for every level
+  /// that was fetched — not just the one currently selected — so switching
+  /// tabs feels instant instead of triggering a fresh network fetch each
+  /// time. Runs in the background and never blocks the UI.
+  Future<void> _precacheAllLevelsMedia() async {
+    try {
+      final svgaUrls = <String>{};
+      final rasterUrls = <String>{};
+
+      void bucket(String url) {
+        final clean = url.trim();
+        if (clean.isEmpty) return;
+        if (VipHelpers.ext(clean) == 'svga') {
+          svgaUrls.add(clean);
+        } else {
+          rasterUrls.add(clean);
+        }
+      }
+
+      for (final level in vipLevels) {
+        for (final url in [
+          level.frameUrl,
+          level.frameShowImageUrl,
+          level.badgeImageUrl,
+          level.badgeImageShowImageUrl,
+          level.titleImageUrl,
+          level.titleImageShowImageUrl,
+          level.entryBannerImageUrl,
+          level.entryBannerImageShowImageUrl,
+          level.profileCardImageUrl,
+          level.profileCardImageShowImageUrl,
+          level.nameImageUrl,
+          level.nameImageShowImageUrl,
+          level.chatBubbleImageUrl,
+          level.chatBubbleImageShowImageUrl,
+          ...level.allAssets.map((e) => e.playUrl),
+          ...level.allAssets.map((e) => e.previewUrl),
+        ]) {
+          bucket(url);
+        }
+      }
+
+      if (svgaUrls.isNotEmpty) {
+        SVGAPrecacheManager.shared.precache(svgaUrls.toList());
+      }
+
+      // Raster images (png/webp "show" thumbnails) are fetched one at a
+      // time into the same disk cache CachedNetworkImage reads from, so
+      // by the time the user taps a tab the network round trip is already
+      // done. Each fetch is isolated so one bad URL can't stop the rest.
+      for (final url in rasterUrls) {
+        unawaited(_prefetchRasterImage(url));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _prefetchRasterImage(String url) async {
+    try {
+      await DefaultCacheManager().getSingleFile(url);
     } catch (_) {}
   }
 

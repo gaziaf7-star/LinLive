@@ -8,14 +8,16 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:meetlivepro/app/modules/auth/controllers/auth_controller.dart';
 import 'package:meetlivepro/app/modules/livestream/controllers/livestream_controller.dart';
 import 'package:meetlivepro/app/modules/livestream/socket/websocket_controller.dart';
+import 'package:meetlivepro/app/modules/livestream/utils/vip_privileges.dart';
 import 'package:meetlivepro/widgets/after/CastomText.dart';
 import '../../../../constants/constants.dart';
 import '../../../../constants/image_helper.dart';
 import '../../../../constants/layout_constant.dart';
 import 'audioText.dart';
-
+import 'speaking_wave.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
+
 class LiveViewCircleSeatReactive extends StatelessWidget {
   final int seatNo;
   final Map initialData;
@@ -26,7 +28,8 @@ class LiveViewCircleSeatReactive extends StatelessWidget {
     required this.initialData,
   });
 
-  WebsocketController get _websocketController => Get.find<WebsocketController>();
+  WebsocketController get _websocketController =>
+      Get.find<WebsocketController>();
 
   Map<String, dynamic> _asMap(dynamic value) {
     if (value is Map<String, dynamic>) return value;
@@ -69,7 +72,10 @@ class LiveViewCircleSeatReactive extends StatelessWidget {
 
     final caller = _asMap(root['caller']);
     final callerSeat = _safeInt(
-      caller['seat_no'] ?? caller['seat'] ?? caller['seat_number'] ?? caller['seatNo'],
+      caller['seat_no'] ??
+          caller['seat'] ??
+          caller['seat_number'] ??
+          caller['seatNo'],
     );
     final rootSeat = _safeInt(
       root['seat_no'] ?? root['seat'] ?? root['seat_number'] ?? root['seatNo'],
@@ -104,10 +110,7 @@ class LiveViewCircleSeatReactive extends StatelessWidget {
     return root;
   }
 
-  Map<String, dynamic> _mergeNestedMap(
-      dynamic oldValue,
-      dynamic newValue,
-      ) {
+  Map<String, dynamic> _mergeNestedMap(dynamic oldValue, dynamic newValue) {
     final oldMap = _asMap(oldValue);
     final newMap = _asMap(newValue);
     if (oldMap.isEmpty) return newMap;
@@ -212,7 +215,10 @@ class LiveViewCircleSeatReactive extends StatelessWidget {
       if (!_isAcceptedSeatCall(item)) continue;
 
       final int itemSeat = _safeInt(
-        item['seat_no'] ?? item['seat'] ?? item['seat_number'] ?? item['seatNo'],
+        item['seat_no'] ??
+            item['seat'] ??
+            item['seat_number'] ??
+            item['seatNo'],
       );
       if (itemSeat == seatNo) {
         return _mergeSeatPayloads(initial, item);
@@ -229,13 +235,27 @@ class LiveViewCircleSeatReactive extends StatelessWidget {
       /// instead of forcing the whole AudioLiveView page to rebuild.
       _websocketController.liveCallList.length;
       _websocketController.lockedSeatMap[seatNo];
-      _websocketController.audioMutedUserMap.length;
       _websocketController.liveImogiAnimations.length;
+      final Map<String, dynamic> currentData = _currentSeatData();
+      final int currentUserId = LiveViewCircle_container.seatUserIdOf(
+        currentData,
+      );
+      if (currentUserId > 0) {
+        _websocketController.speakingSignalForUser(currentUserId).value;
+        // ✅ FIX (stutter with many active seats): previously read
+        // audioMutedUserMap.length here, which registers a dependency on
+        // the WHOLE shared mute map — so any user anywhere in the room
+        // muting/unmuting rebuilt every single seat's Obx, not just the
+        // one seat whose own occupant actually changed. Reading the map by
+        // this seat's own user id instead only reacts when THIS seat's
+        // occupant's mute state actually changes.
+        _websocketController.audioMutedUserMap[currentUserId];
+      }
 
       return RepaintBoundary(
         child: LiveViewCircle_container(
           key: ValueKey('audio_seat_$seatNo'),
-          data: _currentSeatData(),
+          data: currentData,
           seatNo: seatNo,
         ),
       );
@@ -257,13 +277,35 @@ class LiveViewCircle_container extends StatelessWidget {
   final WebsocketController websocketController = Get.find();
   final AuthController authController = Get.find();
 
+  static int seatUserIdOf(Map seatData) {
+    int read(dynamic value) => int.tryParse(value?.toString() ?? '0') ?? 0;
+    final Map user = seatData['user'] is Map
+        ? seatData['user'] as Map
+        : const {};
+    final Map caller = seatData['caller'] is Map
+        ? seatData['caller'] as Map
+        : const {};
+    for (final dynamic value in <dynamic>[
+      seatData['caller_id'],
+      seatData['user_id'],
+      seatData['viewer_id'],
+      user['id'],
+      user['user_id'],
+      caller['id'],
+      caller['user_id'],
+    ]) {
+      final int id = read(value);
+      if (id > 0) return id;
+    }
+    return 0;
+  }
+
   /// Keeps the last rich user profile for each live-seat user.
   /// Guardian/admin websocket payload can be partial and may not include
   /// asset_purchase_history/frame, so we merge from this cache to avoid
   /// the profile frame disappearing after Set Admin/Remove Admin.
   static final Map<int, Map<String, dynamic>> _seatUserVisualCache =
   <int, Map<String, dynamic>>{};
-
 
   /// Lucky Gift particle target registry.
   /// GiftAnimationWidget uses this to move small gift images into the
@@ -324,8 +366,9 @@ class LiveViewCircle_container extends StatelessWidget {
       try {
         final RenderObject? raw = context.findRenderObject();
         if (raw is RenderBox && raw.attached && raw.hasSize) {
-          _luckyReceiverSeatGlobalCenters[seatNo] =
-              raw.localToGlobal(raw.size.center(Offset.zero));
+          _luckyReceiverSeatGlobalCenters[seatNo] = raw.localToGlobal(
+            raw.size.center(Offset.zero),
+          );
         }
       } catch (_) {}
     });
@@ -357,13 +400,16 @@ class LiveViewCircle_container extends StatelessWidget {
       final RenderObject? rawSeat = seatContext.findRenderObject();
       final RenderObject? rawTarget = relativeTo.findRenderObject();
       if (rawSeat is! RenderBox || rawTarget is! RenderBox) return null;
-      if (!rawSeat.attached || !rawTarget.attached ||
-          !rawSeat.hasSize || !rawTarget.hasSize) {
+      if (!rawSeat.attached ||
+          !rawTarget.attached ||
+          !rawSeat.hasSize ||
+          !rawTarget.hasSize) {
         return null;
       }
 
-      final Offset globalCenter =
-      rawSeat.localToGlobal(rawSeat.size.center(Offset.zero));
+      final Offset globalCenter = rawSeat.localToGlobal(
+        rawSeat.size.center(Offset.zero),
+      );
       return rawTarget.globalToLocal(globalCenter);
     } catch (_) {
       return null;
@@ -446,7 +492,8 @@ class LiveViewCircle_container extends StatelessWidget {
     );
   }
 
-  bool get isLockedSeat => websocketController.isSeatLocked(seatNo) || _seatLockedFromData();
+  bool get isLockedSeat =>
+      websocketController.isSeatLocked(seatNo) || _seatLockedFromData();
 
   String _truncateName(String name, int maxLength) {
     if (name.length <= maxLength) return name;
@@ -479,10 +526,11 @@ class LiveViewCircle_container extends StatelessWidget {
   }
 
   bool _seatLockedFromData() {
-    final lockValue = data['is_locked'] ??
-        data['locked'] ??
-        data['seat_locked'] ??
-        data['lock_status'];
+    final lockValue =
+        data['is_locked'] ??
+            data['locked'] ??
+            data['seat_locked'] ??
+            data['lock_status'];
     return _truthyLocal(lockValue);
   }
 
@@ -520,8 +568,12 @@ class LiveViewCircle_container extends StatelessWidget {
   }
 
   int _currentRoomStreamId() {
-    final controllerLive = _toMap(livestreamController.createStreamData['livestreamdata']);
-    final controllerLive2 = _toMap(livestreamController.createStreamData['livestream']);
+    final controllerLive = _toMap(
+      livestreamController.createStreamData['livestreamdata'],
+    );
+    final controllerLive2 = _toMap(
+      livestreamController.createStreamData['livestream'],
+    );
     final candidates = <dynamic>[
       data['livestream_id'],
       data['stream_id'],
@@ -529,7 +581,9 @@ class LiveViewCircle_container extends StatelessWidget {
       data['livestream'] is Map ? data['livestream']['id'] : null,
       data['livestream'] is Map ? data['livestream']['livestream_id'] : null,
       data['livestreamdata'] is Map ? data['livestreamdata']['id'] : null,
-      data['livestreamdata'] is Map ? data['livestreamdata']['livestream_id'] : null,
+      data['livestreamdata'] is Map
+          ? data['livestreamdata']['livestream_id']
+          : null,
       livestreamController.streamId.value,
       websocketController.streamID.value,
       websocketController.activeAudioStreamId.value,
@@ -575,10 +629,7 @@ class LiveViewCircle_container extends StatelessWidget {
       if (text.isEmpty || text.toLowerCase() == 'null') {
         return <String, dynamic>{};
       }
-      return <String, dynamic>{
-        'asset': text,
-        'asset_type': 'profile_frame',
-      };
+      return <String, dynamic>{'asset': text, 'asset_type': 'profile_frame'};
     }
 
     if (value is List) {
@@ -751,23 +802,28 @@ class LiveViewCircle_container extends StatelessWidget {
 
   int _seatUserId(Map seatData) {
     final directUser = seatData['user'] is Map ? seatData['user'] as Map : null;
-    final nestedUser = seatData['caller'] is Map ? seatData['caller'] as Map : null;
+    final nestedUser = seatData['caller'] is Map
+        ? seatData['caller'] as Map
+        : null;
 
-    return _safeInt(directUser?['id'] ??
-        directUser?['user_id'] ??
-        nestedUser?['id'] ??
-        nestedUser?['user_id'] ??
-        seatData['user_id'] ??
-        seatData['caller_id'] ??
-        seatData['viewer_id'] ??
-        seatData['id']);
+    return _safeInt(
+      directUser?['id'] ??
+          directUser?['user_id'] ??
+          nestedUser?['id'] ??
+          nestedUser?['user_id'] ??
+          seatData['user_id'] ??
+          seatData['caller_id'] ??
+          seatData['viewer_id'] ??
+          seatData['id'],
+    );
   }
 
   bool _isAudioMuted(Map seatData) {
     final int userId = _seatUserId(seatData);
     if (userId > 0) {
-      final dynamic direct = websocketController.audioMutedUserMap[userId] ??
-          websocketController.audioMutedUserMap[int.parse(userId.toString())];
+      final dynamic direct =
+          websocketController.audioMutedUserMap[userId] ??
+              websocketController.audioMutedUserMap[int.parse(userId.toString())];
 
       if (direct != null) {
         return direct == true || _truthyLocal(direct);
@@ -775,27 +831,29 @@ class LiveViewCircle_container extends StatelessWidget {
     }
 
     /// Some events save mute status inside caller/user/root payload.
-    final audioOn = seatData['audio_on'] ??
-        seatData['is_audio_on'] ??
-        seatData['mic_on'] ??
-        seatData['microphone_on'] ??
-        _readNested(seatData, ['caller', 'audio_on']) ??
-        _readNested(seatData, ['caller', 'is_audio_on']) ??
-        _readNested(seatData, ['user', 'audio_on']) ??
-        _readNested(seatData, ['user', 'is_audio_on']);
+    final audioOn =
+        seatData['audio_on'] ??
+            seatData['is_audio_on'] ??
+            seatData['mic_on'] ??
+            seatData['microphone_on'] ??
+            _readNested(seatData, ['caller', 'audio_on']) ??
+            _readNested(seatData, ['caller', 'is_audio_on']) ??
+            _readNested(seatData, ['user', 'audio_on']) ??
+            _readNested(seatData, ['user', 'is_audio_on']);
 
-    final muted = seatData['is_muted'] ??
-        seatData['muted'] ??
-        seatData['is_mute'] ??
-        seatData['mute'] ??
-        seatData['is_muted_by_host'] ??
-        seatData['mute_status'] ??
-        _readNested(seatData, ['caller', 'is_muted']) ??
-        _readNested(seatData, ['caller', 'muted']) ??
-        _readNested(seatData, ['caller', 'is_mute']) ??
-        _readNested(seatData, ['user', 'is_muted']) ??
-        _readNested(seatData, ['user', 'muted']) ??
-        _readNested(seatData, ['user', 'is_mute']);
+    final muted =
+        seatData['is_muted'] ??
+            seatData['muted'] ??
+            seatData['is_mute'] ??
+            seatData['mute'] ??
+            seatData['is_muted_by_host'] ??
+            seatData['mute_status'] ??
+            _readNested(seatData, ['caller', 'is_muted']) ??
+            _readNested(seatData, ['caller', 'muted']) ??
+            _readNested(seatData, ['caller', 'is_mute']) ??
+            _readNested(seatData, ['user', 'is_muted']) ??
+            _readNested(seatData, ['user', 'muted']) ??
+            _readNested(seatData, ['user', 'is_mute']);
 
     if (_falseyLocal(audioOn)) return true;
     if (_truthyLocal(muted)) return true;
@@ -809,24 +867,25 @@ class LiveViewCircle_container extends StatelessWidget {
     /// If controller has a speaking map, use it safely without requiring a
     /// hard dependency on a specific variable name at compile time.
     try {
-      final dynamic ws = websocketController;
-      final dynamic speakingMap = ws.speakingUserMap ?? ws.liveSpeakingUserMap;
-      if (userId > 0 && speakingMap != null) {
-        final dynamic direct = speakingMap[userId] ?? speakingMap[userId.toString()];
-        if (direct != null) return direct == true || _truthyLocal(direct);
+      if (userId > 0) {
+        return websocketController.speakingSignalForUser(userId).value;
       }
     } catch (_) {}
 
-    return _truthyLocal(seatData['is_speaking'] ??
-        seatData['speaking'] ??
-        seatData['is_talking'] ??
-        _readNested(seatData, ['caller', 'is_speaking']) ??
-        _readNested(seatData, ['user', 'is_speaking']));
+    return _truthyLocal(
+      seatData['is_speaking'] ??
+          seatData['speaking'] ??
+          seatData['is_talking'] ??
+          _readNested(seatData, ['caller', 'is_speaking']) ??
+          _readNested(seatData, ['user', 'is_speaking']),
+    );
   }
 
   bool _hasRealUserInfo(Map<String, dynamic> user) {
     final name = (user['name'] ?? user['user_name'] ?? '').toString().trim();
-    final image = (user['profile_image'] ?? user['avatar'] ?? '').toString().trim();
+    final image = (user['profile_image'] ?? user['avatar'] ?? '')
+        .toString()
+        .trim();
     final frame = _seatProfileFrameData(user);
     return name.isNotEmpty || image.isNotEmpty || _isProfileFrameAsset(frame);
   }
@@ -875,10 +934,12 @@ class LiveViewCircle_container extends StatelessWidget {
           final mapUser = map['user'] is Map
               ? Map<String, dynamic>.from(map['user'])
               : <String, dynamic>{};
-          final int itemId = _safeInt(map['caller_id'] ??
-              map['user_id'] ??
-              mapUser['id'] ??
-              mapUser['user_id']);
+          final int itemId = _safeInt(
+            map['caller_id'] ??
+                map['user_id'] ??
+                mapUser['id'] ??
+                mapUser['user_id'],
+          );
           if (itemId == uid &&
               _rowBelongsToCurrentRoom(map) &&
               (_truthyLocal(map['is_guardian']) ||
@@ -904,21 +965,29 @@ class LiveViewCircle_container extends StatelessWidget {
       data['livestream'] is Map ? data['livestream']['current_host_id'] : null,
       data['livestream'] is Map ? data['livestream']['host_id'] : null,
       data['livestream'] is Map ? data['livestream']['user_id'] : null,
-      data['livestreamdata'] is Map ? data['livestreamdata']['owner_user_id'] : null,
-      data['livestreamdata'] is Map ? data['livestreamdata']['current_host_id'] : null,
+      data['livestreamdata'] is Map
+          ? data['livestreamdata']['owner_user_id']
+          : null,
+      data['livestreamdata'] is Map
+          ? data['livestreamdata']['current_host_id']
+          : null,
       data['livestreamdata'] is Map ? data['livestreamdata']['host_id'] : null,
       data['livestreamdata'] is Map ? data['livestreamdata']['user_id'] : null,
     ];
 
     try {
-      final created = Map<String, dynamic>.from(livestreamController.createStreamData);
+      final created = Map<String, dynamic>.from(
+        livestreamController.createStreamData,
+      );
       final createdLive = _toMap(created['livestreamdata']);
       final createdLive2 = _toMap(created['livestream']);
       final int createdStreamId = _liveIdFromMap(created);
 
       // createStreamData is a controller-level cache. Use it only when it
       // belongs to the current room; otherwise old own-live host id leaks.
-      if (currentStreamId <= 0 || createdStreamId <= 0 || createdStreamId == currentStreamId) {
+      if (currentStreamId <= 0 ||
+          createdStreamId <= 0 ||
+          createdStreamId == currentStreamId) {
         candidates.add(createdLive['current_host_id']);
         candidates.add(createdLive['owner_user_id']);
         candidates.add(createdLive['host_id']);
@@ -940,8 +1009,12 @@ class LiveViewCircle_container extends StatelessWidget {
         // app-level `is_host` flags because those can belong to another room.
         if (_truthyLocal(map['is_broadcaster']) ||
             _truthyLocal(map['current_room_host'])) {
-          final user = map['user'] is Map ? Map<String, dynamic>.from(map['user']) : <String, dynamic>{};
-          candidates.add(map['caller_id'] ?? map['user_id'] ?? user['id'] ?? user['user_id']);
+          final user = map['user'] is Map
+              ? Map<String, dynamic>.from(map['user'])
+              : <String, dynamic>{};
+          candidates.add(
+            map['caller_id'] ?? map['user_id'] ?? user['id'] ?? user['user_id'],
+          );
         }
       }
     } catch (_) {}
@@ -968,18 +1041,17 @@ class LiveViewCircle_container extends StatelessWidget {
     /// Fallback only when host id is missing: use broadcaster flag from the
     /// current seat/caller row, never from nested user profile data.
     final caller = seatData['caller'];
-    final bool seatBroadcaster = _rowBelongsToCurrentRoom(seatData) &&
-        (_truthyLocal(seatData['is_broadcaster']) ||
-            _truthyLocal(seatData['current_room_host']) ||
-            (caller is Map &&
-                _rowBelongsToCurrentRoom(caller) &&
-                (_truthyLocal(caller['is_broadcaster']) ||
-                    _truthyLocal(caller['current_room_host']))));
+    final bool seatBroadcaster =
+        _rowBelongsToCurrentRoom(seatData) &&
+            (_truthyLocal(seatData['is_broadcaster']) ||
+                _truthyLocal(seatData['current_room_host']) ||
+                (caller is Map &&
+                    _rowBelongsToCurrentRoom(caller) &&
+                    (_truthyLocal(caller['is_broadcaster']) ||
+                        _truthyLocal(caller['current_room_host']))));
 
     return seatBroadcaster;
   }
-
-
 
   Widget _roomAdminIcon() {
     return Container(
@@ -992,10 +1064,7 @@ class LiveViewCircle_container extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: [Color(0xffFACC15), Color(0xffFB7185)],
         ),
-        border: Border.all(
-          color: Colors.white.withOpacity(.80),
-          width: .7,
-        ),
+        border: Border.all(color: Colors.white.withOpacity(.80), width: .7),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(.20),
@@ -1073,10 +1142,7 @@ class LiveViewCircle_container extends StatelessWidget {
 
     try {
       final dynamic ws = websocketController;
-      final lists = [
-        ws.liveCallList,
-        ws.pendingCall,
-      ];
+      final lists = [ws.liveCallList, ws.pendingCall];
 
       for (final list in lists) {
         if (list is Iterable) {
@@ -1104,7 +1170,9 @@ class LiveViewCircle_container extends StatelessWidget {
               // Prefer the copy that still has frame/asset data. Partial
               // guardian payload may have only name/profile_image.
               if (_hasVisualFrame(itemUser)) return itemUser;
-              final cachedId = _safeInt(itemUser['id'] ?? itemUser['user_id'] ?? idText);
+              final cachedId = _safeInt(
+                itemUser['id'] ?? itemUser['user_id'] ?? idText,
+              );
               final cached = _seatUserVisualCache[cachedId];
               if (cached != null && _hasVisualFrame(cached)) {
                 return _mergeUserInfo(cached, itemUser);
@@ -1130,7 +1198,8 @@ class LiveViewCircle_container extends StatelessWidget {
           if (raw is! Map) continue;
           final user = Map<String, dynamic>.from(raw);
           final ids = [user['id'], user['user_id'], user['unique_id']];
-          if (ids.any((v) => v?.toString() == idText) && _hasRealUserInfo(user)) {
+          if (ids.any((v) => v?.toString() == idText) &&
+              _hasRealUserInfo(user)) {
             return user;
           }
         }
@@ -1207,7 +1276,6 @@ class LiveViewCircle_container extends StatelessWidget {
     return merged;
   }
 
-
   Map<String, dynamic> _currentAuthUserVisualMap(int lookupInt) {
     final dynamic authUser = authController.userProfile.value.user;
     final int authId = authController.userProfile.value.user?.id?.toInt() ?? 0;
@@ -1215,10 +1283,7 @@ class LiveViewCircle_container extends StatelessWidget {
       return <String, dynamic>{};
     }
 
-    final map = <String, dynamic>{
-      'id': authId,
-      'user_id': authId,
-    };
+    final map = <String, dynamic>{'id': authId, 'user_id': authId};
 
     try {
       final dynamic json = (authUser as dynamic).toJson();
@@ -1228,28 +1293,67 @@ class LiveViewCircle_container extends StatelessWidget {
     } catch (_) {}
 
     void put(String key, dynamic value) {
-      if (value != null && value.toString().trim().isNotEmpty && value.toString() != 'null') {
+      if (value != null &&
+          value.toString().trim().isNotEmpty &&
+          value.toString() != 'null') {
         map[key] = value;
       }
     }
 
-    try { put('name', (authUser as dynamic).name); } catch (_) {}
-    try { put('profile_image', (authUser as dynamic).profileImage); } catch (_) {}
-    try { put('avatar', (authUser as dynamic).avatar); } catch (_) {}
-    try { put('level', (authUser as dynamic).level); } catch (_) {}
-    try { put('asset_purchase_histories', (authUser as dynamic).assetPurchaseHistories); } catch (_) {}
-    try { put('asset_purchase_history', (authUser as dynamic).assetPurchaseHistory); } catch (_) {}
-    try { put('profile_frame_history', (authUser as dynamic).profileFrameHistory); } catch (_) {}
-    try { put('profileFrame', (authUser as dynamic).profileFrame); } catch (_) {}
-    try { put('profile_frame', (authUser as dynamic).profile_frame); } catch (_) {}
-    try { put('active_frame', (authUser as dynamic).activeFrame); } catch (_) {}
-    try { put('avatar_frame', (authUser as dynamic).avatarFrame); } catch (_) {}
-    try { put('active_profile_frame', (authUser as dynamic).activeProfileFrame); } catch (_) {}
-    try { put('selected_frame', (authUser as dynamic).selectedFrame); } catch (_) {}
-    try { put('current_frame', (authUser as dynamic).currentFrame); } catch (_) {}
-    try { put('frame', (authUser as dynamic).frame); } catch (_) {}
-    try { put('frame_url', (authUser as dynamic).frameUrl); } catch (_) {}
-    try { put('profile_frame_url', (authUser as dynamic).profileFrameUrl); } catch (_) {}
+    try {
+      put('name', (authUser as dynamic).name);
+    } catch (_) {}
+    try {
+      put('profile_image', (authUser as dynamic).profileImage);
+    } catch (_) {}
+    try {
+      put('avatar', (authUser as dynamic).avatar);
+    } catch (_) {}
+    try {
+      put('level', (authUser as dynamic).level);
+    } catch (_) {}
+    try {
+      put(
+        'asset_purchase_histories',
+        (authUser as dynamic).assetPurchaseHistories,
+      );
+    } catch (_) {}
+    try {
+      put('asset_purchase_history', (authUser as dynamic).assetPurchaseHistory);
+    } catch (_) {}
+    try {
+      put('profile_frame_history', (authUser as dynamic).profileFrameHistory);
+    } catch (_) {}
+    try {
+      put('profileFrame', (authUser as dynamic).profileFrame);
+    } catch (_) {}
+    try {
+      put('profile_frame', (authUser as dynamic).profile_frame);
+    } catch (_) {}
+    try {
+      put('active_frame', (authUser as dynamic).activeFrame);
+    } catch (_) {}
+    try {
+      put('avatar_frame', (authUser as dynamic).avatarFrame);
+    } catch (_) {}
+    try {
+      put('active_profile_frame', (authUser as dynamic).activeProfileFrame);
+    } catch (_) {}
+    try {
+      put('selected_frame', (authUser as dynamic).selectedFrame);
+    } catch (_) {}
+    try {
+      put('current_frame', (authUser as dynamic).currentFrame);
+    } catch (_) {}
+    try {
+      put('frame', (authUser as dynamic).frame);
+    } catch (_) {}
+    try {
+      put('frame_url', (authUser as dynamic).frameUrl);
+    } catch (_) {}
+    try {
+      put('profile_frame_url', (authUser as dynamic).profileFrameUrl);
+    } catch (_) {}
 
     return map;
   }
@@ -1345,7 +1449,8 @@ class LiveViewCircle_container extends StatelessWidget {
   }
 
   Map<String, dynamic> _safeUserMap() {
-    final fallbackId = data['caller_id'] ?? data['user_id'] ?? data['viewer_id'] ?? data['id'];
+    final fallbackId =
+        data['caller_id'] ?? data['user_id'] ?? data['viewer_id'] ?? data['id'];
 
     final directUserBase = data['user'] is Map
         ? Map<String, dynamic>.from(data['user'])
@@ -1357,7 +1462,10 @@ class LiveViewCircle_container extends StatelessWidget {
     final fallbackUser = {
       'id': directUser['id'] ?? fallbackId,
       'user_id': directUser['user_id'] ?? fallbackId,
-      'name': data['name'] ?? data['user_name'] ?? (fallbackId == null ? 'User' : 'User $fallbackId'),
+      'name':
+      data['name'] ??
+          data['user_name'] ??
+          (fallbackId == null ? 'User' : 'User $fallbackId'),
       'profile_image': data['profile_image'] ?? data['avatar'] ?? '',
       'level': data['level'] ?? 0,
       'asset_purchase_histories': data['asset_purchase_histories'],
@@ -1425,7 +1533,6 @@ class LiveViewCircle_container extends StatelessWidget {
     return merged;
   }
 
-
   bool _canManageSeatLock() {
     try {
       final dynamic live = livestreamController;
@@ -1434,7 +1541,6 @@ class LiveViewCircle_container extends StatelessWidget {
       return false;
     }
   }
-
 
   bool _currentUserAlreadyOnMic() {
     final userId = authController.userProfile.value.user?.id?.toInt() ?? 0;
@@ -1450,11 +1556,12 @@ class LiveViewCircle_container extends StatelessWidget {
             .toString()
             .trim()
             .toLowerCase();
-        final bool accepted = status == 'accepted' ||
-            status == 'joined' ||
-            status == 'active' ||
-            status == 'live' ||
-            status == 'on_seat';
+        final bool accepted =
+            status == 'accepted' ||
+                status == 'joined' ||
+                status == 'active' ||
+                status == 'live' ||
+                status == 'on_seat';
         if (!accepted) return false;
 
         final int activeSeatNo = _safeInt(
@@ -1467,8 +1574,9 @@ class LiveViewCircle_container extends StatelessWidget {
 
         final callerId = call['caller_id'] ?? call['user_id'];
         final callUserId = call['user'] is Map ? call['user']['id'] : null;
-        final nestedCallerId =
-        call['caller'] is Map ? call['caller']['id'] : null;
+        final nestedCallerId = call['caller'] is Map
+            ? call['caller']['id']
+            : null;
         return callerId.toString() == userId.toString() ||
             callUserId.toString() == userId.toString() ||
             nestedCallerId.toString() == userId.toString();
@@ -1511,12 +1619,9 @@ class LiveViewCircle_container extends StatelessWidget {
         );
       }
 
-      try {
-        await livestreamController.tryToGetCallList(streamId: streamId, force: true);
-        websocketController.liveCallList.refresh();
-      } catch (e) {
-        debugPrint('Seat join/switch refresh failed: $e');
-      }
+      // The successful API response and realtime event update only the claimed
+      // seat. A full caller reconcile is reserved for an explicit conflict or
+      // reconnect so an older snapshot cannot overwrite this transition.
     } catch (e) {
       debugPrint('Seat join/switch failed: $e');
       Fluttertoast.showToast(msg: ('Seat action failed').appTr);
@@ -1530,12 +1635,10 @@ class LiveViewCircle_container extends StatelessWidget {
     /// Occupied seat => show profile only.
     if (data.isNotEmpty) {
       final user = _safeUserMap();
-      final userId = user['id'] ?? data['caller_id'] ?? data['user_id'] ?? data['id'];
+      final userId =
+          user['id'] ?? data['caller_id'] ?? data['user_id'] ?? data['id'];
       if (userId != null) {
-        homeController.liveVisitProfile(
-          userId: '$userId',
-          seatData: data,
-        );
+        homeController.liveVisitProfile(userId: '$userId', seatData: data);
       }
       return;
     }
@@ -1594,7 +1697,9 @@ class LiveViewCircle_container extends StatelessWidget {
         return;
       }
 
-      if (availableSeatList.map((e) => e.toString()).contains(seatNo.toString())) {
+      if (availableSeatList
+          .map((e) => e.toString())
+          .contains(seatNo.toString())) {
         await _joinOrSwitchToThisSeat();
       } else {
         Fluttertoast.showToast(msg: ('Seat is not available').appTr);
@@ -1622,36 +1727,36 @@ class LiveViewCircle_container extends StatelessWidget {
           children: [
             SizedBox(height: kHeight * 0.015),
             _sheetItem(
-              alreadyInMic ? ('Switch to this seat').appTr: ('Up seat').appTr,
+              alreadyInMic ? ('Switch to this seat').appTr : ('Up seat').appTr,
                   () async {
                 Get.back();
                 await _joinOrSwitchToThisSeat();
               },
             ),
-            Obx(
-                  () {
-                final locked = isLockedSeat;
-                return _sheetItem(
-                  locked ? ('Unlock seat').appTr: ('Lock seat').appTr,
-                      () async {
-                    Get.back();
-                    final wasLocked = isLockedSeat;
-                    await livestreamController.toggleSeatLock(
-                      livestreamId: livestreamController.streamId.value,
-                      seatNo: seatNo,
-                    );
+            Obx(() {
+              final locked = isLockedSeat;
+              return _sheetItem(
+                locked ? ('Unlock seat').appTr : ('Lock seat').appTr,
+                    () async {
+                  Get.back();
+                  final wasLocked = isLockedSeat;
+                  await livestreamController.toggleSeatLock(
+                    livestreamId: livestreamController.streamId.value,
+                    seatNo: seatNo,
+                  );
 
-                    /// Keep UI stable immediately after host/admin action.
-                    /// The websocket event/API refresh will confirm the same state.
-                    websocketController.updateSeatLockStatus(
-                      seatNo: seatNo,
-                      isLocked: !wasLocked,
-                      source: wasLocked ? 'manual_unlock_after_api' : 'manual_lock_after_api',
-                    );
-                  },
-                );
-              },
-            ),
+                  /// Keep UI stable immediately after host/admin action.
+                  /// The websocket event/API refresh will confirm the same state.
+                  websocketController.updateSeatLockStatus(
+                    seatNo: seatNo,
+                    isLocked: !wasLocked,
+                    source: wasLocked
+                        ? 'manual_unlock_after_api'
+                        : 'manual_lock_after_api',
+                  );
+                },
+              );
+            }),
             _sheetItem(('Cancel').appTr, () => Get.back(), showBorder: false),
           ],
         ),
@@ -1659,7 +1764,11 @@ class LiveViewCircle_container extends StatelessWidget {
     );
   }
 
-  Widget _sheetItem(String title, VoidCallback onTap, {bool showBorder = true}) {
+  Widget _sheetItem(
+      String title,
+      VoidCallback onTap, {
+        bool showBorder = true,
+      }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -1685,7 +1794,6 @@ class LiveViewCircle_container extends StatelessWidget {
     );
   }
 
-
   Map<String, dynamic> _toMap(dynamic value) {
     if (value is Map<String, dynamic>) return value;
     if (value is Map) return Map<String, dynamic>.from(value);
@@ -1695,7 +1803,9 @@ class LiveViewCircle_container extends StatelessWidget {
   dynamic _pickFirst(Map<String, dynamic> map, List<String> keys) {
     for (final key in keys) {
       final value = map[key];
-      if (value != null && value.toString().trim().isNotEmpty && value.toString() != 'null') {
+      if (value != null &&
+          value.toString().trim().isNotEmpty &&
+          value.toString() != 'null') {
         return value;
       }
     }
@@ -1707,12 +1817,20 @@ class LiveViewCircle_container extends StatelessWidget {
 
     /// Some websocket handlers store payload inside data/payload.
     final innerData = _toMap(map['data']);
-    if (innerData.isNotEmpty && (innerData['action_type'] != null || innerData['sender'] != null || innerData['imogi'] != null || innerData['emoji'] != null)) {
+    if (innerData.isNotEmpty &&
+        (innerData['action_type'] != null ||
+            innerData['sender'] != null ||
+            innerData['imogi'] != null ||
+            innerData['emoji'] != null)) {
       map = innerData;
     }
 
     final innerPayload = _toMap(map['payload']);
-    if (innerPayload.isNotEmpty && (innerPayload['action_type'] != null || innerPayload['sender'] != null || innerPayload['imogi'] != null || innerPayload['emoji'] != null)) {
+    if (innerPayload.isNotEmpty &&
+        (innerPayload['action_type'] != null ||
+            innerPayload['sender'] != null ||
+            innerPayload['imogi'] != null ||
+            innerPayload['emoji'] != null)) {
       map = innerPayload;
     }
 
@@ -1729,16 +1847,17 @@ class LiveViewCircle_container extends StatelessWidget {
       final sender = _toMap(map['sender']);
       final user = _toMap(map['user']);
 
-      final senderId = _pickFirst(sender, ['id', 'user_id', 'caller_id']) ??
-          _pickFirst(user, ['id', 'user_id', 'caller_id']) ??
-          _pickFirst(map, [
-            'sender_id',
-            'user_id',
-            'caller_id',
-            'senderId',
-            'userId',
-            'id',
-          ]);
+      final senderId =
+          _pickFirst(sender, ['id', 'user_id', 'caller_id']) ??
+              _pickFirst(user, ['id', 'user_id', 'caller_id']) ??
+              _pickFirst(map, [
+                'sender_id',
+                'user_id',
+                'caller_id',
+                'senderId',
+                'userId',
+                'id',
+              ]);
 
       if (senderId.toString() == userId) {
         return map;
@@ -1807,9 +1926,11 @@ class LiveViewCircle_container extends StatelessWidget {
 
       return IgnorePointer(
         child: TweenAnimationBuilder<double>(
-          key: ValueKey(item['event_id']?.toString() ??
-              item['timestamp']?.toString() ??
-              image),
+          key: ValueKey(
+            item['event_id']?.toString() ??
+                item['timestamp']?.toString() ??
+                image,
+          ),
           tween: Tween<double>(begin: .52, end: 1.0),
           duration: const Duration(milliseconds: 210),
           curve: Curves.easeOutBack,
@@ -1866,49 +1987,43 @@ class LiveViewCircle_container extends StatelessWidget {
                 height: kHeight * 0.068,
                 width: kHeight * 0.068,
 
-
-                // Gradient Border
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF4F2174).withOpacity(.2),
-                      blurRadius: 14,
-                      spreadRadius: 1,
-                      offset: const Offset(0, 6),
-                    ),
-                    BoxShadow(
-                      color: Color(0xFF4F2174).withOpacity(.2),
-                      blurRadius: 8,
-                      spreadRadius: -2,
-                      offset: const Offset(-3, -3),
-                    ),
-                  ],
-                ),
+                // // Gradient Border
+                // decoration: BoxDecoration(
+                //   shape: BoxShape.circle,
+                //
+                //   boxShadow: [
+                //     BoxShadow(
+                //       color: const Color(0xFF4F2174).withOpacity(.2),
+                //       blurRadius: 14,
+                //       spreadRadius: 1,
+                //       offset: const Offset(0, 6),
+                //     ),
+                //     BoxShadow(
+                //       color: Color(0xFF4F2174).withOpacity(.2),
+                //       blurRadius: 8,
+                //       spreadRadius: -2,
+                //       offset: const Offset(-3, -3),
+                //     ),
+                //   ],
+                // ),
 
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     // 3D Glass Body
-
-                    color: Colors.white.withOpacity(.3),
-
-
+                    color: Colors.white.withOpacity(.2),
                   ),
 
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-
-
                       // Seat Image
                       Image.asset(
                         locked
-                            ? 'assets/newaudio/lockSet.png'
-                            : 'assets/newaudio/audioSet.png',
-                        height: locked ? kHeight * 0.045 : kHeight * 0.06,
-                        width: locked ? kHeight * 0.045 : kHeight * 0.058,
+                            ? 'assets/audio_live/ockk (1).png'
+                            : 'assets/audio_live/sett (1).png',
+                        height: locked ? kHeight * 0.035 : kHeight * 0.035,
+                        width: locked ? kHeight * 0.025 : kHeight * 0.035,
                         fit: BoxFit.cover,
 
                         colorBlendMode: BlendMode.srcIn,
@@ -1919,11 +2034,10 @@ class LiveViewCircle_container extends StatelessWidget {
               );
             }),
 
-
             SizedBox(height: kHeight * 0.008),
             Obx(
                   () => Text(
-                isLockedSeat ? ('Locked').appTr: ('Join').appTr,
+                isLockedSeat ? ('Locked').appTr : ('Join').appTr,
                 style: GoogleFonts.roboto(
                   fontSize: kHeight * 0.0105,
                   color: Colors.white.withOpacity(.85),
@@ -1938,6 +2052,7 @@ class LiveViewCircle_container extends StatelessWidget {
       ),
     );
   }
+
   Widget _occupiedSeat() {
     return Obx(() {
       final user = _safeUserMap();
@@ -1951,17 +2066,20 @@ class LiveViewCircle_container extends StatelessWidget {
       final int giftCoins = _seatGiftCoins(user);
       final bool muted = _isAudioMuted(data);
       final bool isSpeaking = _isUserSpeaking(data);
+
       /// Gift receiver id usually matches caller_id/user_id from seat data.
       /// Prefer seat ids first, then nested user ids.
-      final dynamic overlayUserId = data['caller_id'] ??
-          data['user_id'] ??
-          data['viewer_id'] ??
-          user['id'] ??
-          user['user_id'] ??
-          data['id'];
+      final dynamic overlayUserId =
+          data['caller_id'] ??
+              data['user_id'] ??
+              data['viewer_id'] ??
+              user['id'] ??
+              user['user_id'] ??
+              data['id'];
       final int currentSeatUserId = _safeInt(overlayUserId);
       final bool isRoomAdmin = _isRoomAdminUser(data, user);
       final bool isHostSeatUser = _isHostSeatUser(data, user);
+      final vip = VipPrivileges.from(<String, dynamic>{...data, 'user': user});
 
       return FittedBox(
         fit: BoxFit.scaleDown,
@@ -1981,7 +2099,20 @@ class LiveViewCircle_container extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: [
                     if (isSpeaking && !muted)
-                      SpeakingWave(size: kHeight * 0.15),
+                      SpeakingWave(size: kHeight * 0.09 * 1.40),
+                    if (vip.effectiveColorfulProfile)
+                      IgnorePointer(
+                        child: Container(
+                          height: kHeight * 0.096,
+                          width: kHeight * 0.096,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              colors: [Color(0xFF7B2CBF), Color(0xFFFFD76A)],
+                            ),
+                          ),
+                        ),
+                      ),
 
                     Builder(
                       builder: (profileContext) {
@@ -2005,7 +2136,9 @@ class LiveViewCircle_container extends StatelessWidget {
                         // when the seat payload is partial. Add it only when this
                         // profile already looks like the current user's seat.
                         final int authUserId =
-                            authController.userProfile.value.user?.id?.toInt() ?? 0;
+                            authController.userProfile.value.user?.id
+                                ?.toInt() ??
+                                0;
                         if (authUserId > 0 &&
                             (luckyTargetUserIds.contains(authUserId) ||
                                 currentSeatUserId == authUserId ||
@@ -2054,6 +2187,10 @@ class LiveViewCircle_container extends StatelessWidget {
                             child: CachedNetworkImage(
                               fit: BoxFit.cover,
                               imageUrl: profile,
+                              memCacheWidth: 180,
+                              memCacheHeight: 180,
+                              fadeInDuration: Duration.zero,
+                              fadeOutDuration: Duration.zero,
                               placeholder: (context, url) => Container(
                                 color: Colors.white.withOpacity(.15),
                                 child: Icon(
@@ -2092,7 +2229,9 @@ class LiveViewCircle_container extends StatelessWidget {
                               height: kHeight * 0.115,
                               width: kHeight * 0.115,
                               child: SVGAEasyPlayer(
-                                resUrl: ImageHelper.getImageUrl(frameAssetPath),
+                                resUrl: ImageHelper.getImageUrl(
+                                  frameAssetPath,
+                                ),
                                 fit: BoxFit.contain,
                                 loops: null,
                                 useCache: true,
@@ -2102,9 +2241,13 @@ class LiveViewCircle_container extends StatelessWidget {
                               key: ValueKey<String>(
                                 'seat_image_frame_${currentSeatUserId}_$frameAssetPath',
                               ),
-                              imageUrl: ImageHelper.getImageUrl(frameAssetPath),
+                              imageUrl: ImageHelper.getImageUrl(
+                                frameAssetPath,
+                              ),
                               height: kHeight * 0.115,
                               width: kHeight * 0.115,
+                              memCacheWidth: 240,
+                              memCacheHeight: 240,
                               fit: BoxFit.contain,
                               fadeInDuration: Duration.zero,
                               fadeOutDuration: Duration.zero,
@@ -2129,7 +2272,10 @@ class LiveViewCircle_container extends StatelessWidget {
                           decoration: BoxDecoration(
                             color: Colors.red.withOpacity(.96),
                             shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: .8),
+                            border: Border.all(
+                              color: Colors.white,
+                              width: .8,
+                            ),
                             boxShadow: [
                               BoxShadow(
                                 color: Colors.black.withOpacity(.30),
@@ -2170,6 +2316,14 @@ class LiveViewCircle_container extends StatelessWidget {
                 children: [
                   if (!isHostSeatUser && isRoomAdmin) ...[
                     _roomAdminIcon(),
+                    SizedBox(width: kWeight * 0.004),
+                  ],
+                  if (vip.vipBadge) ...[
+                    const Icon(
+                      Icons.workspace_premium_rounded,
+                      color: Color(0xFFFFD76A),
+                      size: 12,
+                    ),
                     SizedBox(width: kWeight * 0.004),
                   ],
                   GradientShimmerTextaudio(
@@ -2257,83 +2411,6 @@ class LiveViewCircle_container extends StatelessWidget {
     );
   }
 }
-
-
-class SpeakingWave extends StatefulWidget {
-  final double size;
-
-  const SpeakingWave({
-    super.key,
-    required this.size,
-  });
-
-  @override
-  State<SpeakingWave> createState() => _SpeakingWaveState();
-}
-
-class _SpeakingWaveState extends State<SpeakingWave>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _scale;
-  late final Animation<double> _opacity;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 760),
-    )..repeat(reverse: true);
-
-    _scale = Tween<double>(begin: .88, end: 1.18).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-
-    _opacity = Tween<double>(begin: .85, end: .25).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, child) {
-          return Transform.scale(
-            scale: _scale.value,
-            child: Container(
-              height: widget.size,
-              width: widget.size,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.greenAccent.withOpacity(_opacity.value),
-                  width: 2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.greenAccent.withOpacity(_opacity.value * .45),
-                    blurRadius: 14,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
 
 String formatNumber(dynamic number) {
   int value = int.tryParse(number.toString()) ?? 0;

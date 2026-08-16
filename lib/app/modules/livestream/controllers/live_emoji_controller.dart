@@ -249,6 +249,27 @@ class LiveEmojiController extends GetxController {
         -1;
   }
 
+  bool _isVipImogi(int imogiId) {
+    for (final item in imogiList) {
+      if (_int(item['id'] ?? item['imogi_id'] ?? item['emoji_id']) != imogiId) {
+        continue;
+      }
+      final category = _string(
+        item['category'] ??
+            item['category_name'] ??
+            item['type'] ??
+            item['group'],
+      ).toLowerCase();
+      final raw = item['is_vip'] ?? item['vip_only'] ?? item['requires_vip'];
+      return category.contains('vip') ||
+          raw == true ||
+          raw == 1 ||
+          raw?.toString().toLowerCase() == 'true' ||
+          raw?.toString() == '1';
+    }
+    return false;
+  }
+
   Future<bool> sendLiveImogi({
     required int streamId,
     required int imogiId,
@@ -258,6 +279,10 @@ class LiveEmojiController extends GetxController {
         owner.authController.userProfile.value.user?.id?.toInt() ?? 0;
     if (senderId == 0 || streamId == 0 || imogiId == 0) {
       Fluttertoast.showToast(msg: ('Imogi data missing').appTr);
+      return false;
+    }
+    if (_isVipImogi(imogiId) && !owner.currentVipPrivileges.vipEmoji) {
+      Fluttertoast.showToast(msg: ('Activate VIP to use VIP Emoji').appTr);
       return false;
     }
     if (!isCurrentUserOnMicSeat()) {

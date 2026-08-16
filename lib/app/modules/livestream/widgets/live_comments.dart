@@ -13,6 +13,7 @@ import 'package:meetlivepro/constants/layout_constant.dart';
 import '../../../../constants/constants.dart';
 import '../../../../constants/image_helper.dart';
 import '../socket/websocket_controller.dart';
+import '../utils/vip_privileges.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 class LiveCommentsSection extends StatefulWidget {
@@ -622,6 +623,7 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
           'level': currentUser.level,
           'profile_image': currentUser.profileImage,
           'level_image': currentUser.levelImage,
+          'vip_purchase_history': currentUser.vipPurchaseHistory,
         };
       }
     } catch (_) {}
@@ -1509,9 +1511,9 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
             mainAxisSize: MainAxisSize.min,
             children: [
               _tabButton(('All').appTr, 0),
-              SizedBox(width: kWeight * .035),
+              SizedBox(width: kWeight * .018),
               _tabButton(('Message').appTr, 1),
-              SizedBox(width: kWeight * .035),
+              SizedBox(width: kWeight * .018),
               _tabButton(('Gift').appTr, 2),
             ],
           ),
@@ -1521,35 +1523,80 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
   }
 
   Widget _tabButton(String title, int index) {
-    final active = selectedTab.value == index;
+    final bool active = selectedTab.value == index;
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () {
         selectedTab.value = index;
         _scrollToBottom();
       },
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        constraints: BoxConstraints(
+          minWidth: kWeight * .145,
+          minHeight: kHeight * .033,
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: kWeight * .032,
+          vertical: kHeight * .006,
+        ),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          gradient: active
+              ? const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF496BE8),
+              Color(0xFF263DAE),
+            ],
+          )
+              : LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              const Color(0xFF080809).withOpacity(.2),
+              const Color(0xFF080809).withOpacity(.2),
+            ],
+          ),
+          border: Border.all(
+            color: active
+                ? const Color(0xFF84A4FF).withOpacity(.95)
+                : const Color(0xFF080809).withOpacity(.2),
+            width: active ? 1.0 : .65,
+          ),
+          boxShadow: active
+              ? [
+            BoxShadow(
+              color: const Color(0xFF526DFF).withOpacity(.34),
+              blurRadius: 9,
+              spreadRadius: .5,
+              offset: const Offset(0, 2),
+            ),
+          ]
+              : [
+            BoxShadow(
+              color: Colors.black.withOpacity(.10),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Center(
+          child: Text(
             title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: GoogleFonts.roboto(
-              color: active ? Colors.white : Colors.white70,
-              fontSize: kHeight * .015,
-              fontWeight: active ? FontWeight.w800 : FontWeight.w600,
+              color: active ? Colors.white : Colors.white.withOpacity(.90),
+              fontSize: kHeight * .0145,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+              height: 1,
             ),
           ),
-          const SizedBox(height: 3),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            height: 2,
-            width: active ? kWeight * .045 : 0,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1723,10 +1770,9 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
   }
 
   Widget _announcementItem(Map<String, dynamic> item) {
-    final comment = _safeText(item['comment']);
+    final String comment = _safeText(item['comment']);
     if (comment.isEmpty) return const SizedBox.shrink();
 
-    /// Same width + same left position as normal comments.
     return Align(
       alignment: Alignment.centerLeft,
       child: ConstrainedBox(
@@ -1734,41 +1780,35 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
         child: Padding(
           padding: const EdgeInsets.only(bottom: 7, right: 6),
           child: FadeIn(
-            duration: const Duration(milliseconds: 350),
+            duration: const Duration(milliseconds: 300),
             child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 8),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: kAppColor1.withOpacity(.95),
-                  width: .75,
-                ),
-                borderRadius: BorderRadius.circular(10),
-                color: Colors.black.withOpacity(.38),
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(
+                horizontal: kWeight * .018,
+                vertical: kHeight * .008,
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.campaign_rounded,
-                    color: Colors.white,
-                    size: kHeight * .016,
-                  ),
-                  SizedBox(width: kWeight * .018),
-                  Expanded(
-                    child: Text(
-                      comment,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: true,
-                      style: GoogleFonts.roboto(
-                        fontSize: kHeight * .0114,
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        height: 1.2,
-                      ),
-                    ),
-                  ),
-                ],
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    const Color(0xFF080809).withOpacity(.3),
+                    const Color(0xFF080809).withOpacity(.3),
+                  ],
+                ),
+              ),
+              child: Text(
+                comment,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                softWrap: true,
+                style: GoogleFonts.roboto(
+                  fontSize: kHeight * .0132,
+                  color: const Color(0xFFC6FFF4),
+                  fontWeight: FontWeight.w500,
+                  height: 1.16,
+                ),
               ),
             ),
           ),
@@ -1783,30 +1823,45 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
       return const SizedBox.shrink();
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: FadeIn(
-        duration: const Duration(milliseconds: 350),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: ConstrainedBox(
-            constraints: _sameCommentCardConstraints,
+    final String comment = _safeText(item['comment']);
+    if (comment.isEmpty) return const SizedBox.shrink();
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: _sameCommentCardConstraints,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 7, right: 6),
+          child: FadeIn(
+            duration: const Duration(milliseconds: 300),
             child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(
+                horizontal: kWeight * .018,
+                vertical: kHeight * .008,
+              ),
               decoration: BoxDecoration(
-                border: Border.all(color: kAppColor, width: 1.4),
-                borderRadius: BorderRadius.circular(10),
-                color: Colors.black.withOpacity(.35),
+                borderRadius: BorderRadius.circular(8),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    const Color(0xFFC3C0F8).withOpacity(.92),
+                    const Color(0xFFC3C0F8).withOpacity(.90),
+                  ],
+                ),
+
               ),
               child: Text(
-                item['comment'] ?? '',
-                maxLines: 3,
+                comment,
+                maxLines: 4,
                 overflow: TextOverflow.ellipsis,
                 softWrap: true,
                 style: GoogleFonts.roboto(
-                  fontSize: kHeight * .011,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
+                  fontSize: kHeight * .0132,
+                  color: const Color(0xFFC6FFF4),
+                  fontWeight: FontWeight.w500,
+                  height: 1.16,
                 ),
               ),
             ),
@@ -1822,6 +1877,7 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
     if (!_isValidUser(user)) return const SizedBox.shrink();
 
     final comment = _safeText(item['comment']);
+    final vip = VipPrivileges.from(user);
 
     if (comment.isEmpty) return const SizedBox.shrink();
 
@@ -1838,10 +1894,17 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: Colors.white.withOpacity(.55),
+                  color: vip.colorfulChat
+                      ? const Color(0xFFFFD76A).withOpacity(.85)
+                      : Colors.white.withOpacity(.55),
                   width: .75,
                 ),
-                color: Colors.black.withOpacity(.18),
+                gradient: vip.colorfulChat
+                    ? const LinearGradient(
+                  colors: [Color(0xCC542AA8), Color(0xCCB52D79)],
+                )
+                    : null,
+                color: vip.colorfulChat ? null : Colors.black.withOpacity(.18),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(.08),
@@ -2301,12 +2364,25 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
 
   Widget _nameLevelRow(Map<String, dynamic> user) {
     final name = (user['name'] ?? ('User').appTr).toString();
+    final vip = VipPrivileges.from(user);
+
+    final Widget nameText = Text(
+      name,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: GoogleFonts.roboto(
+        fontSize: kHeight * .019,
+        color: Colors.white,
+        fontWeight: FontWeight.w700,
+      ),
+    );
 
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Flexible(
-          child: ShaderMask(
+          child: vip.colorfulChat
+              ? ShaderMask(
             shaderCallback: (bounds) {
               return const LinearGradient(
                 begin: Alignment.centerLeft,
@@ -2322,18 +2398,28 @@ class _LiveCommentsSectionState extends State<LiveCommentsSection> {
               );
             },
             blendMode: BlendMode.srcIn,
+            child: nameText,
+          )
+              : nameText,
+        ),
+        if (vip.vipBadge) ...[
+          SizedBox(width: kWeight * .008),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFD76A),
+              borderRadius: BorderRadius.circular(8),
+            ),
             child: Text(
-              name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.roboto(
-                fontSize: kHeight * .019,
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
+              vip.vipType.isEmpty ? 'VIP' : vip.vipType.toUpperCase(),
+              style: const TextStyle(
+                color: Color(0xFF3A245C),
+                fontSize: 8,
+                fontWeight: FontWeight.w800,
               ),
             ),
           ),
-        ),
+        ],
         SizedBox(width: kWeight * .010),
         _levelBadge(user),
       ],

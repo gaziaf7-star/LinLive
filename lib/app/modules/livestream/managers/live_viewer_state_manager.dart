@@ -5,9 +5,21 @@ import 'package:get/get.dart';
 /// User identity must come from viewer_id/user_id/user.id.
 /// Never use livestream_viewers.id as the primary user identity.
 class LiveViewerStateManager {
-  LiveViewerStateManager(this.target);
+  LiveViewerStateManager(this.target, {this.excludedUserId});
 
   final RxList<dynamic> target;
+  final int Function()? excludedUserId;
+  int _revision = 0;
+  final Map<int, int> _lastTransitionRevision = <int, int>{};
+  final Set<int> _absentUserIds = <int>{};
+  final List<int> _lastBlockedRestoreUserIds = <int>[];
+
+  List<int> get lastBlockedRestoreUserIds =>
+      List<int>.unmodifiable(_lastBlockedRestoreUserIds);
+
+  /// Capture this immediately before starting an asynchronous snapshot request.
+  /// A later replacement will preserve every join/leave received after it.
+  int beginSnapshot() => _revision;
 
   int _toInt(dynamic value) {
     if (value is int) return value;
@@ -39,6 +51,14 @@ class LiveViewerStateManager {
     );
   }
 
+  bool containsUser(dynamic rawUserId) {
+    final userId = _toInt(rawUserId);
+    return userId > 0 && target.any((item) => userIdOf(item) == userId);
+  }
+
+  bool _isExcluded(int userId) =>
+      userId > 0 && userId == (excludedUserId?.call() ?? 0);
+
   bool _isActive(Map<String, dynamic> item) {
     if (!item.containsKey('is_active')) return true;
 
@@ -47,10 +67,7 @@ class LiveViewerStateManager {
     if (value is num) return value.toInt() == 1;
 
     final text = value?.toString().trim().toLowerCase() ?? '';
-    return text == '1' ||
-        text == 'true' ||
-        text == 'yes' ||
-        text == 'active';
+    return text == '1' || text == 'true' || text == 'yes' || text == 'active';
   }
 
   bool _usable(dynamic value) {
@@ -62,9 +79,9 @@ class LiveViewerStateManager {
   }
 
   Map<String, dynamic> _merge(
-      Map<String, dynamic> oldValue,
-      Map<String, dynamic> newValue,
-      ) {
+    Map<String, dynamic> oldValue,
+    Map<String, dynamic> newValue,
+  ) {
     final result = <String, dynamic>{...oldValue};
 
     for (final entry in newValue.entries) {
@@ -91,12 +108,22 @@ class LiveViewerStateManager {
     final item = _map(raw);
     final userId = userIdOf(item);
 
-    if (userId <= 0) return;
+    if (userId <= 0 || _isExcluded(userId)) {
+      if (_isExcluded(userId)) {
+        target.removeWhere((e) => userIdOf(e) == userId);
+        target.refresh();
+      }
+      return;
+    }
 
     if (!_isActive(item) && !force) {
       removeByUserId(userId);
       return;
     }
+
+    _revision++;
+    _lastTransitionRevision[userId] = _revision;
+    _absentUserIds.remove(userId);
 
     final index = target.indexWhere((e) => userIdOf(e) == userId);
 
@@ -114,27 +141,56 @@ class LiveViewerStateManager {
     final userId = _toInt(rawUserId);
     if (userId <= 0) return;
 
+    _revision++;
+    _lastTransitionRevision[userId] = _revision;
+    _absentUserIds.add(userId);
     target.removeWhere((e) => userIdOf(e) == userId);
     target.refresh();
   }
 
-  void replaceAll(dynamic rawList) {
+  int replaceAll(dynamic rawList, {int? snapshotRevision}) {
     final list = rawList is List ? rawList : const <dynamic>[];
     final Map<int, Map<String, dynamic>> unique = {};
+    _lastBlockedRestoreUserIds.clear();
 
     for (final raw in list) {
       final item = _map(raw);
       final userId = userIdOf(item);
 
-      if (userId <= 0 || !_isActive(item)) continue;
+      if (userId <= 0 || _isExcluded(userId) || !_isActive(item)) continue;
+      if (_absentUserIds.contains(userId)) {
+        _lastBlockedRestoreUserIds.add(userId);
+        continue;
+      }
 
       final existing = unique[userId];
-      unique[userId] =
-      existing == null ? item : _merge(existing, item);
+      unique[userId] = existing == null ? item : _merge(existing, item);
+    }
+
+    int protectedTransitions = 0;
+    if (snapshotRevision != null) {
+      final current = <int, Map<String, dynamic>>{};
+      for (final raw in target) {
+        final item = _map(raw);
+        final userId = userIdOf(item);
+        if (userId > 0 && !_isExcluded(userId)) current[userId] = item;
+      }
+
+      for (final entry in _lastTransitionRevision.entries) {
+        if (entry.value <= snapshotRevision) continue;
+        protectedTransitions++;
+        final newerLocalValue = current[entry.key];
+        if (newerLocalValue == null) {
+          unique.remove(entry.key);
+        } else {
+          unique[entry.key] = newerLocalValue;
+        }
+      }
     }
 
     target.assignAll(unique.values.toList(growable: false));
     target.refresh();
+    return protectedTransitions;
   }
 
   void applyState(dynamic rawState) {
@@ -143,9 +199,9 @@ class LiveViewerStateManager {
 
     final bool hasList =
         state.containsKey('viewers') ||
-            state.containsKey('livestream_viewers') ||
-            live.containsKey('viewers') ||
-            live.containsKey('livestream_viewers');
+        state.containsKey('livestream_viewers') ||
+        live.containsKey('viewers') ||
+        live.containsKey('livestream_viewers');
 
     if (!hasList) return;
 
@@ -158,8 +214,22 @@ class LiveViewerStateManager {
   }
 
   void clear() {
+    _revision++;
+    _lastTransitionRevision.clear();
+    _absentUserIds.clear();
+    _lastBlockedRestoreUserIds.clear();
     target.clear();
     target.refresh();
+  }
+
+  bool removeExcludedUser() {
+    final userId = excludedUserId?.call() ?? 0;
+    if (userId <= 0) return false;
+    final before = target.length;
+    target.removeWhere((item) => userIdOf(item) == userId);
+    if (target.length == before) return false;
+    target.refresh();
+    return true;
   }
 
   void _deduplicate() {
@@ -168,11 +238,10 @@ class LiveViewerStateManager {
     for (final raw in target) {
       final item = _map(raw);
       final userId = userIdOf(item);
-      if (userId <= 0) continue;
+      if (userId <= 0 || _isExcluded(userId)) continue;
 
       final existing = unique[userId];
-      unique[userId] =
-      existing == null ? item : _merge(existing, item);
+      unique[userId] = existing == null ? item : _merge(existing, item);
     }
 
     target.assignAll(unique.values.toList(growable: false));

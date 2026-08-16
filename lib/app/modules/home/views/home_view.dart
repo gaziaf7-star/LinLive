@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
@@ -27,6 +28,7 @@ import '../../../../constants/image_helper.dart';
 import '../../../../constants/layout_constant.dart';
 import '../../Famaily/view/family_ranking_api_page.dart';
 import '../../livestream/controllers/livestream_controller.dart';
+import '../../livestream/controllers/audience_join_controller.dart';
 import '../../ranking/controllers/ranking_controller.dart';
 import '../../ranking/views/allrank.dart';
 import '../controllers/home_controller.dart';
@@ -34,8 +36,8 @@ import 'all_live_live_view.dart';
 import 'audio_live_stream_list_view.dart';
 import 'widgets/country_live_list_view.dart';
 
-
 import 'package:meetlivepro/app/localization/app_localizer.dart';
+
 // 🔹 Connectivity Controller
 class ConnectivityController extends GetxController {
   var isOnline = true.obs;
@@ -54,9 +56,9 @@ class ConnectivityController extends GetxController {
   }
 
   void startMonitoring() {
-    connectivitySubscription = Connectivity()
-        .onConnectivityChanged
-        .listen((ConnectivityResult result) {
+    connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+      ConnectivityResult result,
+    ) {
       updateConnectionStatus(result);
     });
   }
@@ -78,9 +80,7 @@ class ConnectivityController extends GetxController {
 
     Get.dialog(
       Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
@@ -100,12 +100,10 @@ class ConnectivityController extends GetxController {
               ),
               const SizedBox(height: 16),
               Text(
-                ('We are unable to reach server. Please check your network settings and try again.').appTr,
+                ('We are unable to reach server. Please check your network settings and try again.')
+                    .appTr,
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey,
-                ),
+                style: TextStyle(fontSize: 14, color: Colors.grey),
               ),
               const SizedBox(height: 24),
               SizedBox(
@@ -121,7 +119,7 @@ class ConnectivityController extends GetxController {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  child:  Text(
+                  child: Text(
                     ('RETRY').appTr,
                     style: TextStyle(
                       fontSize: 16,
@@ -145,7 +143,7 @@ class ConnectivityController extends GetxController {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  child:  Text(
+                  child: Text(
                     ('CLOSE').appTr,
                     style: TextStyle(
                       fontSize: 16,
@@ -193,8 +191,9 @@ class _HomeViewState extends State<HomeView> {
 
   bool get _canOpenBannerWhatsApp => _currentUserCoins() > 0;
 
-
-  final PageController _bannerPageController = PageController(viewportFraction: 1.0);
+  final PageController _bannerPageController = PageController(
+    viewportFraction: 1.0,
+  );
   Timer? _bannerAutoTimer;
   Future<void>? _bannerFuture;
   int _bannerCurrentIndex = 0;
@@ -222,11 +221,8 @@ class _HomeViewState extends State<HomeView> {
     _familyController = Get.isRegistered<FamilyController>()
         ? Get.find<FamilyController>()
         : (Get.isRegistered<Familyconroller>()
-        ? Get.find<Familyconroller>()
-        : Get.put<FamilyController>(
-      Familyconroller(),
-      permanent: true,
-    ));
+              ? Get.find<Familyconroller>()
+              : Get.put<FamilyController>(Familyconroller(), permanent: true));
 
     _bannerFuture = homeController.showBannerList();
     _startBannerAutoSlide();
@@ -237,13 +233,16 @@ class _HomeViewState extends State<HomeView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
 
-      // Account/Profile API country -> Home PK-er porer dynamic country tab.
-      // This also handles the case where auth profile restores a little late.
-      homeController.bootstrapSelectedLiveCountryFromProfile();
+      // Registration/onboarding profile country -> Home first country tab.
+      // Resolve it first, then prepare only that country's broadcasts.
+      // Keep the 5k+ user-list parsing outside the first themed frame.
+      Future<void>.delayed(const Duration(milliseconds: 700), () {
+        if (mounted) unawaited(_prepareRegistrationCountryHome());
+      });
 
       // Home Ranking card -> Daily Sending ranking.
       final RankingController rankingController =
-      Get.isRegistered<RankingController>()
+          Get.isRegistered<RankingController>()
           ? Get.find<RankingController>()
           : Get.put(RankingController());
       rankingController.showRankingList(period: 'daily', force: false);
@@ -256,6 +255,46 @@ class _HomeViewState extends State<HomeView> {
       // CP card -> real active couples from /api/cp-active-couples.
       homeController.loadCpActiveCouples(silent: true);
     });
+  }
+
+  Future<void> _prepareRegistrationCountryHome() async {
+    if (Get.isRegistered<AudienceJoinController>() &&
+        Get.find<AudienceJoinController>().isJoinInProgress) {
+      if (kDebugMode) {
+        debugPrint(
+          '[LIVE_JOIN][GLOBAL_USER_LOAD] trigger=home_country_bootstrap '
+          'duration_ms=0 blocking_join=false deferred=true',
+        );
+      }
+      Future<void>.delayed(const Duration(seconds: 2), () {
+        if (mounted) unawaited(_prepareRegistrationCountryHome());
+      });
+      return;
+    }
+    await homeController.bootstrapSelectedLiveCountryFromProfile();
+    if (!mounted) return;
+
+    // Several live payloads do not carry host country directly. The user list
+    // is the fallback resolver used by HomeController for strict country match.
+    if (homeController.allUserData.isEmpty) {
+      final stopwatch = Stopwatch()..start();
+      await homeController.showAllUserData();
+      stopwatch.stop();
+      if (kDebugMode) {
+        debugPrint(
+          '[LIVE_JOIN][GLOBAL_USER_LOAD] trigger=home_country_bootstrap '
+          'duration_ms=${stopwatch.elapsedMilliseconds} blocking_join=false',
+        );
+      }
+    }
+    if (!mounted) return;
+
+    homeController.sortLiveStreamList();
+
+    await homeController.ensureSelectedCountryLivestreams(
+      minimumResults: 8,
+      maxAdditionalPages: 8,
+    );
   }
 
   @override
@@ -298,12 +337,11 @@ class _HomeViewState extends State<HomeView> {
       }
 
       final RankingController controller = Get.find<RankingController>();
-      final List<dynamic> list =
-      List<dynamic>.from(controller.senderRankingFor('daily').toList());
-
-      list.sort(
-            (a, b) => _rankingTotalCoin(b).compareTo(_rankingTotalCoin(a)),
+      final List<dynamic> list = List<dynamic>.from(
+        controller.senderRankingFor('daily').toList(),
       );
+
+      list.sort((a, b) => _rankingTotalCoin(b).compareTo(_rankingTotalCoin(a)));
 
       final int pageCount = (list.length / 3).ceil();
       if (pageCount <= 1) return;
@@ -338,7 +376,6 @@ class _HomeViewState extends State<HomeView> {
       );
     });
   }
-
 
   void _startCpAutoSlide() {
     _cpAutoTimer?.cancel();
@@ -427,8 +464,7 @@ class _HomeViewState extends State<HomeView> {
       for (final dynamic raw in homeController.bannerLstData) {
         if (raw is! Map) continue;
 
-        final String title =
-        _bannerString(raw['title']).toLowerCase();
+        final String title = _bannerString(raw['title']).toLowerCase();
         final String link = _bannerString(raw['link']);
         final String linkLower = link.toLowerCase();
 
@@ -472,10 +508,7 @@ class _HomeViewState extends State<HomeView> {
       return;
     }
 
-    await _openSafeBannerWebView(
-      link: cpLink,
-      title: ('CP Ranking').appTr,
-    );
+    await _openSafeBannerWebView(link: cpLink, title: ('CP Ranking').appTr);
   }
 
   Future<void> _handleBannerTap(dynamic banner) async {
@@ -486,10 +519,7 @@ class _HomeViewState extends State<HomeView> {
     final String title = _bannerString(banner['title']);
 
     if (link.isNotEmpty) {
-      await _openSafeBannerWebView(
-        link: link,
-        title: title,
-      );
+      await _openSafeBannerWebView(link: link, title: title);
       return;
     }
 
@@ -546,12 +576,12 @@ class _HomeViewState extends State<HomeView> {
         borderRadius: BorderRadius.circular(20),
         boxShadow: active
             ? [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.18),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ]
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.18),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ]
             : null,
       ),
     );
@@ -561,7 +591,8 @@ class _HomeViewState extends State<HomeView> {
     return FutureBuilder<void>(
       future: _bannerFuture,
       builder: (context, snapshot) {
-        final bool firstLoading = snapshot.connectionState == ConnectionState.waiting &&
+        final bool firstLoading =
+            snapshot.connectionState == ConnectionState.waiting &&
             homeController.bannerLstData.isEmpty;
 
         if (firstLoading) return _bannerShimmer();
@@ -570,7 +601,9 @@ class _HomeViewState extends State<HomeView> {
           final banners = homeController.bannerLstData;
           if (banners.isEmpty) return const SizedBox();
 
-          final int safeIndex = _bannerCurrentIndex.clamp(0, banners.length - 1).toInt();
+          final int safeIndex = _bannerCurrentIndex
+              .clamp(0, banners.length - 1)
+              .toInt();
 
           return Column(
             children: [
@@ -590,8 +623,12 @@ class _HomeViewState extends State<HomeView> {
                       final banner = banners[index];
                       final String imageUrl = _bannerImage(banner);
                       final bool hasImage = imageUrl.isNotEmpty;
-                      final bool hasLink = banner is Map && _bannerString(banner['link']).isNotEmpty;
-                      final bool hasPhone = banner is Map && _bannerString(banner['phone']).isNotEmpty;
+                      final bool hasLink =
+                          banner is Map &&
+                          _bannerString(banner['link']).isNotEmpty;
+                      final bool hasPhone =
+                          banner is Map &&
+                          _bannerString(banner['phone']).isNotEmpty;
 
                       return AnimatedPadding(
                         duration: const Duration(milliseconds: 260),
@@ -615,19 +652,25 @@ class _HomeViewState extends State<HomeView> {
                                     CachedNetworkImage(
                                       imageUrl: imageUrl,
                                       fit: BoxFit.cover,
-                                      fadeInDuration: const Duration(milliseconds: 220),
-                                      placeholder: (context, url) => Shimmer.fromColors(
-                                        baseColor: Colors.grey[300]!,
-                                        highlightColor: Colors.grey[100]!,
-                                        child: Container(color: Colors.white),
+                                      fadeInDuration: const Duration(
+                                        milliseconds: 220,
                                       ),
-                                      errorWidget: (context, url, error) => Center(
-                                        child: Icon(
-                                          Icons.image_not_supported,
-                                          color: Colors.grey[600],
-                                          size: 40,
-                                        ),
-                                      ),
+                                      placeholder: (context, url) =>
+                                          Shimmer.fromColors(
+                                            baseColor: Colors.grey[300]!,
+                                            highlightColor: Colors.grey[100]!,
+                                            child: Container(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                      errorWidget: (context, url, error) =>
+                                          Center(
+                                            child: Icon(
+                                              Icons.image_not_supported,
+                                              color: Colors.grey[600],
+                                              size: 40,
+                                            ),
+                                          ),
                                     )
                                   else
                                     Center(
@@ -662,22 +705,30 @@ class _HomeViewState extends State<HomeView> {
                                         ),
                                         decoration: BoxDecoration(
                                           color: Colors.black.withOpacity(0.35),
-                                          borderRadius: BorderRadius.circular(20),
+                                          borderRadius: BorderRadius.circular(
+                                            20,
+                                          ),
                                           border: Border.all(
-                                            color: Colors.white.withOpacity(0.22),
+                                            color: Colors.white.withOpacity(
+                                              0.22,
+                                            ),
                                           ),
                                         ),
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             Icon(
-                                              hasLink ? Icons.open_in_new_rounded : Icons.call_rounded,
+                                              hasLink
+                                                  ? Icons.open_in_new_rounded
+                                                  : Icons.call_rounded,
                                               color: Colors.white,
                                               size: 13,
                                             ),
                                             const SizedBox(width: 4),
                                             Text(
-                                              hasLink ? ('Open').appTr: ('WhatsApp').appTr,
+                                              hasLink
+                                                  ? ('Open').appTr
+                                                  : ('WhatsApp').appTr,
                                               style: const TextStyle(
                                                 color: Colors.white,
                                                 fontSize: 10,
@@ -703,7 +754,7 @@ class _HomeViewState extends State<HomeView> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
                   banners.length,
-                      (index) => _bannerDot(active: index == safeIndex),
+                  (index) => _bannerDot(active: index == safeIndex),
                 ),
               ),
             ],
@@ -718,10 +769,10 @@ class _HomeViewState extends State<HomeView> {
       builder: (context, outerConstraints) {
         final double screenWidth = outerConstraints.maxWidth;
 
-        final double horizontalPadding =
-        (screenWidth * 0.030).clamp(8.0, 14.0).toDouble();
-        final double gap =
-        (screenWidth * 0.020).clamp(6.0, 10.0).toDouble();
+        final double horizontalPadding = (screenWidth * 0.030)
+            .clamp(8.0, 14.0)
+            .toDouble();
+        final double gap = (screenWidth * 0.020).clamp(6.0, 10.0).toDouble();
 
         return Padding(
           padding: EdgeInsets.fromLTRB(
@@ -732,12 +783,12 @@ class _HomeViewState extends State<HomeView> {
           ),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final double cardWidth =
-                  (constraints.maxWidth - (gap * 2)) / 3;
+              final double cardWidth = (constraints.maxWidth - (gap * 2)) / 3;
 
               // Reference card ratio stays stable on small + large phones.
-              final double cardHeight =
-              (cardWidth * 0.72).clamp(74.0, 112.0).toDouble();
+              final double cardHeight = (cardWidth * 0.72)
+                  .clamp(74.0, 112.0)
+                  .toDouble();
 
               return Row(
                 children: [
@@ -746,13 +797,10 @@ class _HomeViewState extends State<HomeView> {
                     height: cardHeight,
                     child: _homeShortcutCard(
                       title: ('Ranking').appTr,
-                      colors: const [
-                        Color(0xFFFFB915),
-                        Color(0xFFFFCA35),
-                      ],
+                      colors: const [Color(0xFFFFB915), Color(0xFFFFCA35)],
                       onTap: () {
                         Get.to(
-                              () => Allrank(),
+                          () => Allrank(),
                           transition: Transition.rightToLeft,
                         );
                       },
@@ -765,10 +813,7 @@ class _HomeViewState extends State<HomeView> {
                     height: cardHeight,
                     child: _homeShortcutCard(
                       title: 'CP',
-                      colors: const [
-                        Color(0xFFFF5FA2),
-                        Color(0xFFE944B5),
-                      ],
+                      colors: const [Color(0xFFFF5FA2), Color(0xFFE944B5)],
                       onTap: () {
                         unawaited(_openCpRankingFromCard());
                       },
@@ -781,13 +826,10 @@ class _HomeViewState extends State<HomeView> {
                     height: cardHeight,
                     child: _homeShortcutCard(
                       title: ('Family').appTr,
-                      colors: const [
-                        Color(0xFF23D9E7),
-                        Color(0xFF169DEB),
-                      ],
+                      colors: const [Color(0xFF23D9E7), Color(0xFF169DEB)],
                       onTap: () {
                         Get.to(
-                              () => const FamilyRankingApiPage(),
+                          () => const FamilyRankingApiPage(),
                           transition: Transition.rightToLeft,
                         );
                       },
@@ -887,9 +929,7 @@ class _HomeViewState extends State<HomeView> {
                           ),
                         ),
                       ),
-                      SizedBox(
-                        height: (h * .035).clamp(2.0, 4.0).toDouble(),
-                      ),
+                      SizedBox(height: (h * .035).clamp(2.0, 4.0).toDouble()),
                       Expanded(child: child),
                     ],
                   ),
@@ -982,11 +1022,11 @@ class _HomeViewState extends State<HomeView> {
         final dynamic sender = item['sender'];
         if (sender is Map) {
           return sender.map<String, dynamic>(
-                (key, value) => MapEntry(key.toString(), value),
+            (key, value) => MapEntry(key.toString(), value),
           );
         }
         return item.map<String, dynamic>(
-              (key, value) => MapEntry(key.toString(), value),
+          (key, value) => MapEntry(key.toString(), value),
         );
       }
     } catch (_) {}
@@ -996,7 +1036,8 @@ class _HomeViewState extends State<HomeView> {
   int _rankingTotalCoin(dynamic item) {
     dynamic value = 0;
     if (item is Map) {
-      value = item['total_coin'] ??
+      value =
+          item['total_coin'] ??
           item['wealth'] ??
           item['coins'] ??
           item['gifts_coins'] ??
@@ -1006,10 +1047,7 @@ class _HomeViewState extends State<HomeView> {
     if (value is int) return value;
     if (value is num) return value.toInt();
 
-    return int.tryParse(
-      value.toString().replaceAll(',', '').trim(),
-    ) ??
-        0;
+    return int.tryParse(value.toString().replaceAll(',', '').trim()) ?? 0;
   }
 
   String _rankingSafeText(dynamic value) {
@@ -1051,8 +1089,9 @@ class _HomeViewState extends State<HomeView> {
   }) {
     final String imageUrl = _rankingProfileImage(item);
     final String name = _rankingUserName(item);
-    final String firstLetter =
-    name.trim().isEmpty ? 'U' : name.trim().substring(0, 1).toUpperCase();
+    final String firstLetter = name.trim().isEmpty
+        ? 'U'
+        : name.trim().substring(0, 1).toUpperCase();
 
     return SizedBox(
       width: size,
@@ -1082,33 +1121,32 @@ class _HomeViewState extends State<HomeView> {
             clipBehavior: Clip.antiAlias,
             child: imageUrl.isEmpty
                 ? Center(
-              child: Text(
-                firstLetter,
-                style: TextStyle(
-                  color: const Color(0xFF784400),
-                  fontSize: size * 0.42,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            )
+                    child: Text(
+                      firstLetter,
+                      style: TextStyle(
+                        color: const Color(0xFF784400),
+                        fontSize: size * 0.42,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  )
                 : CachedNetworkImage(
-              imageUrl: imageUrl,
-              fit: BoxFit.cover,
-              fadeInDuration: const Duration(milliseconds: 120),
-              placeholder: (_, __) => Container(
-                color: Colors.white.withOpacity(0.90),
-              ),
-              errorWidget: (_, __, ___) => Center(
-                child: Text(
-                  firstLetter,
-                  style: TextStyle(
-                    color: const Color(0xFF784400),
-                    fontSize: size * 0.42,
-                    fontWeight: FontWeight.w900,
+                    imageUrl: imageUrl,
+                    fit: BoxFit.cover,
+                    fadeInDuration: const Duration(milliseconds: 120),
+                    placeholder: (_, __) =>
+                        Container(color: Colors.white.withOpacity(0.90)),
+                    errorWidget: (_, __, ___) => Center(
+                      child: Text(
+                        firstLetter,
+                        style: TextStyle(
+                          color: const Color(0xFF784400),
+                          fontSize: size * 0.42,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ),
           ),
           Positioned(
             top: -2,
@@ -1119,10 +1157,7 @@ class _HomeViewState extends State<HomeView> {
               decoration: BoxDecoration(
                 color: badgeColor,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: Colors.white,
-                  width: 1,
-                ),
+                border: Border.all(color: Colors.white, width: 1),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withOpacity(0.12),
@@ -1154,10 +1189,8 @@ class _HomeViewState extends State<HomeView> {
     required int pageStart,
     required double cardWidth,
   }) {
-    final double normalSize =
-    (cardWidth * 0.265).clamp(25.0, 34.0).toDouble();
-    final double topOneSize =
-    (cardWidth * 0.315).clamp(30.0, 41.0).toDouble();
+    final double normalSize = (cardWidth * 0.265).clamp(25.0, 34.0).toDouble();
+    final double topOneSize = (cardWidth * 0.315).clamp(30.0, 41.0).toDouble();
 
     // First page keeps the reference Ranking-card look:
     // rank 2 on the left, rank 1 bigger in the center, rank 3 on the right.
@@ -1227,7 +1260,7 @@ class _HomeViewState extends State<HomeView> {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: List.generate(
         3,
-            (index) => Padding(
+        (index) => Padding(
           padding: EdgeInsets.only(right: index == 2 ? 0 : 3),
           child: Shimmer.fromColors(
             baseColor: Colors.white.withOpacity(0.38),
@@ -1247,8 +1280,7 @@ class _HomeViewState extends State<HomeView> {
   }
 
   Widget _rankingCardArtwork(double cardWidth) {
-    final RankingController controller =
-    Get.isRegistered<RankingController>()
+    final RankingController controller = Get.isRegistered<RankingController>()
         ? Get.find<RankingController>()
         : Get.put(RankingController());
 
@@ -1272,7 +1304,7 @@ class _HomeViewState extends State<HomeView> {
             );
 
             list.sort(
-                  (a, b) => _rankingTotalCoin(b).compareTo(_rankingTotalCoin(a)),
+              (a, b) => _rankingTotalCoin(b).compareTo(_rankingTotalCoin(a)),
             );
 
             if (controller.isLoading.value && list.isEmpty) {
@@ -1339,8 +1371,9 @@ class _HomeViewState extends State<HomeView> {
                 },
                 itemBuilder: (context, pageIndex) {
                   final int start = pageIndex * 3;
-                  final int end =
-                  (start + 3) > list.length ? list.length : (start + 3);
+                  final int end = (start + 3) > list.length
+                      ? list.length
+                      : (start + 3);
                   final List<dynamic> pageItems = list.sublist(start, end);
 
                   return Align(
@@ -1363,7 +1396,7 @@ class _HomeViewState extends State<HomeView> {
   Map<String, dynamic> _safePreviewMap(dynamic value) {
     if (value is Map) {
       return value.map<String, dynamic>(
-            (key, item) => MapEntry(key.toString(), item),
+        (key, item) => MapEntry(key.toString(), item),
       );
     }
     return <String, dynamic>{};
@@ -1385,10 +1418,7 @@ class _HomeViewState extends State<HomeView> {
     }
 
     final String path = _rankingSafeText(
-      user['profile_image'] ??
-          user['avatar'] ??
-          user['image'] ??
-          user['photo'],
+      user['profile_image'] ?? user['avatar'] ?? user['image'] ?? user['photo'],
     );
 
     if (path.isEmpty) return '';
@@ -1415,8 +1445,9 @@ class _HomeViewState extends State<HomeView> {
     required double size,
     required Color ringColor,
   }) {
-    final String firstLetter =
-    name.trim().isEmpty ? 'U' : name.trim().substring(0, 1).toUpperCase();
+    final String firstLetter = name.trim().isEmpty
+        ? 'U'
+        : name.trim().substring(0, 1).toUpperCase();
 
     // CP card profile: no outer white border/ring.
     return SizedBox(
@@ -1425,39 +1456,38 @@ class _HomeViewState extends State<HomeView> {
       child: ClipOval(
         child: imageUrl.isEmpty
             ? Container(
-          color: Colors.white.withOpacity(.18),
-          alignment: Alignment.center,
-          child: Text(
-            firstLetter,
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-              fontSize: size * .38,
-            ),
-          ),
-        )
+                color: Colors.white.withOpacity(.18),
+                alignment: Alignment.center,
+                child: Text(
+                  firstLetter,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: size * .38,
+                  ),
+                ),
+              )
             : CachedNetworkImage(
-          imageUrl: imageUrl,
-          fit: BoxFit.cover,
-          width: size,
-          height: size,
-          fadeInDuration: const Duration(milliseconds: 120),
-          placeholder: (_, __) => Container(
-            color: Colors.white.withOpacity(.16),
-          ),
-          errorWidget: (_, __, ___) => Container(
-            color: Colors.white.withOpacity(.18),
-            alignment: Alignment.center,
-            child: Text(
-              firstLetter,
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w900,
-                fontSize: size * .38,
+                imageUrl: imageUrl,
+                fit: BoxFit.cover,
+                width: size,
+                height: size,
+                fadeInDuration: const Duration(milliseconds: 120),
+                placeholder: (_, __) =>
+                    Container(color: Colors.white.withOpacity(.16)),
+                errorWidget: (_, __, ___) => Container(
+                  color: Colors.white.withOpacity(.18),
+                  alignment: Alignment.center,
+                  child: Text(
+                    firstLetter,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: size * .38,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -1469,7 +1499,7 @@ class _HomeViewState extends State<HomeView> {
   }
 
   String _cpActiveProfileImage(Map<String, dynamic> user) {
-    final String raw = _rankingSafeText(
+    String raw = _rankingSafeText(
       user['profile_image'] ??
           user['profile_image_url'] ??
           user['avatar'] ??
@@ -1477,6 +1507,15 @@ class _HomeViewState extends State<HomeView> {
     );
 
     if (raw.isEmpty) return '';
+
+    // Defensive support if a URL ever arrives in markdown-link form:
+    // [https://domain/image.webp](https://domain/image.webp)
+    final RegExp markdownUrl = RegExp(r'\[[^\]]+\]\((https?://[^)]+)\)');
+    final RegExpMatch? match = markdownUrl.firstMatch(raw);
+    if (match != null && match.group(1) != null) {
+      raw = match.group(1)!.trim();
+    }
+
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
       return raw;
     }
@@ -1503,8 +1542,22 @@ class _HomeViewState extends State<HomeView> {
     required double cardWidth,
   }) {
     final Map<String, dynamic> couple = _safePreviewMap(rawCouple);
-    final Map<String, dynamic> userOne = _cpActiveUser(couple['user_1']);
-    final Map<String, dynamic> userTwo = _cpActiveUser(couple['user_2']);
+
+    // Current API: { "couples": [userOne, userTwo] }
+    // Old API/app cache: { "user_1": userOne, "user_2": userTwo }
+    // Support both so the Home CP card never goes blank after an API change.
+    Map<String, dynamic> userOne = _cpActiveUser(couple['user_1']);
+    Map<String, dynamic> userTwo = _cpActiveUser(couple['user_2']);
+
+    final dynamic apiCouples = couple['couples'];
+    if ((userOne.isEmpty || userTwo.isEmpty) && apiCouples is List) {
+      if (apiCouples.isNotEmpty) {
+        userOne = _cpActiveUser(apiCouples[0]);
+      }
+      if (apiCouples.length > 1) {
+        userTwo = _cpActiveUser(apiCouples[1]);
+      }
+    }
 
     final String imageOne = _cpActiveProfileImage(userOne);
     final String imageTwo = _cpActiveProfileImage(userTwo);
@@ -1518,15 +1571,12 @@ class _HomeViewState extends State<HomeView> {
         final double base = w < h ? w : h;
 
         // Bigger CP couple profiles.
-        final double avatarSize =
-        (base * .64).clamp(33.0, 47.0).toDouble();
+        final double avatarSize = (base * .64).clamp(33.0, 47.0).toDouble();
 
         // Same CP SVGA used on the Profile page.
-        final double cpSvgaSize =
-        (base * .46).clamp(24.0, 34.0).toDouble();
+        final double cpSvgaSize = (base * .46).clamp(24.0, 34.0).toDouble();
 
-        final double gap =
-        (w * .006).clamp(0.5, 1.5).toDouble();
+        final double gap = (w * .006).clamp(0.5, 1.5).toDouble();
 
         return Stack(
           alignment: Alignment.center,
@@ -1568,8 +1618,8 @@ class _HomeViewState extends State<HomeView> {
                     Padding(
                       padding: const EdgeInsets.only(top: 8.0),
                       child: SizedBox(
-                        width: kHeight*0.05,
-                        height: kHeight*0.05,
+                        width: kHeight * 0.05,
+                        height: kHeight * 0.05,
                         child: SVGAEasyPlayer(
                           assetsName: 'assets/svga/Level/cp_info_bg (1).svga',
                           fit: BoxFit.cover,
@@ -1599,10 +1649,8 @@ class _HomeViewState extends State<HomeView> {
         final double w = constraints.maxWidth;
         final double h = constraints.maxHeight;
         final double base = w < h ? w : h;
-        final double avatar =
-        (base * .64).clamp(33.0, 47.0).toDouble();
-        final double cpSvgaSize =
-        (base * .46).clamp(24.0, 34.0).toDouble();
+        final double avatar = (base * .64).clamp(33.0, 47.0).toDouble();
+        final double cpSvgaSize = (base * .46).clamp(24.0, 34.0).toDouble();
 
         Widget bubble() {
           return Shimmer.fromColors(
@@ -1654,8 +1702,9 @@ class _HomeViewState extends State<HomeView> {
 
   Widget _cpCardArtwork(double cardWidth) {
     return Obx(() {
-      final List<dynamic> couples =
-      List<dynamic>.from(homeController.cpActiveCouples);
+      final List<dynamic> couples = List<dynamic>.from(
+        homeController.cpActiveCouples,
+      );
 
       if (homeController.cpActiveCouplesLoading.value && couples.isEmpty) {
         return _cpLoadingArtwork(cardWidth);
@@ -1682,8 +1731,9 @@ class _HomeViewState extends State<HomeView> {
           _cpCurrentPage = virtualPage;
         },
         itemBuilder: (context, virtualPage) {
-          final int logicalIndex =
-          coupleCount <= 1 ? 0 : virtualPage % coupleCount;
+          final int logicalIndex = coupleCount <= 1
+              ? 0
+              : virtualPage % coupleCount;
 
           return _cpCouplePage(
             rawCouple: couples[logicalIndex],
@@ -1736,8 +1786,9 @@ class _HomeViewState extends State<HomeView> {
   }) {
     final String imageUrl = _familyPreviewLogo(family);
     final String name = _familyPreviewName(family);
-    final String firstLetter =
-    name.trim().isEmpty ? 'F' : name.trim().substring(0, 1).toUpperCase();
+    final String firstLetter = name.trim().isEmpty
+        ? 'F'
+        : name.trim().substring(0, 1).toUpperCase();
 
     return SizedBox(
       width: size * 1.12,
@@ -1749,50 +1800,50 @@ class _HomeViewState extends State<HomeView> {
           Positioned.fill(
             child: imageUrl.isEmpty
                 ? Container(
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(size * .20),
-                color: Colors.white.withOpacity(.16),
-              ),
-              child: Text(
-                firstLetter,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: size * .42,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            )
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(size * .20),
+                      color: Colors.white.withOpacity(.16),
+                    ),
+                    child: Text(
+                      firstLetter,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: size * .42,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  )
                 : CachedNetworkImage(
-              imageUrl: imageUrl,
-              fit: BoxFit.contain,
-              fadeInDuration: const Duration(milliseconds: 120),
-              placeholder: (_, __) => Shimmer.fromColors(
-                baseColor: Colors.white.withOpacity(.18),
-                highlightColor: Colors.white.withOpacity(.60),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(size * .20),
+                    imageUrl: imageUrl,
+                    fit: BoxFit.contain,
+                    fadeInDuration: const Duration(milliseconds: 120),
+                    placeholder: (_, __) => Shimmer.fromColors(
+                      baseColor: Colors.white.withOpacity(.18),
+                      highlightColor: Colors.white.withOpacity(.60),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(size * .20),
+                        ),
+                      ),
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(size * .20),
+                        color: Colors.white.withOpacity(.16),
+                      ),
+                      child: Text(
+                        firstLetter,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: size * .42,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              errorWidget: (_, __, ___) => Container(
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(size * .20),
-                  color: Colors.white.withOpacity(.16),
-                ),
-                child: Text(
-                  firstLetter,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: size * .42,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-            ),
           ),
 
           // Small ranking badge like the reference family emblem.
@@ -1808,10 +1859,7 @@ class _HomeViewState extends State<HomeView> {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
-                  colors: [
-                    Color(0xFFEAF1FF),
-                    Color(0xFF8DB7FF),
-                  ],
+                  colors: [Color(0xFFEAF1FF), Color(0xFF8DB7FF)],
                 ),
                 borderRadius: BorderRadius.circular(9),
                 border: Border.all(
@@ -1849,8 +1897,9 @@ class _HomeViewState extends State<HomeView> {
     required String name,
     required double size,
   }) {
-    final String firstLetter =
-    name.trim().isEmpty ? 'F' : name.trim().substring(0, 1).toUpperCase();
+    final String firstLetter = name.trim().isEmpty
+        ? 'F'
+        : name.trim().substring(0, 1).toUpperCase();
 
     return Container(
       width: size,
@@ -1870,37 +1919,36 @@ class _HomeViewState extends State<HomeView> {
       child: ClipOval(
         child: imageUrl.isEmpty
             ? Container(
-          color: Colors.white.withOpacity(.20),
-          alignment: Alignment.center,
-          child: Text(
-            firstLetter,
-            style: TextStyle(
-              color: const Color(0xFF1575B8),
-              fontWeight: FontWeight.w900,
-              fontSize: size * .37,
-            ),
-          ),
-        )
+                color: Colors.white.withOpacity(.20),
+                alignment: Alignment.center,
+                child: Text(
+                  firstLetter,
+                  style: TextStyle(
+                    color: const Color(0xFF1575B8),
+                    fontWeight: FontWeight.w900,
+                    fontSize: size * .37,
+                  ),
+                ),
+              )
             : CachedNetworkImage(
-          imageUrl: imageUrl,
-          fit: BoxFit.cover,
-          fadeInDuration: const Duration(milliseconds: 100),
-          placeholder: (_, __) => Container(
-            color: Colors.white.withOpacity(.18),
-          ),
-          errorWidget: (_, __, ___) => Container(
-            color: Colors.white.withOpacity(.20),
-            alignment: Alignment.center,
-            child: Text(
-              firstLetter,
-              style: TextStyle(
-                color: const Color(0xFF1575B8),
-                fontWeight: FontWeight.w900,
-                fontSize: size * .37,
+                imageUrl: imageUrl,
+                fit: BoxFit.cover,
+                fadeInDuration: const Duration(milliseconds: 100),
+                placeholder: (_, __) =>
+                    Container(color: Colors.white.withOpacity(.18)),
+                errorWidget: (_, __, ___) => Container(
+                  color: Colors.white.withOpacity(.20),
+                  alignment: Alignment.center,
+                  child: Text(
+                    firstLetter,
+                    style: TextStyle(
+                      color: const Color(0xFF1575B8),
+                      fontWeight: FontWeight.w900,
+                      fontSize: size * .37,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -1915,10 +1963,7 @@ class _HomeViewState extends State<HomeView> {
   }) {
     Widget profileAt(int index) {
       if (index >= pageFamilies.length) {
-        return SizedBox(
-          width: avatarSize,
-          height: avatarSize,
-        );
+        return SizedBox(width: avatarSize, height: avatarSize);
       }
 
       final dynamic family = pageFamilies[index];
@@ -2010,14 +2055,10 @@ class _HomeViewState extends State<HomeView> {
         final double h = constraints.maxHeight;
         final double base = w < h ? w : h;
 
-        final double logo =
-        (base * .69).clamp(32.0, 46.0).toDouble();
-        final double avatar =
-        (base * .31).clamp(16.0, 21.0).toDouble();
-        final double hGap =
-        (base * .045).clamp(2.0, 3.5).toDouble();
-        final double vGap =
-        (base * .045).clamp(2.0, 3.5).toDouble();
+        final double logo = (base * .69).clamp(32.0, 46.0).toDouble();
+        final double avatar = (base * .31).clamp(16.0, 21.0).toDouble();
+        final double hGap = (base * .045).clamp(2.0, 3.5).toDouble();
+        final double vGap = (base * .045).clamp(2.0, 3.5).toDouble();
 
         Widget circle() {
           return Shimmer.fromColors(
@@ -2097,14 +2138,10 @@ class _HomeViewState extends State<HomeView> {
 
         // Tuned for the reference card:
         // large family emblem on left + 5 small profiles (3 + 2) on right.
-        final double logoSize =
-        (base * .69).clamp(32.0, 46.0).toDouble();
-        final double avatarSize =
-        (base * .31).clamp(16.0, 21.0).toDouble();
-        final double horizontalGap =
-        (base * .045).clamp(2.0, 3.5).toDouble();
-        final double verticalGap =
-        (base * .045).clamp(2.0, 3.5).toDouble();
+        final double logoSize = (base * .69).clamp(32.0, 46.0).toDouble();
+        final double avatarSize = (base * .31).clamp(16.0, 21.0).toDouble();
+        final double horizontalGap = (base * .045).clamp(2.0, 3.5).toDouble();
+        final double verticalGap = (base * .045).clamp(2.0, 3.5).toDouble();
 
         return Stack(
           children: [
@@ -2120,8 +2157,9 @@ class _HomeViewState extends State<HomeView> {
             ),
             Positioned.fill(
               child: Obx(() {
-                final List<dynamic> families =
-                List<dynamic>.from(_familyController.rankingList);
+                final List<dynamic> families = List<dynamic>.from(
+                  _familyController.rankingList,
+                );
 
                 if (families.isEmpty) {
                   return _familyLoadingReference(cardWidth);
@@ -2145,17 +2183,19 @@ class _HomeViewState extends State<HomeView> {
                     _familyCurrentPage = virtualPage;
                   },
                   itemBuilder: (context, virtualPage) {
-                    final int logicalPage =
-                    pageCount <= 1 ? 0 : virtualPage % pageCount;
+                    final int logicalPage = pageCount <= 1
+                        ? 0
+                        : virtualPage % pageCount;
 
                     final int start = logicalPage * 5;
-                    final int end =
-                    (start + 5) > families.length
+                    final int end = (start + 5) > families.length
                         ? families.length
                         : start + 5;
 
-                    final List<dynamic> pageFamilies =
-                    families.sublist(start, end);
+                    final List<dynamic> pageFamilies = families.sublist(
+                      start,
+                      end,
+                    );
 
                     return _familyReferencePage(
                       pageFamilies: pageFamilies,
@@ -2175,7 +2215,6 @@ class _HomeViewState extends State<HomeView> {
       },
     );
   }
-
 
   Future<bool> _ensureMicrophonePermissionBeforeQuickLive() async {
     try {
@@ -2233,7 +2272,7 @@ class _HomeViewState extends State<HomeView> {
     }
 
     final LivestreamController liveController =
-    Get.isRegistered<LivestreamController>()
+        Get.isRegistered<LivestreamController>()
         ? Get.find<LivestreamController>()
         : Get.put(LivestreamController());
 
@@ -2296,7 +2335,7 @@ class _HomeViewState extends State<HomeView> {
 
     try {
       final user = homeController.allUserData.firstWhere(
-            (u) => u['user_id'].toString() == uid,
+        (u) => u['user_id'].toString() == uid,
       );
 
       setState(() {
@@ -2306,6 +2345,7 @@ class _HomeViewState extends State<HomeView> {
       setState(() => selectedUser = null);
     }
   }
+
   @override
   Widget build(BuildContext context) {
     final HomeController hController = Get.put(HomeController());
@@ -2318,17 +2358,7 @@ class _HomeViewState extends State<HomeView> {
         appBar: PreferredSize(
           preferredSize: Size.fromHeight(Get.height * 0.06),
           child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFF190522),
-                  Color(0xFF3B072F),
-
-                ],
-              ),
-            ),
+            decoration: const BoxDecoration(color: Colors.transparent),
             child: AppBar(
               automaticallyImplyLeading: false,
               backgroundColor: Colors.transparent,
@@ -2342,16 +2372,15 @@ class _HomeViewState extends State<HomeView> {
                     child: Row(
                       children: [
                         Image.asset('assets/logo/linLigo-removebg-preview.png'),
-                        SizedBox(width: kWeight*0.01,),
+                        SizedBox(width: kWeight * 0.01),
                         AnimatedGradientText(
                           text: ('LIN LIVE').appTr,
                           style: TextStyle(
-                            fontSize: kHeight*0.025,
+                            fontSize: kHeight * 0.025,
                             fontWeight: FontWeight.w900,
                             letterSpacing: 1.5,
                           ),
                         ),
-
                       ],
                     ),
                   ),
@@ -2364,18 +2393,20 @@ class _HomeViewState extends State<HomeView> {
                   child: InkWell(
                     onTap: () {
                       Get.to(
-                            () => const LiveSearchView(),
+                        () => const LiveSearchView(),
                         transition: Transition.rightToLeft,
                       );
                     },
                     child: Container(
-                      padding: EdgeInsets.symmetric(vertical: kHeight*0.01,horizontal: kHeight*0.01),
+                      padding: EdgeInsets.symmetric(
+                        vertical: kHeight * 0.01,
+                        horizontal: kHeight * 0.01,
+                      ),
                       decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
-                          gradient: LinearGradient(colors: [
-                            Color(0xff9113fa),
-                            Color(0xffe208fa),
-                          ])
+                        borderRadius: BorderRadius.circular(20),
+                        gradient: LinearGradient(
+                          colors: [Color(0xff9113fa), Color(0xffe208fa)],
+                        ),
                       ),
                       child: Image.asset(
                         'assets/new/search (1).png',
@@ -2383,7 +2414,6 @@ class _HomeViewState extends State<HomeView> {
                         color: Colors.white,
                       ),
                     ),
-
                   ),
                 ),
                 SizedBox(width: kWeight * 0.02),
@@ -2404,34 +2434,38 @@ class _HomeViewState extends State<HomeView> {
           ),
         ),
         body: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0xFF3B072F),
-                Color(0xFF3B072F)
-              ],
-            ),
-          ),
+          decoration: const BoxDecoration(color: Colors.transparent),
           child: Column(
             children: [
-              SizedBox(height: 10,),
-              SizedBox(
-                height: Get.height * 0.145,
-                child: _buildBannerPager(),
-              ),
+              SizedBox(height: 10),
+              SizedBox(height: Get.height * 0.145, child: _buildBannerPager()),
               _buildHomeShortcutCards(),
-              GlowingTabBarBox(kHeight: kHeight),
+
+              // Keep the upper background image exactly as it is.
+              // Only place the tabbar/content area on white so the dark look disappears.
+              SizedBox(height: kHeight * 0.008),
+
+              Container(
+                width: double.infinity,
+                color: Colors.white,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: kWeight * 0.018),
+                  child: GlowingTabBarBox(kHeight: kHeight),
+                ),
+              ),
+
               Expanded(
-                child: TabBarView(
-                  children: [
-                    AllLiveListView(),
-                    PopularLiveListView(),
-                    AudioLiveListView(),
-                    PkLiveListView(),
-                    const CountryLiveListView(),
-                  ],
+                child: Container(
+                  color: Colors.white,
+                  child: TabBarView(
+                    children: [
+                      const CountryLiveListView(),
+                      AllLiveListView(),
+                      PopularLiveListView(),
+                      AudioLiveListView(),
+                      PkLiveListView(),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -2442,19 +2476,14 @@ class _HomeViewState extends State<HomeView> {
   }
 }
 
-
 class _SafeBannerWebViewPage extends StatefulWidget {
-  const _SafeBannerWebViewPage({
-    required this.initialUrl,
-    required this.title,
-  });
+  const _SafeBannerWebViewPage({required this.initialUrl, required this.title});
 
   final String initialUrl;
   final String title;
 
   @override
-  State<_SafeBannerWebViewPage> createState() =>
-      _SafeBannerWebViewPageState();
+  State<_SafeBannerWebViewPage> createState() => _SafeBannerWebViewPageState();
 }
 
 class _SafeBannerWebViewPageState extends State<_SafeBannerWebViewPage> {
@@ -2529,8 +2558,9 @@ class _SafeBannerWebViewPageState extends State<_SafeBannerWebViewPage> {
 
   @override
   Widget build(BuildContext context) {
-    final String safeTitle =
-    widget.title.trim().isEmpty ? ('Details').appTr : widget.title.trim();
+    final String safeTitle = widget.title.trim().isEmpty
+        ? ('Details').appTr
+        : widget.title.trim();
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -2563,22 +2593,20 @@ class _SafeBannerWebViewPageState extends State<_SafeBannerWebViewPage> {
           IconButton(
             tooltip: ('Reload').appTr,
             onPressed: _reload,
-            icon: const Icon(
-              Icons.refresh_rounded,
-              color: Colors.white,
-            ),
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
           ),
         ],
         bottom: PreferredSize(
           preferredSize: Size.fromHeight(_loading ? 3 : 0),
           child: _loading
               ? LinearProgressIndicator(
-            minHeight: 3,
-            value: _progress <= 0 ? null : _progress / 100,
-            backgroundColor: Colors.white.withOpacity(.18),
-            valueColor:
-            const AlwaysStoppedAnimation<Color>(Color(0xFFFF4BB2)),
-          )
+                  minHeight: 3,
+                  value: _progress <= 0 ? null : _progress / 100,
+                  backgroundColor: Colors.white.withOpacity(.18),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    Color(0xFFFF4BB2),
+                  ),
+                )
               : const SizedBox.shrink(),
         ),
       ),
@@ -2587,9 +2615,7 @@ class _SafeBannerWebViewPageState extends State<_SafeBannerWebViewPage> {
         bottom: true,
         child: Stack(
           children: [
-            Positioned.fill(
-              child: WebViewWidget(controller: _controller),
-            ),
+            Positioned.fill(child: WebViewWidget(controller: _controller)),
             if (_errorText != null)
               Positioned.fill(
                 child: ColoredBox(
@@ -2646,7 +2672,6 @@ class _SafeBannerWebViewPageState extends State<_SafeBannerWebViewPage> {
   }
 }
 
-
 Widget shimmerWidget() {
   return Shimmer.fromColors(
     baseColor: Colors.grey[300]!,
@@ -2690,10 +2715,7 @@ Widget profileCard(dynamic user) {
     key: ValueKey(user['id']),
     decoration: BoxDecoration(
       gradient: LinearGradient(
-        colors: [
-          Colors.white,
-          Colors.grey.shade50,
-        ],
+        colors: [Colors.white, Colors.grey.shade50],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
@@ -2706,10 +2728,7 @@ Widget profileCard(dynamic user) {
           spreadRadius: -5,
         ),
       ],
-      border: Border.all(
-        color: Colors.grey.withOpacity(0.1),
-        width: 1,
-      ),
+      border: Border.all(color: Colors.grey.withOpacity(0.1), width: 1),
     ),
     child: Material(
       color: Colors.transparent,
@@ -2840,4 +2859,3 @@ Widget _buildProfileWithFrame(dynamic user) {
     ),
   );
 }
-

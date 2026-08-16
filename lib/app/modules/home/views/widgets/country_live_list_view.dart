@@ -142,9 +142,9 @@ class _CountryLiveListViewState extends State<CountryLiveListView>
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white.withOpacity(.10),
+                  color: Colors.white.withOpacity(.92),
                   border: Border.all(
-                    color: Colors.white.withOpacity(.12),
+                    color: const Color(0xFFEDEEF1),
                   ),
                 ),
                 child: Text(
@@ -160,7 +160,7 @@ class _CountryLiveListViewState extends State<CountryLiveListView>
                   : '${('No live room found for').appTr} $name',
               textAlign: TextAlign.center,
               style: GoogleFonts.poppins(
-                color: Colors.white,
+                color: const Color(0xFF2C2C2C),
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
               ),
@@ -172,7 +172,7 @@ class _CountryLiveListViewState extends State<CountryLiveListView>
                   : ('New live rooms will appear here automatically.').appTr,
               textAlign: TextAlign.center,
               style: GoogleFonts.poppins(
-                color: Colors.white.withOpacity(.62),
+                color: const Color(0xFF777A80),
                 fontSize: 11.2,
                 height: 1.45,
                 fontWeight: FontWeight.w500,
@@ -222,16 +222,9 @@ class _CountryLiveListViewState extends State<CountryLiveListView>
     super.build(context);
 
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Color(0xFF3B072F),
-            Color(0xFF3B072F),
-          ],
-        ),
-      ),
+      // Parent HomeView handles the API background -> white fade.
+      // Keep Country list transparent so there is no dark block behind tabs/cards.
+      color: Colors.transparent,
       child: Obx(() {
         final users = controller.selectedCountryLiveStreams;
 

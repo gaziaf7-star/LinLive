@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:ui';
 
@@ -32,6 +31,7 @@ import '../controllers/livestream_controller.dart';
 import '../controllers/audience_join_controller.dart';
 import '../socket/websocket_controller.dart';
 import '../helper_functions/call_list_helper.dart';
+import '../utils/battery_optimizer.dart';
 import '../widgets/AnimatedProgressBar.dart';
 import '../widgets/CustomPartyRoom.dart';
 import '../widgets/LiveProfile_AppBar.dart';
@@ -41,7 +41,7 @@ import '../widgets/gifts_animation.dart';
 import '../widgets/live_comments.dart';
 import '../widgets/live_viewer_list.dart';
 import '../widgets/pk_live_widgets.dart';
-import '../widgets/red_packet_animation.dart';
+import '../widgets/RedPacketLiveOverlay.dart';
 import '../widgets/rocket_launch_overlay.dart';
 import '../widgets/towVsTowPk.dart';
 import '../widgets/write_comments.dart';
@@ -105,11 +105,54 @@ class _PopularLiveViewState extends State<PopularLiveView>
   LiveStreamActionController actionController = Get.put(
     LiveStreamActionController(),
   );
-  WebsocketController websocketController = Get.put(WebsocketController());
+  final WebsocketController websocketController =
+  Get.isRegistered<WebsocketController>()
+      ? Get.find<WebsocketController>()
+      : Get.put<WebsocketController>(
+    WebsocketController(),
+    permanent: true,
+  );
   AnimatedProgressBarController animatedProgressBarController = Get.put(
     AnimatedProgressBarController(),
   );
   final AgoraService _agoraService = AgoraService();
+
+  // ✅ FIX: video config here is otherwise fixed/adaptive-by-network only and
+  // never reacts to battery/thermal state, which is a real contributor to a
+  // phone running hot and stuttering on long streams. This minimal guard
+  // only steps in at genuinely critical battery (pauses local video, the
+  // single biggest power/heat saver) and restores it once battery recovers.
+  final BatteryOptimizer _batteryGuardOptimizer = BatteryOptimizer();
+  Timer? _batteryGuardTimer;
+  bool _batteryGuardVideoDisabled = false;
+
+  void _startBatteryVideoGuard() {
+    _batteryGuardTimer ??= Timer.periodic(
+      const Duration(seconds: 60),
+          (_) => _checkBatteryVideoGuard(),
+    );
+  }
+
+  Future<void> _checkBatteryVideoGuard() async {
+    if (!mounted || _agoraService.engine == null) return;
+    try {
+      final int level = await _batteryGuardOptimizer.getCurrentBatteryLevel();
+      final bool critical = level <= BatteryOptimizer.criticalBatteryThreshold;
+      if (critical && !_batteryGuardVideoDisabled) {
+        _batteryGuardVideoDisabled = true;
+        await _agoraService.engine!.enableLocalVideo(false);
+        debugPrint('🔋 Critical battery ($level%) => local video paused');
+      } else if (!critical && _batteryGuardVideoDisabled) {
+        _batteryGuardVideoDisabled = false;
+        if (widget.isBroadcaster) {
+          await _agoraService.engine!.enableLocalVideo(true);
+          debugPrint('🔋 Battery recovered ($level%) => local video resumed');
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Battery video guard skipped: $e');
+    }
+  }
 
   late final dynamic streamData;
 
@@ -136,6 +179,13 @@ class _PopularLiveViewState extends State<PopularLiveView>
   final Set<int> _remoteVideoReadyUids = <int>{};
   final Set<String> _loggedVideoLayoutKeys = <String>{};
   final Map<String, Widget> _stableVideoRenderers = <String, Widget>{};
+  // ✅ FIX (GPU driver crash, libGLES_mali.so SIGABRT): see _pkVideoForHost.
+  // Caches PK battle video widgets by video-source identity only (channel +
+  // local/remote uid), so a score/viewer-count update (which happens very
+  // often during an active PK battle) does not recreate the underlying
+  // AgoraVideoView/VideoViewController — mirrors the existing
+  // _stableVideoRenderers pattern used elsewhere in this file.
+  final Map<String, Widget> _stablePkVideoRenderers = <String, Widget>{};
   final Map<int, Timer> _remoteOfflineGraceTimers = <int, Timer>{};
   Worker? _videoCallListWorker;
   Future<void>? _remoteSubscriptionReconcileFuture;
@@ -1341,6 +1391,7 @@ class _PopularLiveViewState extends State<PopularLiveView>
     WidgetsBinding.instance.addObserver(this);
     // Enable wake lock to keep screen on during live streaming
     WakelockPlus.enable();
+    _startBatteryVideoGuard();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (Get.isRegistered<AudienceJoinController>()) {
@@ -1473,6 +1524,8 @@ class _PopularLiveViewState extends State<PopularLiveView>
     // ✅ BATTERY OPTIMIZATION: Cancel UI update timer to prevent memory leaks
     _uiUpdateTimer?.cancel();
     _uiUpdateTimer = null;
+    _batteryGuardTimer?.cancel();
+    _batteryGuardTimer = null;
 
     for (final timer in _speakingOffTimers.values) {
       timer.cancel();
@@ -1487,6 +1540,7 @@ class _PopularLiveViewState extends State<PopularLiveView>
     }
     _remoteOfflineGraceTimers.clear();
     _stableVideoRenderers.clear();
+    _stablePkVideoRenderers.clear();
 
     // Disable wake lock to restore normal screen behavior
     WakelockPlus.disable();
@@ -1751,6 +1805,12 @@ class _PopularLiveViewState extends State<PopularLiveView>
       liveController.stopPingUpdate();
       liveController.stopLivePresenceHeartbeat();
 
+      // Soft leave only: keep the permanent room active so pressing Create
+      // Live later rejoins this same room instead of creating a new one.
+      await liveController.leavePermanentRoom(
+        livestreamId: _safeStreamId(),
+      );
+
       Get.offAll(() => BottomnavView());
       print('✅ Host left video room only, live kept active in list');
     } catch (e) {
@@ -1989,13 +2049,6 @@ class _PopularLiveViewState extends State<PopularLiveView>
                 _buildPkBigCountdownOverlay(),
                 _buildPkResultPreviewOverlay(),
 
-                RocketLaunchOverlay(livestreamId: _safeStreamId()),
-
-                /// Persistent full-screen gift layer. Keeping one widget
-                /// mounted prevents repeated same-URL SVGA gifts from losing
-                /// their onFinished callback or cutting the FIFO queue.
-                _PopularGiftOverlayHost(controller: websocketController),
-
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 200),
                   curve: Curves.easeOut,
@@ -2030,200 +2083,186 @@ class _PopularLiveViewState extends State<PopularLiveView>
                                         children: [
                                           // Main Container (Background + Info + Follow Button)
                                           Container(
-                                            margin: EdgeInsets.only(
-                                              left: Get.width * 0.02,
+                                            padding: EdgeInsets.only(
+                                              right: Get.width * 0.02,
+                                            ),
+                                            margin: EdgeInsets.all(
+                                              Get.width * 0.005,
                                             ),
                                             decoration: BoxDecoration(
                                               borderRadius:
                                               BorderRadius.circular(
-                                                20,
+                                                15,
                                               ),
                                               gradient: LinearGradient(
                                                 colors: [
-                                                  Color(0xffe85c7d),
-                                                  Color(0xfffdcdfb),
-                                                  Color(0xff15bccd),
+                                                  Color(
+                                                    0xff0e0e0e,
+                                                  ).withOpacity(.5),
+                                                  Color(
+                                                    0xff0e0e0e,
+                                                  ).withOpacity(.5),
                                                 ],
                                               ),
                                             ),
-                                            child: Container(
-                                              padding: EdgeInsets.only(
-                                                right: Get.width * 0.02,
-                                              ),
-                                              margin: EdgeInsets.all(
-                                                Get.width * 0.005,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                borderRadius:
-                                                BorderRadius.circular(
-                                                  15,
-                                                ),
-                                                gradient: LinearGradient(
-                                                  colors: [
-                                                    Color(0xff650256),
-                                                    Color(0xff020947),
+                                            child: Row(
+                                              children: [
+                                                SizedBox(
+                                                  width:
+                                                  Get.width * 0.13,
+                                                ), // profile এর জায়গা
+                                                Column(
+                                                  spacing: 2,
+                                                  crossAxisAlignment:
+                                                  CrossAxisAlignment
+                                                      .start,
+                                                  children: [
+                                                    _safeUserMap(
+                                                      broadcasterData,
+                                                    ).isNotEmpty
+                                                        ? Text(
+                                                      (() {
+                                                        final name =
+                                                            _safeUserMap(
+                                                              broadcasterData,
+                                                            )['name'] ??
+                                                                '';
+                                                        // ৬ অক্ষরের বেশি হলে শেষে ... দেখাবে
+                                                        return name.length >
+                                                            8
+                                                            ? '${name.substring(0, 8)}...'
+                                                            : name;
+                                                      })(),
+                                                      style: GoogleFonts.poppins(
+                                                        color: Colors
+                                                            .white,
+                                                        fontSize:
+                                                        (Get.height *
+                                                            0.013)
+                                                            .clamp(
+                                                          9.0,
+                                                          13.0,
+                                                        ),
+                                                        fontWeight:
+                                                        FontWeight
+                                                            .w500,
+                                                      ),
+                                                    )
+                                                        : const SizedBox(),
+                                                    (_safeUserMap(
+                                                      broadcasterData,
+                                                    )['user_id'] !=
+                                                        null)
+                                                        ? Text(
+                                                      ('Uid : ${_safeUserMap(broadcasterData)['user_id']}')
+                                                          .appTr,
+                                                      style: GoogleFonts.poppins(
+                                                        color: Colors
+                                                            .white,
+                                                        fontSize:
+                                                        (Get.height *
+                                                            0.012)
+                                                            .clamp(
+                                                          9.0,
+                                                          14.0,
+                                                        ),
+                                                        fontWeight:
+                                                        FontWeight
+                                                            .w500,
+                                                      ),
+                                                    )
+                                                        : const SizedBox(),
                                                   ],
                                                 ),
-                                              ),
-                                              child: Row(
-                                                children: [
-                                                  SizedBox(
-                                                    width:
-                                                    Get.width * 0.11,
-                                                  ), // profile এর জায়গা
-                                                  Column(
-                                                    spacing: 2,
-                                                    crossAxisAlignment:
-                                                    CrossAxisAlignment
-                                                        .start,
-                                                    children: [
-                                                      _safeUserMap(
-                                                        broadcasterData,
-                                                      ).isNotEmpty
-                                                          ? Text(
-                                                        (() {
-                                                          final name =
-                                                              _safeUserMap(
-                                                                broadcasterData,
-                                                              )['name'] ??
-                                                                  '';
-                                                          // ৬ অক্ষরের বেশি হলে শেষে ... দেখাবে
-                                                          return name.length >
-                                                              8
-                                                              ? '${name.substring(0, 8)}...'
-                                                              : name;
-                                                        })(),
-                                                        style: GoogleFonts.poppins(
-                                                          color: Colors
-                                                              .white,
-                                                          fontSize:
-                                                          (Get.height *
-                                                              0.013)
-                                                              .clamp(
-                                                            9.0,
-                                                            13.0,
-                                                          ),
-                                                          fontWeight:
-                                                          FontWeight
-                                                              .w500,
-                                                        ),
-                                                      )
-                                                          : const SizedBox(),
-                                                      (_safeUserMap(
-                                                        broadcasterData,
-                                                      )['user_id'] !=
-                                                          null)
-                                                          ? Text(
-                                                        ('Uid : ${_safeUserMap(broadcasterData)['user_id']}')
-                                                            .appTr,
-                                                        style: GoogleFonts.poppins(
-                                                          color: Colors
-                                                              .white,
-                                                          fontSize:
-                                                          (Get.height *
-                                                              0.012)
-                                                              .clamp(
-                                                            9.0,
-                                                            14.0,
-                                                          ),
-                                                          fontWeight:
-                                                          FontWeight
-                                                              .w500,
-                                                        ),
-                                                      )
-                                                          : const SizedBox(),
-                                                    ],
-                                                  ),
-                                                  SizedBox(
-                                                    width:
-                                                    Get.width * 0.015,
-                                                  ),
+                                                SizedBox(
+                                                  width:
+                                                  Get.width * 0.015,
+                                                ),
 
-                                                  Obx(() {
-                                                    if (_safeUserId(
-                                                      broadcasterData,
-                                                    ) ==
-                                                        authController
-                                                            .userProfile
-                                                            .value
-                                                            .user
-                                                            ?.id) {
-                                                      return const SizedBox();
-                                                    }
-
-                                                    return AnimatedSwitcher(
-                                                      duration:
-                                                      const Duration(
-                                                        milliseconds:
-                                                        300,
-                                                      ),
-                                                      child:
-                                                      momentsController
-                                                          .isFollowing1
+                                                Obx(() {
+                                                  if (_safeUserId(
+                                                    broadcasterData,
+                                                  ) ==
+                                                      authController
+                                                          .userProfile
                                                           .value
-                                                          ? Container()
-                                                          : InkWell(
-                                                        key: const ValueKey(
-                                                          'follow',
+                                                          .user
+                                                          ?.id) {
+                                                    return const SizedBox();
+                                                  }
+
+                                                  return AnimatedSwitcher(
+                                                    duration:
+                                                    const Duration(
+                                                      milliseconds:
+                                                      300,
+                                                    ),
+                                                    child:
+                                                    momentsController
+                                                        .isFollowing1
+                                                        .value
+                                                        ? Container()
+                                                        : InkWell(
+                                                      key: const ValueKey(
+                                                        'follow',
+                                                      ),
+                                                      onTap: () {
+                                                        momentsController.followCreate(
+                                                          userId:
+                                                          '${_safeUserId(broadcasterData)}',
+                                                        );
+                                                      },
+                                                      child: Container(
+                                                        padding: EdgeInsets.symmetric(
+                                                          vertical:
+                                                          Get.height *
+                                                              0.007,
+                                                          horizontal:
+                                                          Get.width *
+                                                              0.03,
                                                         ),
-                                                        onTap: () {
-                                                          momentsController.followCreate(
-                                                            userId:
-                                                            '${_safeUserId(broadcasterData)}',
-                                                          );
-                                                        },
-                                                        child: Container(
-                                                          padding: EdgeInsets.symmetric(
-                                                            vertical:
-                                                            Get.height *
-                                                                0.007,
-                                                            horizontal:
-                                                            Get.width *
-                                                                0.03,
+                                                        decoration: BoxDecoration(
+                                                          borderRadius:
+                                                          BorderRadius.circular(
+                                                            30,
                                                           ),
-                                                          decoration: BoxDecoration(
-                                                            borderRadius:
-                                                            BorderRadius.circular(
-                                                              30,
-                                                            ),
-                                                            gradient: const LinearGradient(
-                                                              colors: [
-                                                                Color(
-                                                                  0xfffdcdfb,
-                                                                ),
-                                                                Color(
-                                                                  0xff15bccd,
-                                                                ),
-                                                              ],
-                                                              begin:
-                                                              Alignment.topCenter,
-                                                              end: Alignment
-                                                                  .bottomCenter,
-                                                            ),
-                                                          ),
-                                                          child: Text(
-                                                            ('Follow')
-                                                                .appTr,
-                                                            style: GoogleFonts.lato(
-                                                              fontWeight:
-                                                              FontWeight.w600,
-                                                              fontSize:
-                                                              (Get.height *
-                                                                  0.006)
-                                                                  .clamp(
-                                                                9.0,
-                                                                14.0,
+                                                          gradient: const LinearGradient(
+                                                            colors: [
+                                                              Color(
+                                                                0xff1b07ca,
                                                               ),
-                                                              color:
-                                                              Colors.white,
+                                                              Color(
+                                                                0xff0724dd,
+                                                              ),
+                                                            ],
+                                                            begin:
+                                                            Alignment.topCenter,
+                                                            end: Alignment
+                                                                .bottomCenter,
+                                                          ),
+                                                        ),
+                                                        child: Text(
+                                                          ('Follow')
+                                                              .appTr,
+                                                          style: GoogleFonts.lato(
+                                                            fontWeight:
+                                                            FontWeight.w600,
+                                                            fontSize:
+                                                            (Get.height *
+                                                                0.006)
+                                                                .clamp(
+                                                              9.0,
+                                                              14.0,
                                                             ),
+                                                            color:
+                                                            Colors.white,
                                                           ),
                                                         ),
                                                       ),
-                                                    );
-                                                  }),
-                                                ],
-                                              ),
+                                                    ),
+                                                  );
+                                                }),
+                                              ],
                                             ),
                                           ),
 
@@ -2568,92 +2607,61 @@ class _PopularLiveViewState extends State<PopularLiveView>
                                                     );
                                                   },
                                                   child: Container(
-                                                    margin:
-                                                    EdgeInsets.only(
-                                                      right:
-                                                      Get.width *
-                                                          0.01,
-                                                    ),
-                                                    decoration: BoxDecoration(
+
+                                                    child: ClipRRect(
                                                       borderRadius:
                                                       BorderRadius.circular(
-                                                        20,
+                                                        100,
                                                       ),
-                                                      gradient:
-                                                      LinearGradient(
-                                                        colors: [
-                                                          Color(
-                                                            0xffe85c7d,
+                                                      child: Container(
+                                                        height:
+                                                        Get.height *
+                                                            0.035,
+                                                        width:
+                                                        Get.height *
+                                                            0.035,
+                                                        decoration: BoxDecoration(
+                                                          borderRadius:
+                                                          BorderRadius.circular(
+                                                            15,
                                                           ),
-                                                          Color(
-                                                            0xfffdcdfb,
+                                                          gradient: LinearGradient(
+                                                            colors: [
+                                                              Color(
+                                                                0xff040303,
+                                                              ).withOpacity(.4),
+                                                              Color(
+                                                                0xff0e0e0e,
+                                                              ).withOpacity(.4),
+                                                            ],
                                                           ),
-                                                          Color(
-                                                            0xff15bccd,
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                    child: Container(
-                                                      margin:
-                                                      EdgeInsets.all(
-                                                        1,
-                                                      ),
-                                                      child: ClipRRect(
-                                                        borderRadius:
-                                                        BorderRadius.circular(
-                                                          100,
                                                         ),
-                                                        child: Container(
-                                                          height:
-                                                          Get.height *
-                                                              0.035,
-                                                          width:
-                                                          Get.height *
-                                                              0.035,
-                                                          decoration: BoxDecoration(
-                                                            borderRadius:
-                                                            BorderRadius.circular(
-                                                              15,
-                                                            ),
-                                                            gradient: LinearGradient(
-                                                              colors: [
-                                                                Color(
-                                                                  0xff650256,
-                                                                ),
-                                                                Color(
-                                                                  0xff020947,
-                                                                ),
-                                                              ],
-                                                            ),
-                                                          ),
-                                                          child: Center(
-                                                            child: Obx(() {
-                                                              final filteredCount = livestreamController
-                                                                  .liveViewerList
-                                                                  .where(
-                                                                    (
-                                                                    viewer,
-                                                                    ) =>
-                                                                _safeUserId(
+                                                        child: Center(
+                                                          child: Obx(() {
+                                                            final filteredCount = livestreamController
+                                                                .liveViewerList
+                                                                .where(
+                                                                  (
                                                                   viewer,
-                                                                ) !=
-                                                                    _safeUserId(
-                                                                      broadcasterData,
-                                                                    ),
-                                                              )
-                                                                  .length;
-                                                              return Text(
-                                                                '$filteredCount+',
-                                                                style: const TextStyle(
-                                                                  color: Colors
-                                                                      .white,
-                                                                  fontWeight:
-                                                                  FontWeight.w500,
-                                                                ),
-                                                              );
-                                                            }),
-                                                          ),
+                                                                  ) =>
+                                                              _safeUserId(
+                                                                viewer,
+                                                              ) !=
+                                                                  _safeUserId(
+                                                                    broadcasterData,
+                                                                  ),
+                                                            )
+                                                                .length;
+                                                            return Text(
+                                                              '$filteredCount+',
+                                                              style: const TextStyle(
+                                                                color: Colors
+                                                                    .white,
+                                                                fontWeight:
+                                                                FontWeight.w500,
+                                                              ),
+                                                            );
+                                                          }),
                                                         ),
                                                       ),
                                                     ),
@@ -2668,11 +2676,7 @@ class _PopularLiveViewState extends State<PopularLiveView>
                                                     await _showVideoLiveCloseOptions();
                                                   },
                                                   child: Container(
-                                                    margin:
-                                                    EdgeInsets.only(
-                                                      right: 2,
-                                                      left: 2,
-                                                    ),
+
                                                     decoration: BoxDecoration(
                                                       borderRadius:
                                                       BorderRadius.circular(
@@ -2681,54 +2685,29 @@ class _PopularLiveViewState extends State<PopularLiveView>
                                                       gradient: LinearGradient(
                                                         colors: [
                                                           Color(
-                                                            0xffe85c7d,
+                                                            0xff031ecf,
                                                           ),
                                                           Color(
-                                                            0xfffdcdfb,
-                                                          ),
-                                                          Color(
-                                                            0xff15bccd,
+                                                            0xff091dd1,
                                                           ),
                                                         ],
                                                       ),
                                                     ),
-                                                    child: Container(
-                                                      margin:
-                                                      EdgeInsets.all(
-                                                        1,
-                                                      ),
-                                                      decoration: BoxDecoration(
-                                                        borderRadius:
-                                                        BorderRadius.circular(
-                                                          20,
-                                                        ),
-                                                        gradient: LinearGradient(
-                                                          colors: [
-                                                            Color(
-                                                              0xff650256,
-                                                            ),
-                                                            Color(
-                                                              0xff020947,
-                                                            ),
-                                                          ],
-                                                        ),
-                                                      ),
 
-                                                      height:
+                                                    height:
+                                                    Get.height *
+                                                        0.035,
+                                                    width:
+                                                    Get.height *
+                                                        0.035,
+                                                    child: Icon(
+                                                      Icons
+                                                          .close_rounded,
+                                                      color: Colors
+                                                          .white,
+                                                      size:
                                                       Get.height *
-                                                          0.035,
-                                                      width:
-                                                      Get.height *
-                                                          0.035,
-                                                      child: Icon(
-                                                        Icons
-                                                            .close_rounded,
-                                                        color: Colors
-                                                            .white,
-                                                        size:
-                                                        Get.height *
-                                                            0.02,
-                                                      ),
+                                                          0.02,
                                                     ),
                                                   ),
                                                 )
@@ -2832,11 +2811,11 @@ class _PopularLiveViewState extends State<PopularLiveView>
                                             LinearGradient(
                                               colors: [
                                                 Color(
-                                                  0xff650256,
-                                                ),
+                                                  0xff0e0e0e,
+                                                ).withOpacity(.4),
                                                 Color(
-                                                  0xff020947,
-                                                ),
+                                                  0xff0e0e0e,
+                                                ).withOpacity(.4),
                                               ],
                                             ),
                                           ),
@@ -2872,87 +2851,72 @@ class _PopularLiveViewState extends State<PopularLiveView>
                                             //     transition: Transition.rightToLeft);
                                           },
                                           child: Container(
-                                            margin: EdgeInsets.only(
-                                              left: 5,
-                                              right: 10,
+
+                                            padding:
+                                            EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 4,
                                             ),
                                             decoration: BoxDecoration(
                                               borderRadius:
                                               BorderRadius.circular(
-                                                20,
+                                                15,
                                               ),
                                               gradient: LinearGradient(
                                                 colors: [
-                                                  Color(0xffe85c7d),
-                                                  Color(0xfffdcdfb),
-                                                  Color(0xff15bccd),
+                                                  Color(
+                                                    0xff0e0e0e,
+                                                  ).withOpacity(.4),
+                                                  Color(
+                                                    0xff0e0e0e,
+                                                  ).withOpacity(.4),
                                                 ],
                                               ),
                                             ),
-                                            child: Container(
-                                              margin: EdgeInsets.all(1),
-                                              padding:
-                                              EdgeInsets.symmetric(
-                                                horizontal: 12,
-                                                vertical: 4,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                borderRadius:
-                                                BorderRadius.circular(
-                                                  15,
+                                            child: Row(
+                                              mainAxisSize:
+                                              MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  ('Current:').appTr,
+                                                  style:
+                                                  GoogleFonts.roboto(
+                                                    color: Colors
+                                                        .white,
+                                                    fontWeight:
+                                                    FontWeight
+                                                        .w400,
+                                                    fontSize:
+                                                    kHeight *
+                                                        0.012,
+                                                  ),
                                                 ),
-                                                gradient: LinearGradient(
-                                                  colors: [
-                                                    Color(0xff650256),
-                                                    Color(0xff020947),
-                                                  ],
-                                                ),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize:
-                                                MainAxisSize.min,
-                                                children: [
-                                                  Text(
-                                                    ('Current:').appTr,
-                                                    style:
-                                                    GoogleFonts.roboto(
-                                                      color: Colors
-                                                          .white,
+                                                SizedBox(width: 4),
+                                                Obx(() {
+                                                  final int coins =
+                                                  _safeCurrentGiftCoins();
+                                                  final String
+                                                  displayText =
+                                                  _formatShortCoins(
+                                                    coins,
+                                                  );
+
+                                                  // 🔹 UI return
+                                                  return Text(
+                                                    displayText,
+                                                    style: TextStyle(
+                                                      color:
+                                                      Colors.white,
                                                       fontWeight:
                                                       FontWeight
-                                                          .w400,
+                                                          .bold,
                                                       fontSize:
                                                       kHeight *
-                                                          0.012,
+                                                          0.014,
                                                     ),
-                                                  ),
-                                                  SizedBox(width: 4),
-                                                  Obx(() {
-                                                    final int coins =
-                                                    _safeCurrentGiftCoins();
-                                                    final String
-                                                    displayText =
-                                                    _formatShortCoins(
-                                                      coins,
-                                                    );
-
-                                                    // 🔹 UI return
-                                                    return Text(
-                                                      displayText,
-                                                      style: TextStyle(
-                                                        color:
-                                                        Colors.white,
-                                                        fontWeight:
-                                                        FontWeight
-                                                            .bold,
-                                                        fontSize:
-                                                        kHeight *
-                                                            0.014,
-                                                      ),
-                                                    );
-                                                  }),
-                                                ],
-                                              ),
+                                                  );
+                                                }),
+                                              ],
                                             ),
                                           ),
                                         ),
@@ -3009,15 +2973,20 @@ class _PopularLiveViewState extends State<PopularLiveView>
                                   right: 9,
                                 ),
                                 child: Row(
+                                  crossAxisAlignment:
+                                  CrossAxisAlignment.stretch,
                                   children: [
-                                    LiveCommentsSection(
-                                      broadcasterData: broadcasterData,
+                                    Expanded(
+                                      child: LiveCommentsSection(
+                                        broadcasterData: broadcasterData,
+                                        streamType: 'popular',
+                                      ),
                                     ),
 
                                     //container  text end
-                                    SizedBox(width: 5),
-                                    Expanded(
-                                      flex: 2,
+                                    const SizedBox(width: 5),
+                                    SizedBox(
+                                      width: kWeight * 0.18,
                                       child: SingleChildScrollView(
                                         child: Column(
                                           mainAxisAlignment:
@@ -3787,40 +3756,6 @@ class _PopularLiveViewState extends State<PopularLiveView>
 
                           return const SizedBox();
                         }),
-                        // Red Packet Animation
-                        Obx(
-                              () =>
-                          websocketController
-                              .redPacketVisible
-                              .value &&
-                              websocketController
-                                  .currentRedPacket
-                                  .value
-                                  .isNotEmpty
-                              ? Positioned.fill(
-                            child: RedPacketAnimation(
-                              isVisible: websocketController
-                                  .redPacketVisible
-                                  .value,
-                              onTap: () async {
-                                // Collect red packet
-                                final redPacket =
-                                    websocketController
-                                        .currentRedPacket
-                                        .value;
-                                if (redPacket.isNotEmpty) {
-                                  await liveController
-                                      .collectRedPacket(
-                                    redPacket['id'],
-                                  );
-                                  websocketController
-                                      .hideRedPacket();
-                                }
-                              },
-                            ),
-                          )
-                              : Container(),
-                        ),
                         Obx(
                               () => livestreamController.showMiniScene.value
                               ? Positioned(
@@ -3908,6 +3843,23 @@ class _PopularLiveViewState extends State<PopularLiveView>
                       child: Container(color: Colors.transparent),
                     ),
                   ),
+
+                /// Lucky Bag / Red Packet overlay.
+                /// Root Stack-e rakha, tai draggable video UI-r sathe move korbe na.
+                /// AudioLiveView-er moto same shared overlay + same top-left position.
+                RedPacketLiveOverlay(
+                  key: ValueKey<String>(
+                    'video-red-packet-${_safeStreamId()}',
+                  ),
+                  livestreamId: _safeStreamId(),
+                ),
+
+                /// Persistent full-screen gift layer.
+                /// AudioLiveView-er layering-er moto red packet-er pore gift,
+                /// tar pore rocket overlay thakbe.
+                _PopularGiftOverlayHost(controller: websocketController),
+
+                RocketLaunchOverlay(livestreamId: _safeStreamId()),
 
                 ///------------- bottom part -------
                 _agoraService.engine != null
@@ -6390,22 +6342,31 @@ class _PopularLiveViewState extends State<PopularLiveView>
     if (engine == null || channelId.isEmpty || hostId <= 0) {
       video = _pkBlurProfilePlaceholder(user);
     } else if (isLocalHost) {
-      video = AgoraVideoView(
-        key: ValueKey('pk_local_video_${channelId}_$currentUid'),
-        controller: VideoViewController(
-          rtcEngine: engine,
-          canvas: const VideoCanvas(uid: 0),
+      final String rendererKey = 'pk_local_video_${channelId}_$currentUid';
+      video = _stablePkVideoRenderers.putIfAbsent(
+        rendererKey,
+            () => AgoraVideoView(
+          key: ValueKey<String>(rendererKey),
+          controller: VideoViewController(
+            rtcEngine: engine,
+            canvas: const VideoCanvas(uid: 0),
+          ),
         ),
       );
     } else if (!remoteOnline) {
       video = _pkBlurProfilePlaceholder(user, waiting: true);
     } else {
-      video = AgoraVideoView(
-        key: ValueKey('pk_remote_video_${channelId}_$remoteAgoraUid'),
-        controller: VideoViewController.remote(
-          rtcEngine: engine,
-          canvas: VideoCanvas(uid: remoteAgoraUid),
-          connection: RtcConnection(channelId: channelId),
+      final String rendererKey =
+          'pk_remote_video_${channelId}_$remoteAgoraUid';
+      video = _stablePkVideoRenderers.putIfAbsent(
+        rendererKey,
+            () => AgoraVideoView(
+          key: ValueKey<String>(rendererKey),
+          controller: VideoViewController.remote(
+            rtcEngine: engine,
+            canvas: VideoCanvas(uid: remoteAgoraUid),
+            connection: RtcConnection(channelId: channelId),
+          ),
         ),
       );
     }

@@ -25,6 +25,7 @@ class BottomGamePage extends StatefulWidget {
 
 class _BottomGamePageState extends State<BottomGamePage> {
   StreamController<int> controller = StreamController<int>.broadcast();
+  final List<Worker> _controllerWorkers = <Worker>[];
   final fruitController = Get.put(FruitGameController());
   AuthController authController = Get.find();
   List items = [];
@@ -92,17 +93,17 @@ class _BottomGamePageState extends State<BottomGamePage> {
   final animationImage = ''.obs;
 
   void setupControllerObservers() {
-    ever(fruitController.winnerNumber, (winnerNum) {
+    _controllerWorkers.add(ever(fruitController.winnerNumber, (winnerNum) {
       final int winner = int.tryParse(winnerNum.toString()) ?? 0;
       if (winner > 0) {
         debugPrint('🏆 FruitGame winner received => $winner');
       }
       if (mounted) setState(() {});
-    });
+    }));
 
     DateTime? lastRoundStartAt;
 
-    ever(fruitController.remainingTime, (int rawTime) {
+    _controllerWorkers.add(ever(fruitController.remainingTime, (int rawTime) {
       final int time = rawTime.clamp(0, gameRoundSeconds).toInt();
       debugPrint('⏱️ FruitGame remainingTime => $time');
 
@@ -149,20 +150,20 @@ class _BottomGamePageState extends State<BottomGamePage> {
       }
 
       if (mounted) setState(() {});
-    });
+    }));
 
-    ever(fruitController.amount1, (_) {
+    _controllerWorkers.add(ever(fruitController.amount1, (_) {
       if (mounted) setState(() {});
-    });
-    ever(fruitController.amount2, (_) {
+    }));
+    _controllerWorkers.add(ever(fruitController.amount2, (_) {
       if (mounted) setState(() {});
-    });
-    ever(fruitController.amount3, (_) {
+    }));
+    _controllerWorkers.add(ever(fruitController.amount3, (_) {
       if (mounted) setState(() {});
-    });
-    ever(fruitController.activeUsers, (_) {
+    }));
+    _controllerWorkers.add(ever(fruitController.activeUsers, (_) {
       if (mounted) setState(() {});
-    });
+    }));
   }
 
 
@@ -203,6 +204,10 @@ class _BottomGamePageState extends State<BottomGamePage> {
   @override
   void dispose() {
     _loadingTimer?.cancel();
+    for (final Worker worker in _controllerWorkers) {
+      worker.dispose();
+    }
+    _controllerWorkers.clear();
     fruitController.stopBgm();
     fruitController.leaveGame(
       userId: authController.userProfile.value.user!.id!.toInt(),

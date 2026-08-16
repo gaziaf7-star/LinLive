@@ -5,16 +5,13 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'package:meetlivepro/app/localization/app_language_page.dart';
 import 'package:meetlivepro/app/localization/app_localizer.dart';
-import 'package:meetlivepro/app/modules/appmenu/views/widgets/imageColor.dart';
 import 'package:meetlivepro/app/modules/auth/views/community_guidelines_page.dart';
 import 'package:meetlivepro/app/modules/auth/views/privacy_policy_page.dart';
 import 'package:meetlivepro/app/modules/auth/views/user_agreement_page.dart';
 import 'package:meetlivepro/app/modules/setting/views/widgets/about_page.dart';
-
 import 'package:meetlivepro/app/modules/setting/views/widgets/account_dettection_page.dart';
 import 'package:meetlivepro/app/modules/setting/views/widgets/account_safety_page.dart';
 
-import '../../../../constants/layout_constant.dart';
 import '../../../../constants/name_constants.dart';
 
 import '../../notification/views/notification_view.dart';
@@ -26,6 +23,13 @@ class SettingController extends GetxController {}
 
 class SettingView extends GetView<SettingController> {
   const SettingView({Key? key}) : super(key: key);
+
+  static const Color _pageBg = Color(0xffF5F5F5);
+  static const Color _dividerColor = Color(0xffEEEEEE);
+  static const Color _arrowColor = Color(0xffC7C9CE);
+  static const Color _textColor = Color(0xff252525);
+  static const Color _yellowStart = Color(0xffFFEE2E);
+  static const Color _yellowEnd = Color(0xffFFBD13);
 
   void _showToast(String message) {
     Fluttertoast.showToast(
@@ -41,71 +45,66 @@ class SettingView extends GetView<SettingController> {
   void _showLogoutDialog() {
     Get.dialog(
       Dialog(
+        backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(18),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+          padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                height: 58,
                 width: 58,
+                height: 58,
                 decoration: const BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: LinearGradient(
-                    colors: [
-                      Color(0xff8A4CF7),
-                      Color(0xffB460F0),
-                    ],
+                    colors: [_yellowStart, _yellowEnd],
                   ),
                 ),
                 child: const Icon(
                   Icons.logout_rounded,
-                  color: Colors.white,
-                  size: 30,
+                  color: Color(0xff2F2F2F),
+                  size: 29,
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               Text(
                 ('Log out?').appTr,
-                style: GoogleFonts.poppins(
-                  fontSize: 19,
+                style: GoogleFonts.lato(
+                  fontSize: 20,
                   fontWeight: FontWeight.w800,
-                  color: const Color(0xff2d2340),
+                  color: _textColor,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
                 ('Are you sure you want to log out from your account?').appTr,
                 textAlign: TextAlign.center,
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xff6f657d),
-                  height: 1.5,
+                style: GoogleFonts.lato(
+                  fontSize: 14,
+                  height: 1.45,
+                  color: const Color(0xff777777),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 22),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
                       onPressed: () => Get.back(),
                       style: OutlinedButton.styleFrom(
-                        side: BorderSide(
-                          color: Colors.grey.withOpacity(0.35),
-                        ),
+                        foregroundColor: _textColor,
+                        side: const BorderSide(color: Color(0xffDDDDDD)),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(24),
                         ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                       child: Text(
                         ('Cancel').appTr,
-                        style: GoogleFonts.poppins(
-                          color: const Color(0xff6f657d),
+                        style: GoogleFonts.lato(
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -113,24 +112,33 @@ class SettingView extends GetView<SettingController> {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Get.back();
-                        Get.find<RegisterstepsController>().tryToSignOut();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xff8A4CF7),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(24),
+                        gradient: const LinearGradient(
+                          colors: [_yellowStart, _yellowEnd],
                         ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      child: Text(
-                        ('Log out').appTr,
-                        style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Get.back();
+                          Get.find<RegisterstepsController>().tryToSignOut();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          elevation: 0,
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          foregroundColor: _textColor,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                        ),
+                        child: Text(
+                          ('Log out').appTr,
+                          style: GoogleFonts.lato(
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
                     ),
@@ -151,422 +159,302 @@ class SettingView extends GetView<SettingController> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xfffaf7ff),
-      extendBodyBehindAppBar: false,
+      backgroundColor: _pageBg,
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: Colors.transparent,
-        flexibleSpace: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                kAppColor2,
-                kAppColor1,
-              ],
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-            ),
-          ),
-        ),
+        scrolledUnderElevation: 0,
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
         centerTitle: true,
+        toolbarHeight: 66,
+        leadingWidth: 70,
         leading: IconButton(
           onPressed: () => Get.back(),
+          splashRadius: 24,
           icon: const Icon(
-            Icons.arrow_back_ios_new,
-            color: Colors.white,
+            Icons.arrow_back_ios_new_rounded,
+            color: _textColor,
+            size: 30,
           ),
         ),
         title: Text(
           ('Settings').appTr,
           style: GoogleFonts.lato(
-            fontSize: kHeight * 0.022,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
+            fontSize: 26,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xff152019),
+          ),
+        ),
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(1),
+          child: Divider(
+            height: 1,
+            thickness: 1,
+            color: _dividerColor,
           ),
         ),
       ),
-      body: Stack(
-        children: [
-          Container(
-            height: kHeight * 0.20,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  kAppColor2,
-                  kAppColor1,
-                  const Color(0xfffaf7ff),
-                ],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-            ),
-          ),
-          SafeArea(
-            child: ListView(
-              physics: const BouncingScrollPhysics(),
-              padding: EdgeInsets.symmetric(
-                horizontal: kWeight * 0.04,
-                vertical: kHeight * 0.018,
-              ),
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          physics: const BouncingScrollPhysics(),
+          padding: EdgeInsets.zero,
+          children: [
+            // ACCOUNT GROUP
+            _whiteGroup(
               children: [
-                _profileHeaderCard(),
-
-                SizedBox(height: kHeight * 0.018),
-
-                _sectionCard(
-                  title: ('Account').appTr,
-                  children: [
-                    _settingTile(
-                      icon: Icons.block_rounded,
-                      title: ('Block List').appTr,
-                      subtitle: ('Manage blocked users').appTr,
-                      onTap: () {
-                        Get.to(
-                          BlockListPage(),
-                          transition: Transition.fade,
-                        );
-                      },
-                    ),
-                    _settingTile(
-                      icon: Icons.password_rounded,
-                      title: ('Change Password').appTr,
-                      subtitle: ('Update your account password').appTr,
-                      onTap: () {
-                        Get.to(
-                          const LoginPassword(),
-                          transition: Transition.rightToLeft,
-                        );
-                      },
-                    ),
-                    _settingTile(
-                      icon: Icons.notifications_active_rounded,
-                      title: ('Notification').appTr,
-                      subtitle: ('View your notifications').appTr,
-                      onTap: () {
-                        Get.to(
-                          NotificationView(),
-                          transition: Transition.rightToLeft,
-                        );
-                      },
-                    ),
-                    _settingTile(
-                      icon: Icons.security_rounded,
-                      title: ('Account & Safety').appTr,
-                      subtitle: ('Safety, login and account protection').appTr,
-                      onTap: () {
-                        Get.to(
-                          AccountSafetyPage(),
-                          transition: Transition.rightToLeft,
-                        );
-                      },
-                    ),
-                  ],
+                _settingRow(
+                  icon: Icons.block_rounded,
+                  title: ('Block List').appTr,
+                  onTap: () {
+                    Get.to(
+                      BlockListPage(),
+                      transition: Transition.fade,
+                    );
+                  },
                 ),
-
-                SizedBox(height: kHeight * 0.014),
-
-                _sectionCard(
-                  title: ('Legal & Safety').appTr,
-                  children: [
-                    _settingTile(
-                      icon: Icons.privacy_tip_rounded,
-                      title: ('Privacy Policy').appTr,
-                      subtitle: ('How we collect and protect data').appTr,
-                      onTap: () {
-                        Get.to(
-                          const PrivacyPolicyPage(),
-                          transition: Transition.rightToLeft,
-                        );
-                      },
-                    ),
-                    _settingTile(
-                      icon: Icons.description_rounded,
-                      title: ('User Agreement').appTr,
-                      subtitle: ('Terms of using LinLive').appTr,
-                      onTap: () {
-                        Get.to(
-                          const UserAgreementPage(),
-                          transition: Transition.rightToLeft,
-                        );
-                      },
-                    ),
-                    _settingTile(
-                      icon: Icons.verified_user_rounded,
-                      title: ('Community Guidelines').appTr,
-                      subtitle: ('Rules for live, chat and messages').appTr,
-                      onTap: () {
-                        Get.to(
-                          const CommunityGuidelinesPage(),
-                          transition: Transition.rightToLeft,
-                        );
-                      },
-                    ),
-                    _settingTile(
-                      icon: Icons.info_rounded,
-                      title: ('About Us').appTr,
-                      subtitle: ('Learn more about LinLive').appTr,
-                      onTap: () {
-                        Get.to(
-                          const AboutUsPage(),
-                          transition: Transition.rightToLeft,
-                        );
-                      },
-                    ),
-                  ],
+                _settingRow(
+                  icon: Icons.password_rounded,
+                  title: ('Change Password').appTr,
+                  onTap: () {
+                    Get.to(
+                      const LoginPassword(),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
                 ),
-
-                SizedBox(height: kHeight * 0.014),
-
-                _sectionCard(
-                  title: ('App').appTr,
-                  children: [
-                    _settingTile(
-                      icon: Icons.language_rounded,
-                      title: 'Language'.appTr,
-                      subtitle: AppLanguageController.to.currentLanguageSubtitle,
-                      onTap: () {
-                        Get.to(
-                              () => const AppLanguagePage(),
-                          transition: Transition.rightToLeft,
-                        );
-                      },
-                    ),
-                    _settingTile(
-                      icon: Icons.cleaning_services_rounded,
-                      title: ('Clean Cache').appTr,
-                      subtitle: ('Clear temporary app data').appTr,
-                      trailingText: '100Mb',
-                      onTap: _cleanCache,
-                    ),
-                    _settingTile(
-                      icon: Icons.system_update_alt_rounded,
-                      title: ('Version').appTr,
-                      subtitle: ('Current app version').appTr,
-                      trailingText: kAppVersion,
-                      onTap: () {},
-                    ),
-                    _settingTile(
-                      icon: Icons.delete_outline_rounded,
-                      title: ('Account Deletion Request').appTr,
-                      subtitle: ('Request account and data deletion').appTr,
-                      danger: true,
-                      onTap: () {
-                        Get.to(
-                          const AccountDeletionPage(),
-                          transition: Transition.rightToLeft,
-                        );
-                      },
-                    ),
-                  ],
+                _settingRow(
+                  icon: Icons.notifications_rounded,
+                  title: ('Notification').appTr,
+                  onTap: () {
+                    Get.to(
+                      NotificationView(),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
                 ),
-
-                SizedBox(height: kHeight * 0.032),
-
-                _logoutButton(),
-
-                SizedBox(height: kHeight * 0.05),
+                _settingRow(
+                  icon: Icons.security_rounded,
+                  title: ('Account & Safety').appTr,
+                  onTap: () {
+                    Get.to(
+                      AccountSafetyPage(),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
+                ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
 
-  Widget _profileHeaderCard() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          colors: [
-            Colors.white.withOpacity(0.96),
-            const Color(0xfff7edff),
+            _sectionGap(),
+
+            // LEGAL GROUP
+            _whiteGroup(
+              children: [
+                _settingRow(
+                  icon: Icons.privacy_tip_rounded,
+                  title: ('Privacy Policy').appTr,
+                  onTap: () {
+                    Get.to(
+                      const PrivacyPolicyPage(),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
+                ),
+                _settingRow(
+                  icon: Icons.description_rounded,
+                  title: ('User Agreement').appTr,
+                  onTap: () {
+                    Get.to(
+                      const UserAgreementPage(),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
+                ),
+                _settingRow(
+                  icon: Icons.verified_user_rounded,
+                  title: ('Community Guidelines').appTr,
+                  onTap: () {
+                    Get.to(
+                      const CommunityGuidelinesPage(),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
+                ),
+              ],
+            ),
+
+            _sectionGap(),
+
+            // APP / INFO GROUP
+            _whiteGroup(
+              children: [
+                _settingRow(
+                  icon: Icons.info_outline_rounded,
+                  title: ('About Us').appTr,
+                  onTap: () {
+                    Get.to(
+                      const AboutUsPage(),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
+                ),
+                _settingRow(
+                  icon: Icons.language_rounded,
+                  title: ('Language').appTr,
+                  trailingText:
+                  AppLanguageController.to.currentLanguageSubtitle,
+                  onTap: () {
+                    Get.to(
+                          () => const AppLanguagePage(),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
+                ),
+                _settingRow(
+                  icon: Icons.cleaning_services_rounded,
+                  title: ('Clean Cache').appTr,
+                  trailingText: '100Mb',
+                  onTap: _cleanCache,
+                ),
+                _settingRow(
+                  icon: Icons.delete_outline_rounded,
+                  title: ('Account Deletion Request').appTr,
+                  danger: true,
+                  onTap: () {
+                    Get.to(
+                      const AccountDeletionPage(),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 38),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 34),
+              child: _logoutButton(),
+            ),
+
+            const SizedBox(height: 22),
+
+            Center(
+              child: Text(
+                '_Version:$kAppVersion',
+                style: GoogleFonts.lato(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w400,
+                  color: const Color(0xffA7A7A7),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 54),
           ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xff8A4CF7).withOpacity(0.16),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
-          ),
-        ],
-        border: Border.all(
-          color: Colors.white.withOpacity(0.75),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            height: 54,
-            width: 54,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [
-                  Color(0xff8A4CF7),
-                  Color(0xffB460F0),
-                ],
-              ),
-            ),
-            child: const Icon(
-              Icons.settings_rounded,
-              color: Colors.white,
-              size: 28,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  ('App Settings').appTr,
-                  style: GoogleFonts.poppins(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xff2d2340),
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  ('Manage privacy, safety and app preferences').appTr,
-                  style: GoogleFonts.poppins(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w500,
-                    color: const Color(0xff6f657d),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
 
-  Widget _sectionCard({
-    required String title,
+  Widget _whiteGroup({
     required List<Widget> children,
   }) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: const Color(0xff8A4CF7).withOpacity(0.08),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.035),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
+      color: Colors.white,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-            child: Text(
-              title,
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                color: const Color(0xff8A4CF7),
+          for (int i = 0; i < children.length; i++) ...[
+            children[i],
+            if (i != children.length - 1)
+              const Divider(
+                height: 1,
+                thickness: 1,
+                indent: 0,
+                endIndent: 0,
+                color: _dividerColor,
               ),
-            ),
-          ),
-          ...children,
+          ],
         ],
       ),
     );
   }
 
-  Widget _settingTile({
+  Widget _sectionGap() {
+    return const SizedBox(height: 14);
+  }
+
+  Widget _settingRow({
     required IconData icon,
     required String title,
-    required String subtitle,
     required VoidCallback onTap,
     String? trailingText,
     bool danger = false,
   }) {
-    final Color mainColor =
-    danger ? const Color(0xffff5f7e) : const Color(0xff8A4CF7);
+    final Color rowColor =
+    danger ? const Color(0xffD94B4B) : const Color(0xff353535);
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 11),
-        child: Row(
-          children: [
-            Container(
-              height: 42,
-              width: 42,
-              decoration: BoxDecoration(
-                color: mainColor.withOpacity(0.10),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(
-                icon,
-                color: mainColor,
-                size: 22,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: GoogleFonts.poppins(
-                      fontSize: 14.2,
-                      fontWeight: FontWeight.w700,
-                      color: danger
-                          ? const Color(0xffff5f7e)
-                          : const Color(0xff2d2340),
+    return Material(
+      color: Colors.white,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: 76,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 48,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Icon(
+                      icon,
+                      size: 25,
+                      color: rowColor,
                     ),
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
+                ),
+                const SizedBox(width: 2),
+                Expanded(
+                  child: Text(
+                    title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.poppins(
-                      fontSize: 11.8,
+                    style: GoogleFonts.lato(
+                      fontSize: 17,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xff8a8198),
+                      color: rowColor,
+                    ),
+                  ),
+                ),
+                if (trailingText != null) ...[
+                  const SizedBox(width: 10),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 115),
+                    child: Text(
+                      trailingText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: GoogleFonts.lato(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: const Color(0xff9B9B9B),
+                      ),
                     ),
                   ),
                 ],
-              ),
-            ),
-            if (trailingText != null) ...[
-              const SizedBox(width: 8),
-              Text(
-                trailingText,
-                style: GoogleFonts.poppins(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xff8a8198),
+                const SizedBox(width: 10),
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 19,
+                  color: _arrowColor,
                 ),
-              ),
-            ],
-            const SizedBox(width: 8),
-            Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 14,
-              color: Colors.grey.withOpacity(0.65),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -575,32 +463,24 @@ class SettingView extends GetView<SettingController> {
   Widget _logoutButton() {
     return InkWell(
       onTap: _showLogoutDialog,
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(34),
       child: Container(
         width: double.infinity,
-        height: kHeight * 0.057,
+        height: 56,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(34),
           gradient: const LinearGradient(
-            colors: [
-              Color(0xff8A4CF7),
-              Color(0xffB460F0),
-            ],
+            colors: [_yellowStart, _yellowEnd],
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xff8A4CF7).withOpacity(0.25),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
-            ),
-          ],
         ),
         child: Text(
-          ('Log out').appTr,
-          style: GoogleFonts.poppins(
-            color: Colors.white,
-            fontSize: 15.5,
+          ('Logout').appTr,
+          style: GoogleFonts.lato(
+            color: const Color(0xff3A3A3A),
+            fontSize: 17,
             fontWeight: FontWeight.w800,
           ),
         ),

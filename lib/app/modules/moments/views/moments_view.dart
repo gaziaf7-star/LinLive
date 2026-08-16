@@ -12,7 +12,6 @@ import 'package:meetlivepro/app/modules/moments/views/widgets/create_post.dart';
 
 import 'package:shimmer/shimmer.dart';
 
-
 import '../../../../apis/api_endpoints.dart';
 import '../../../../constants/color_constants.dart';
 import '../../../../constants/constants.dart';
@@ -23,6 +22,7 @@ import '../../store/controllers/store1_controller.dart';
 import '../controllers/moments_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
+
 class MomentsView extends StatefulWidget {
   MomentsView({super.key});
 
@@ -52,10 +52,7 @@ class _MomentsViewState extends State<MomentsView>
       return;
     }
 
-    Get.to(
-      createPostView(),
-      transition: Transition.rightToLeftWithFade,
-    );
+    Get.to(createPostView(), transition: Transition.rightToLeftWithFade);
   }
 
   @override
@@ -65,27 +62,21 @@ class _MomentsViewState extends State<MomentsView>
 
     momentsController.getPostList();
     return Scaffold(
-      backgroundColor: kAppColor2.withOpacity(.2),
+      backgroundColor: Colors.transparent,
       body: Column(
         children: [
-
           // Post input row
-
           Container(
-
-            decoration: BoxDecoration(
-                image: DecorationImage(image: AssetImage('assets/new/Screenshot 2026-05-01 100344.png'),fit: BoxFit.cover)
-            ),
-            padding: const EdgeInsets.symmetric(
-                horizontal: 10, vertical: 10),
+            color: Colors.transparent,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
             child: Column(
               children: [
-
-                Image.asset('assets/new/momints__1_-removebg-preview.png',height: kHeight*0.13,),
+                Image.asset(
+                  'assets/new/momints__1_-removebg-preview.png',
+                  height: kHeight * 0.13,
+                ),
                 Row(
                   children: [
-
-
                     // Profile
                     Obx(() {
                       final userProfile = authController.userProfile.value;
@@ -95,7 +86,9 @@ class _MomentsViewState extends State<MomentsView>
 
                       // Only asset_histories frame, entry_histories never use here
                       final framePath =
-                          userProfile.assetHistories?.asset?.asset?.toString() ?? '';
+                          userProfile.assetHistories?.asset?.asset
+                              ?.toString() ??
+                              '';
 
                       final agencyId =
                           int.tryParse(user?.agencyId?.toString() ?? '0') ?? 0;
@@ -119,15 +112,11 @@ class _MomentsViewState extends State<MomentsView>
                       return Container(
                         height: kHeight * 0.1,
                         width: kHeight * 0.11,
-                        decoration: BoxDecoration(
+                        decoration: const BoxDecoration(
                           shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black12,
-                              blurRadius: 10,
-                              spreadRadius: 2,
-                            )
-                          ],
+                          // Keep the profile/frame clean on the page background.
+                          // No black halo/shadow.
+                          boxShadow: [],
                         ),
                         child: Stack(
                           alignment: Alignment.center,
@@ -138,12 +127,16 @@ class _MomentsViewState extends State<MomentsView>
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(100),
                                 child: CachedNetworkImage(
-                                  imageUrl: ImageHelper.getImageUrl(profileImage),
+                                  imageUrl: ImageHelper.getImageUrl(
+                                    profileImage,
+                                  ),
                                   fit: BoxFit.cover,
                                   height: 80,
                                   width: 80,
                                   placeholder: (c, u) =>
-                                  const CircularProgressIndicator(strokeWidth: 2),
+                                  const CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                   errorWidget: (c, u, e) =>
                                   const Icon(Icons.person, size: 50),
                                 ),
@@ -168,10 +161,7 @@ class _MomentsViewState extends State<MomentsView>
                               SizedBox(
                                 height: kHeight * 0.1,
                                 width: kHeight * 0.11,
-                                child: SVGAEasyPlayer(
-                                  assetsName: 'assets/svga/Frame/Agency frame.svga',
-                                  fit: BoxFit.cover,
-                                ),
+                                child: const SizedBox.shrink(),
                               ),
                           ],
                         ),
@@ -187,12 +177,14 @@ class _MomentsViewState extends State<MomentsView>
                         },
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              vertical: 12, horizontal: 16),
+                            vertical: 12,
+                            horizontal: 16,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.grey[200],
                             borderRadius: BorderRadius.circular(50),
                           ),
-                          child:  Text(
+                          child: Text(
                             ("What's on your mind?").appTr,
                             style: TextStyle(color: Colors.grey),
                           ),
@@ -203,57 +195,55 @@ class _MomentsViewState extends State<MomentsView>
 
                     IconButton(
                       style: IconButton.styleFrom(
-                          backgroundColor: Colors.green),
+                        backgroundColor: Colors.green,
+                      ),
                       onPressed: () {
                         _openCreatePost(momentsController);
                       },
-                      icon: const Icon(Icons.photo_library,
-                          color: Colors.white, size: 24),
-                    )
+                      icon: const Icon(
+                        Icons.photo_library,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
                   ],
                 ),
-                SizedBox(height: 10,)
+                SizedBox(height: 10),
               ],
             ),
           ),
-
 
           /// Post List
           Expanded(
             child: Obx(() {
               if (momentsController.isLoading.value) {
                 return ListView.builder(
-
                   itemCount: 5,
                   itemBuilder: (context, index) {
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                          color: kAppColor2.withOpacity(.2)
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
                       ),
                       child: Column(
-                        crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
                             children: [
                               Shimmer.fromColors(
                                 baseColor: Colors.grey.shade300,
-                                highlightColor:
-                                Colors.grey.shade100,
+                                highlightColor: Colors.grey.shade100,
                                 child: const CircleAvatar(
-                                    radius: 20,
-                                    backgroundColor:
-                                    Colors.white),
+                                  radius: 20,
+                                  backgroundColor: Colors.white,
+                                ),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Shimmer.fromColors(
-                                  baseColor:
-                                  Colors.grey.shade300,
-                                  highlightColor:
-                                  Colors.grey.shade100,
+                                  baseColor: Colors.grey.shade300,
+                                  highlightColor: Colors.grey.shade100,
                                   child: Container(
                                     height: 16,
                                     width: double.infinity,
@@ -266,13 +256,11 @@ class _MomentsViewState extends State<MomentsView>
                           const SizedBox(height: 10),
                           Shimmer.fromColors(
                             baseColor: Colors.grey.shade300,
-                            highlightColor:
-                            Colors.grey.shade100,
+                            highlightColor: Colors.grey.shade100,
                             child: Container(
                               height: 12,
                               width: double.infinity,
-                              margin: const EdgeInsets.only(
-                                  right: 50),
+                              margin: const EdgeInsets.only(right: 50),
                               color: Colors.white,
                             ),
                           ),
@@ -280,13 +268,10 @@ class _MomentsViewState extends State<MomentsView>
                           Row(
                             children: List.generate(3, (i) {
                               return Container(
-                                margin: const EdgeInsets.only(
-                                    right: 8),
+                                margin: const EdgeInsets.only(right: 8),
                                 child: Shimmer.fromColors(
-                                  baseColor:
-                                  Colors.grey.shade300,
-                                  highlightColor:
-                                  Colors.grey.shade100,
+                                  baseColor: Colors.grey.shade300,
+                                  highlightColor: Colors.grey.shade100,
                                   child: Container(
                                     height: 60,
                                     width: 60,
@@ -307,17 +292,14 @@ class _MomentsViewState extends State<MomentsView>
               return ListView.builder(
                 padding: EdgeInsets.zero,
                 itemCount: momentsController.postList.length,
-                itemBuilder:
-                    (BuildContext context, int postIndex) {
-                  final post =
-                  momentsController.postList[postIndex];
+                itemBuilder: (BuildContext context, int postIndex) {
+                  final post = momentsController.postList[postIndex];
                   print('Momemnt Post List $post');
                   List<String> images = [];
 
                   if (post['post'] != null &&
                       post['post'].toString().isNotEmpty) {
-                    images = List<String>.from(
-                        jsonDecode(post['post']));
+                    images = List<String>.from(jsonDecode(post['post']));
                   }
 
                   String reactionType = post['like'] == 'yes'
@@ -326,17 +308,18 @@ class _MomentsViewState extends State<MomentsView>
 
                   return Container(
                     margin: EdgeInsets.only(bottom: 8),
-                    decoration: BoxDecoration(
-                      color: kAppColor2.withOpacity(.02),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
                     ),
                     child: Column(
-                      crossAxisAlignment:
-                      CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         // Header
                         ListTile(
                           contentPadding: EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           leading: Stack(
                             clipBehavior: Clip.none,
                             alignment: Alignment.center,
@@ -348,48 +331,33 @@ class _MomentsViewState extends State<MomentsView>
                                   shape: BoxShape.circle,
                                 ),
                                 child: ClipRRect(
-                                  borderRadius:
-                                  BorderRadius.circular(
-                                      100),
+                                  borderRadius: BorderRadius.circular(100),
                                   child: CachedNetworkImage(
-                                    imageUrl:
-                                    ImageHelper.getImageUrl(
-                                        "${post['user']['profile_image']}"),
+                                    imageUrl: ImageHelper.getImageUrl(
+                                      "${post['user']['profile_image']}",
+                                    ),
                                     fit: BoxFit.cover,
                                   ),
                                 ),
                               ),
-                              if (post['user']['agency_id'] !=
-                                  null &&
-                                  post['user']['agency_id']
-                                      .toString() !=
-                                      "0" &&
+                              if (post['user']['agency_id'] != null &&
+                                  post['user']['agency_id'].toString() != "0" &&
                                   post['user']['agency_id']
                                       .toString()
                                       .isNotEmpty)
                                 SizedBox(
                                   height: 60,
                                   width: 60,
-                                  child: SVGAEasyPlayer(
-                                    assetsName:
-                                    'assets/svga/Frame/Agency frame.svga',
-                                    fit: BoxFit.cover,
-                                  ),
+                                  child: const SizedBox.shrink(),
                                 )
-                              else if (post['user'][
-                              'asset_purchase_history'] !=
+                              else if (post['user']['asset_purchase_history'] !=
                                   null &&
-                                  post['user'][
-                                  'asset_purchase_history']
-                                  ['asset'] !=
+                                  post['user']['asset_purchase_history']['asset'] !=
                                       null &&
-                                  post['user'][
-                                  'asset_purchase_history']
-                                  ['asset']['asset'] !=
+                                  post['user']['asset_purchase_history']['asset']['asset'] !=
                                       null)
                               // Check if the asset path ends with .svga
-                                (post['user']['asset_purchase_history']
-                                ['asset']['asset']
+                                (post['user']['asset_purchase_history']['asset']['asset']
                                     .toString()
                                     .endsWith('.svga'))
                                     ? SizedBox(
@@ -407,47 +375,36 @@ class _MomentsViewState extends State<MomentsView>
                                   height: kHeight * 0.07,
                                   width: kHeight * 0.07,
                                   fit: BoxFit.cover,
-                                  placeholder:
-                                      (context, url) =>
+                                  placeholder: (context, url) =>
                                       Container(
-                                        height:
-                                        kHeight * 0.12,
+                                        height: kHeight * 0.12,
                                         width: kHeight * 0.12,
-                                        decoration:
-                                        BoxDecoration(
-                                          color: kAppColor
-                                              .withOpacity(
-                                              .02),
+                                        decoration: BoxDecoration(
+                                          color: kAppColor.withOpacity(
+                                            .02,
+                                          ),
                                           borderRadius:
-                                          BorderRadius
-                                              .circular(
-                                              12),
+                                          BorderRadius.circular(12),
                                         ),
                                       ),
-                                  errorWidget: (context,
-                                      url, error) =>
+                                  errorWidget: (context, url, error) =>
                                       Container(
-                                        height:
-                                        kHeight * 0.12,
+                                        height: kHeight * 0.12,
                                         width: kHeight * 0.12,
-                                        decoration:
-                                        BoxDecoration(
-                                          color: Colors
-                                              .transparent,
+                                        decoration: BoxDecoration(
+                                          color: Colors.transparent,
                                           borderRadius:
-                                          BorderRadius
-                                              .circular(
-                                              12),
+                                          BorderRadius.circular(12),
                                         ),
                                         child: Icon(
                                           Icons.broken_image,
                                           size: 40,
-                                          color: kAppColor
-                                              .withOpacity(
-                                              .2),
+                                          color: kAppColor.withOpacity(
+                                            .2,
+                                          ),
                                         ),
                                       ),
-                                )
+                                ),
                             ],
                           ),
                           title: Text(
@@ -468,14 +425,18 @@ class _MomentsViewState extends State<MomentsView>
                                 ),
                               ),
                               SizedBox(width: 4),
-                              Icon(Icons.public,
-                                  size: 12,
-                                  color: Colors.grey.shade600),
+                              Icon(
+                                Icons.public,
+                                size: 12,
+                                color: Colors.grey.shade600,
+                              ),
                             ],
                           ),
                           trailing: IconButton(
-                            icon: Icon(Icons.more_horiz,
-                                color: Colors.grey.shade700),
+                            icon: Icon(
+                              Icons.more_horiz,
+                              color: Colors.grey.shade700,
+                            ),
                             onPressed: () {},
                           ),
                         ),
@@ -484,115 +445,113 @@ class _MomentsViewState extends State<MomentsView>
                         if (post['title'] != null)
                           Padding(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 4),
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
                             child: Text(
                               '${post['title']}',
                               style: TextStyle(
-                                  fontSize: 15,
-                                  color: Colors.black87),
+                                fontSize: 15,
+                                color: Colors.black87,
+                              ),
                             ),
                           ),
 
                         // Images - Facebook Style
-                        buildFacebookImageGrid(
-                            images, kHeight, context),
+                        buildFacebookImageGrid(images, kHeight, context),
 
                         // Reaction Count Bar
                         Padding(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                           child: Row(
-                            mainAxisAlignment:
-                            MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Row(
                                 children: [
-                                  if (post['like_count'] !=
-                                      null &&
-                                      post['like_count'] >
-                                          0) ...[
-                                    Text('👍',
-                                        style: TextStyle(
-                                            fontSize: 14)),
-                                    Text('❤️',
-                                        style: TextStyle(
-                                            fontSize: 14)),
-                                    Text('😆',
-                                        style: TextStyle(
-                                            fontSize: 14)),
+                                  if (post['like_count'] != null &&
+                                      post['like_count'] > 0) ...[
+                                    Text('👍', style: TextStyle(fontSize: 14)),
+                                    Text('❤️', style: TextStyle(fontSize: 14)),
+                                    Text('😆', style: TextStyle(fontSize: 14)),
                                     SizedBox(width: 4),
                                     Text(
                                       '${post['like_count'] ?? 0}',
                                       style: TextStyle(
-                                          color: Colors
-                                              .grey.shade700,
-                                          fontSize: 13),
+                                        color: Colors.grey.shade700,
+                                        fontSize: 13,
+                                      ),
                                     ),
                                   ],
                                 ],
                               ),
                               Text(
-                                ('${post['comments']?.length ?? 0} comments').appTr,
+                                ('${post['comments']?.length ?? 0} comments')
+                                    .appTr,
                                 style: TextStyle(
-                                    color: Colors.grey.shade700,
-                                    fontSize: 13),
+                                  color: Colors.grey.shade700,
+                                  fontSize: 13,
+                                ),
                               ),
                             ],
                           ),
                         ),
 
-                        Divider(height: 1, thickness: 1),
+                        const Divider(
+                          height: 1,
+                          thickness: .6,
+                          color: Color(0xFFEFEFEF),
+                        ),
 
                         // Action Buttons
                         Padding(
                           padding: const EdgeInsets.symmetric(
-                              vertical: 4, horizontal: 4),
+                            vertical: 4,
+                            horizontal: 4,
+                          ),
                           child: Row(
-                            mainAxisAlignment:
-                            MainAxisAlignment.spaceAround,
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
                             children: [
                               // Like/Reaction Button
                               Expanded(
                                 child: Obx(() {
                                   final post = momentsController
-                                      .postList[
-                                  postIndex]; // IMPORTANT!!
+                                      .postList[postIndex]; // IMPORTANT!!
 
-                                  String currentReaction =
-                                  post['like'] == 'yes'
-                                      ? (post['reaction'] ??
-                                      'like')
+                                  String currentReaction = post['like'] == 'yes'
+                                      ? (post['reaction'] ?? 'like')
                                       : 'none';
 
                                   return TextButton.icon(
                                     onPressed: () {
                                       _showReactionPicker(
-                                          context,
-                                          postIndex,
-                                          momentsController);
+                                        context,
+                                        postIndex,
+                                        momentsController,
+                                      );
                                     },
                                     onLongPress: () {
                                       _showReactionPicker(
-                                          context,
-                                          postIndex,
-                                          momentsController);
+                                        context,
+                                        postIndex,
+                                        momentsController,
+                                      );
                                     },
                                     icon: Icon(
-                                      _getReactionIcon(
-                                          currentReaction),
+                                      _getReactionIcon(currentReaction),
                                       size: 22,
-                                      color: _getReactionColor(
-                                          currentReaction),
+                                      color: _getReactionColor(currentReaction),
                                     ),
                                     label: Text(
-                                      _getReactionText(
-                                          currentReaction),
+                                      _getReactionText(currentReaction),
                                       style: TextStyle(
                                         color: _getReactionColor(
-                                            currentReaction),
+                                          currentReaction,
+                                        ),
                                         fontSize: 14,
-                                        fontWeight:
-                                        FontWeight.w600,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
                                   );
@@ -603,22 +562,19 @@ class _MomentsViewState extends State<MomentsView>
                               Expanded(
                                 child: TextButton.icon(
                                   onPressed: () {
-                                    _openCommentSheet(
-                                        context, postIndex);
+                                    _openCommentSheet(context, postIndex);
                                   },
                                   icon: Icon(
-                                      Icons.chat_bubble_outline,
-                                      size: 22,
-                                      color:
-                                      Colors.grey.shade700),
+                                    Icons.chat_bubble_outline,
+                                    size: 22,
+                                    color: Colors.grey.shade700,
+                                  ),
                                   label: Text(
                                     ('Comment').appTr,
                                     style: TextStyle(
-                                      color:
-                                      Colors.grey.shade700,
+                                      color: Colors.grey.shade700,
                                       fontSize: 14,
-                                      fontWeight:
-                                      FontWeight.w600,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ),
@@ -629,18 +585,16 @@ class _MomentsViewState extends State<MomentsView>
                                 child: TextButton.icon(
                                   onPressed: () {},
                                   icon: Icon(
-                                      Icons.share_outlined,
-                                      size: 22,
-                                      color:
-                                      Colors.grey.shade700),
+                                    Icons.share_outlined,
+                                    size: 22,
+                                    color: Colors.grey.shade700,
+                                  ),
                                   label: Text(
                                     ('Share').appTr,
                                     style: TextStyle(
-                                      color:
-                                      Colors.grey.shade700,
+                                      color: Colors.grey.shade700,
                                       fontSize: 14,
-                                      fontWeight:
-                                      FontWeight.w600,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                 ),
@@ -654,7 +608,7 @@ class _MomentsViewState extends State<MomentsView>
                 },
               );
             }),
-          )
+          ),
         ],
       ),
     );
@@ -668,8 +622,6 @@ Widget buildFacebookImageGrid(
     BuildContext context,
     ) {
   if (images.isEmpty) return SizedBox.shrink();
-
-
 
   // ---------------- SINGLE IMAGE ----------------
   if (images.length == 1) {
@@ -695,7 +647,6 @@ Widget buildFacebookImageGrid(
         children: [
           Expanded(
             child: GestureDetector(
-
               child: ClipRRect(
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(12),
@@ -712,7 +663,6 @@ Widget buildFacebookImageGrid(
           SizedBox(width: 2),
           Expanded(
             child: GestureDetector(
-
               child: ClipRRect(
                 borderRadius: BorderRadius.only(
                   topRight: Radius.circular(12),
@@ -740,7 +690,6 @@ Widget buildFacebookImageGrid(
           Expanded(
             flex: 2,
             child: GestureDetector(
-
               child: ClipRRect(
                 borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(12),
@@ -760,7 +709,6 @@ Widget buildFacebookImageGrid(
             child: Column(
               children: [
                 GestureDetector(
-
                   child: ClipRRect(
                     borderRadius: BorderRadius.only(
                       topRight: Radius.circular(12),
@@ -774,7 +722,6 @@ Widget buildFacebookImageGrid(
                 ),
                 SizedBox(height: 2),
                 GestureDetector(
-
                   child: ClipRRect(
                     borderRadius: BorderRadius.only(
                       bottomRight: Radius.circular(12),
@@ -803,11 +750,8 @@ Widget buildFacebookImageGrid(
           children: [
             Expanded(
               child: GestureDetector(
-
                 child: ClipRRect(
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(12),
-                  ),
+                  borderRadius: BorderRadius.only(topLeft: Radius.circular(12)),
                   child: CachedNetworkImage(
                     imageUrl: ImageHelper.getImageUrl(images[0]),
                     fit: BoxFit.cover,
@@ -819,7 +763,6 @@ Widget buildFacebookImageGrid(
             SizedBox(width: 2),
             Expanded(
               child: GestureDetector(
-
                 child: ClipRRect(
                   borderRadius: BorderRadius.only(
                     topRight: Radius.circular(12),
@@ -839,7 +782,6 @@ Widget buildFacebookImageGrid(
           children: [
             Expanded(
               child: GestureDetector(
-
                 child: ClipRRect(
                   borderRadius: BorderRadius.only(
                     bottomLeft: Radius.circular(12),
@@ -855,7 +797,6 @@ Widget buildFacebookImageGrid(
             SizedBox(width: 2),
             Expanded(
               child: GestureDetector(
-
                 child: Stack(
                   children: [
                     ClipRRect(
@@ -944,7 +885,10 @@ Widget buildFacebookReactions(
 
 // Reaction Picker Dialog
 void _showReactionPicker(
-    BuildContext context, int postIndex, MomentsController momentsController) {
+    BuildContext context,
+    int postIndex,
+    MomentsController momentsController,
+    ) {
   showDialog(
     context: context,
     barrierColor: Colors.black12,
@@ -971,17 +915,47 @@ void _showReactionPicker(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               _reactionButton(
-                  '👍', 'like', postIndex, context, momentsController),
+                '👍',
+                'like',
+                postIndex,
+                context,
+                momentsController,
+              ),
               _reactionButton(
-                  '❤️', 'love', postIndex, context, momentsController),
+                '❤️',
+                'love',
+                postIndex,
+                context,
+                momentsController,
+              ),
               _reactionButton(
-                  '😆', 'haha', postIndex, context, momentsController),
+                '😆',
+                'haha',
+                postIndex,
+                context,
+                momentsController,
+              ),
               _reactionButton(
-                  '😮', 'wow', postIndex, context, momentsController),
+                '😮',
+                'wow',
+                postIndex,
+                context,
+                momentsController,
+              ),
               _reactionButton(
-                  '😢', 'sad', postIndex, context, momentsController),
+                '😢',
+                'sad',
+                postIndex,
+                context,
+                momentsController,
+              ),
               _reactionButton(
-                  '😡', 'angry', postIndex, context, momentsController),
+                '😡',
+                'angry',
+                postIndex,
+                context,
+                momentsController,
+              ),
             ],
           ),
         ),
@@ -1011,10 +985,7 @@ Widget _reactionButton(
     },
     child: Container(
       padding: EdgeInsets.all(8),
-      child: Text(
-        emoji,
-        style: TextStyle(fontSize: 32),
-      ),
+      child: Text(emoji, style: TextStyle(fontSize: 32)),
     ),
   );
 }
@@ -1135,10 +1106,7 @@ Widget buildFacebookPostCard(
           ),
           subtitle: Text(
             ('Just now').appTr,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
           trailing: IconButton(
             icon: Icon(Icons.more_horiz, color: Colors.grey.shade700),
@@ -1178,7 +1146,8 @@ Widget buildFacebookPostCard(
                 ],
               ),
               Text(
-                ('${post['comments']?.length ?? 0} comments • ${post['share_count'] ?? 0} shares').appTr,
+                ('${post['comments']?.length ?? 0} comments • ${post['share_count'] ?? 0} shares')
+                    .appTr,
                 style: TextStyle(color: Colors.grey.shade700, fontSize: 14),
               ),
             ],
@@ -1209,14 +1178,18 @@ Widget buildFacebookPostCard(
                   onPressed: () {
                     // Open comment bottom sheet
                   },
-                  icon: Icon(Icons.chat_bubble_outline,
-                      size: 22, color: Colors.grey.shade700),
+                  icon: Icon(
+                    Icons.chat_bubble_outline,
+                    size: 22,
+                    color: Colors.grey.shade700,
+                  ),
                   label: Text(
                     ('Comment').appTr,
                     style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600),
+                      color: Colors.grey.shade700,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
@@ -1225,14 +1198,18 @@ Widget buildFacebookPostCard(
               Expanded(
                 child: TextButton.icon(
                   onPressed: () {},
-                  icon: Icon(Icons.share_outlined,
-                      size: 22, color: Colors.grey.shade700),
+                  icon: Icon(
+                    Icons.share_outlined,
+                    size: 22,
+                    color: Colors.grey.shade700,
+                  ),
                   label: Text(
                     ('Share').appTr,
                     style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600),
+                      color: Colors.grey.shade700,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
@@ -1272,17 +1249,11 @@ void _openCommentSheet(BuildContext context, int postIndex) {
             children: [
               Text(
                 ("Comments").appTr,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               Text(
                 '${momentsController.postList[postIndex]['comments']?.length ?? 0}',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey.shade600,
-                ),
+                style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
               ),
             ],
           ),
@@ -1300,8 +1271,11 @@ void _openCommentSheet(BuildContext context, int postIndex) {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.chat_bubble_outline,
-                          size: 60, color: Colors.grey.shade300),
+                      Icon(
+                        Icons.chat_bubble_outline,
+                        size: 60,
+                        color: Colors.grey.shade300,
+                      ),
                       SizedBox(height: 10),
                       Text(
                         ('No comments yet').appTr,
@@ -1338,23 +1312,20 @@ void _openCommentSheet(BuildContext context, int postIndex) {
                             Container(
                               height: 40,
                               width: 40,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                              ),
+                              decoration: BoxDecoration(shape: BoxShape.circle),
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(100),
                                 child: CachedNetworkImage(
                                   imageUrl: ImageHelper.getImageUrl(
-                                      "${comments[index]['user']['profile_image']}"),
+                                    "${comments[index]['user']['profile_image']}",
+                                  ),
                                   fit: BoxFit.cover,
                                 ),
                               ),
                             ),
-                            if (comments[index]['user']
-                            ['asset_purchase_history'] !=
+                            if (comments[index]['user']['asset_purchase_history'] !=
                                 null &&
-                                comments[index]['user']
-                                ['asset_purchase_history']['asset'] !=
+                                comments[index]['user']['asset_purchase_history']['asset'] !=
                                     null)
                               Container(
                                 height: 50,
@@ -1364,7 +1335,8 @@ void _openCommentSheet(BuildContext context, int postIndex) {
                                   image: DecorationImage(
                                     image: NetworkImage(
                                       ImageHelper.getImageUrl(
-                                          "${comments[index]['user']['asset_purchase_history']['asset']['asset']}"),
+                                        "${comments[index]['user']['asset_purchase_history']['asset']['asset']}",
+                                      ),
                                     ),
                                     fit: BoxFit.cover,
                                   ),
@@ -1460,7 +1432,8 @@ void _openCommentSheet(BuildContext context, int postIndex) {
                   radius: 18,
                   backgroundImage: CachedNetworkImageProvider(
                     ImageHelper.getImageUrl(
-                        "${authController.userProfile.value.user?.profileImage ?? "default.png"}"),
+                      "${authController.userProfile.value.user?.profileImage ?? "default.png"}",
+                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -1478,7 +1451,9 @@ void _openCommentSheet(BuildContext context, int postIndex) {
                         borderSide: BorderSide.none,
                       ),
                       contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                     ),
                     maxLines: null,
                   ),
@@ -1503,7 +1478,7 @@ void _openCommentSheet(BuildContext context, int postIndex) {
                       }
                     },
                   ),
-                )
+                ),
               ],
             ),
           ),

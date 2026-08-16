@@ -29,12 +29,24 @@ class LiveCommentController extends GetxController {
     final int roomGeneration = owner.roomSessionGeneration;
     final int requestSequence = ++_sendRequestSequence;
 
+    liveLog('[COMMENT][CONTROLLER_ENTER] room=$targetStreamId user=$userId');
+    if (comment.trim().isEmpty) {
+      liveLog('[COMMENT][UI_BLOCKED] reason=empty');
+      return;
+    }
+    if (targetStreamId <= 0 || userId <= 0) {
+      liveLog('[COMMENT][UI_BLOCKED] reason=no_stream');
+      Fluttertoast.showToast(msg: ('Live room not ready').appTr);
+      return;
+    }
+
     try {
       commentSending.value = true;
       final url = addComment(targetStreamId, userId);
 
       liveLog('Comment URL: $url');
       liveLog('Comment user: $userId stream: $targetStreamId');
+      liveLog('[COMMENT][API_START]');
 
       final response = await owner.dio.post(
         url,
@@ -46,12 +58,18 @@ class LiveCommentController extends GetxController {
           },
         ),
       );
+      liveLog('[COMMENT][API_DONE] status=${response.statusCode}');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        // The WebSocket echo remains the sole insertion path. A successful
-        // REST response must never optimistically add a duplicate comment.
         if (roomGeneration == owner.roomSessionGeneration &&
             owner.acceptsRoomMutation(targetStreamId)) {
+          owner.websocketController.addSentCommentLocally(
+            livestreamId: targetStreamId,
+            userId: userId,
+            comment: comment,
+            user: owner.authController.userProfile.value.user?.toJson() ??
+                <String, dynamic>{'id': userId},
+          );
           liveLog('Comment added successfully');
         } else {
           liveLog(

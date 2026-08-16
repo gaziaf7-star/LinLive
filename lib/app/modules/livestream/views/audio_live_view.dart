@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -34,11 +35,15 @@ import '../../moments/controllers/moments_controller.dart';
 import '../../ranking/views/allrank.dart';
 import '../utils/audio_room_performance_layers.dart';
 import '../utils/battery_optimizer.dart';
+import '../utils/vip_privileges.dart';
+import '../endLive/endLive.dart';
 
 import '../widgets/GlobalLuckyBagBanner.dart';
 import '../widgets/GlobalLuckyWinBanner.dart';
 import '../widgets/LiveProfile_AppBar.dart';
 import '../widgets/LiveView_Circle_Container.dart';
+import '../widgets/live_room_setting_page.dart';
+import '../widgets/speaking_wave.dart';
 
 import '../widgets/RedPacketLiveOverlay.dart';
 
@@ -293,6 +298,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
   bool _isLiveMinimized = false;
   bool _isLiveExiting = false;
+  bool _backNavigationPending = false;
 
   /// Host normal back/exit hole live active thakbe.
   /// Dispose e offline/remove/end API call block korar jonno ei flag.
@@ -441,7 +447,9 @@ class _AudioLiveViewState extends State<AudioLiveView>
   final Set<int> _speakingUserIds = <int>{};
   final Map<int, int> _speakingUntilMs = <int, int>{};
   Timer? _speakingExpiryTimer;
-  static const int _speakingVolumeThreshold = 8;
+  static const int _speakingStartVolumeThreshold = 8;
+  static const int _speakingStopVolumeThreshold = 4;
+  static const int _speakingSilenceHoldMs = 1200;
 
   int _normalizeAgoraUid(int uid) {
     /// Agora local user-er jonno kichu case-e uid 0 aste pare.
@@ -1299,13 +1307,12 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
     if (isSpeaking) {
       _speakingUntilMs[userId] =
-          DateTime.now().millisecondsSinceEpoch + 1200;
+          DateTime.now().millisecondsSinceEpoch + _speakingSilenceHoldMs;
       _ensureSpeakingExpiryTimer();
 
       if (!alreadySpeaking) {
         _speakingUserIds.add(userId);
         _updateLiveCallSpeakingStatus(userId: userId, isSpeaking: true);
-        _scheduleUIUpdate();
       }
     } else {
       _speakingUntilMs.remove(userId);
@@ -1313,38 +1320,60 @@ class _AudioLiveViewState extends State<AudioLiveView>
       if (alreadySpeaking) {
         _speakingUserIds.remove(userId);
         _updateLiveCallSpeakingStatus(userId: userId, isSpeaking: false);
-        _scheduleUIUpdate();
       }
     }
   }
 
+  /// Fast-on/slow-off speaking detection for Agora's 600 ms volume samples.
+  /// A meaningful first sample starts immediately. Once active, lower voice
+  /// energy keeps the wave alive and silence is handled by the single shared
+  /// expiry timer instead of toggling false on every quiet callback.
+  void _handleSpeakingVolumeSample({required int uid, required int volume}) {
+    final int userId = _normalizeAgoraUid(uid);
+    if (userId == 0) return;
+    // Audience members are presence-only. Keep VAD state bounded to accepted
+    // publishers represented by the canonical caller/seat collection.
+    if (websocketController.canonicalSeatForUser(userId) <= 0) return;
+
+    final bool alreadySpeaking = _speakingUserIds.contains(userId);
+    final int threshold = alreadySpeaking
+        ? _speakingStopVolumeThreshold
+        : _speakingStartVolumeThreshold;
+
+    if (volume >= threshold) {
+      _setSpeakingStatus(uid: userId, isSpeaking: true);
+    }
+    // A quiet sample intentionally does not force false. The existing single
+    // expiry timer stops the wave only after sustained silence.
+  }
+
   void _ensureSpeakingExpiryTimer() {
     if (_speakingExpiryTimer?.isActive == true) return;
-    _speakingExpiryTimer = Timer.periodic(
-      const Duration(milliseconds: 250),
-      (timer) {
-        if (!mounted || _speakingUntilMs.isEmpty) {
-          timer.cancel();
-          _speakingExpiryTimer = null;
-          return;
-        }
+    _speakingExpiryTimer = Timer.periodic(const Duration(milliseconds: 250), (
+        timer,
+        ) {
+      if (!mounted || _speakingUntilMs.isEmpty) {
+        timer.cancel();
+        _speakingExpiryTimer = null;
+        return;
+      }
 
-        final nowMs = DateTime.now().millisecondsSinceEpoch;
-        final expired = _speakingUntilMs.entries
-            .where((entry) => entry.value <= nowMs)
-            .map((entry) => entry.key)
-            .toList(growable: false);
-        for (final userId in expired) {
-          _setSpeakingStatus(uid: userId, isSpeaking: false);
-        }
-      },
-    );
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final expired = _speakingUntilMs.entries
+          .where((entry) => entry.value <= nowMs)
+          .map((entry) => entry.key)
+          .toList(growable: false);
+      for (final userId in expired) {
+        _setSpeakingStatus(uid: userId, isSpeaking: false);
+      }
+    });
   }
 
   void _updateLiveCallSpeakingStatus({
     required int userId,
     required bool isSpeaking,
   }) {
+    websocketController.setSpeakingUser(userId, isSpeaking);
     final index = websocketController.liveCallList.indexWhere((call) {
       final callerId = call['caller_id'];
       final uid = call['user']?['id'] ?? callerId;
@@ -1352,9 +1381,8 @@ class _AudioLiveViewState extends State<AudioLiveView>
     });
 
     if (index != -1) {
-      // Keep the speaking flag local and let the debounced parent setState
-      // repaint the room. Refreshing the whole RxList every volume callback
-      // causes heavy rebuilds and live-room jank.
+      // Preserve the flag in room snapshots, but the per-user Rx map above
+      // updates only the affected seat instead of refreshing the entire list.
       websocketController.liveCallList[index]['is_speaking'] = isSpeaking;
     }
   }
@@ -1458,6 +1486,10 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
   Offset _musicPanelOffset = Offset.zero;
   bool _musicPanelDragging = false;
+  bool _musicPanelExpanded = false;
+  final ValueNotifier<Offset> _musicMiniOffset =
+  ValueNotifier<Offset>(Offset.zero);
+  bool _musicMiniDragging = false;
 
   YoutubePlayerController? _youtubeController;
   String _loadedYoutubeVideoId = '';
@@ -1968,8 +2000,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
           final int uid = _normalizeAgoraUid(speaker.uid ?? 0);
           final int volume = speaker.volume ?? 0;
           if (uid == 0) continue;
-          final bool speaking = volume >= _speakingVolumeThreshold;
-          _setSpeakingStatus(uid: uid, isSpeaking: speaking);
+          _handleSpeakingVolumeSample(uid: uid, volume: volume);
           if (uid ==
               (authController.userProfile.value.user?.id?.toInt() ?? 0)) {
             localSpeakingSeen = true;
@@ -1980,10 +2011,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
           final int myId =
               authController.userProfile.value.user?.id?.toInt() ?? 0;
           if (myId > 0) {
-            _setSpeakingStatus(
-              uid: myId,
-              isSpeaking: totalVolume >= _speakingVolumeThreshold,
-            );
+            _handleSpeakingVolumeSample(uid: myId, volume: totalVolume);
           }
         }
       },
@@ -2222,8 +2250,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
     _postResumeAudioRecoveryTimer?.cancel();
     _postResumeAudioRecoveryConfirmTimer?.cancel();
 
-    final bool hardRestart =
-        interruptionDuration.inMilliseconds >= 700;
+    final bool hardRestart = interruptionDuration.inMilliseconds >= 700;
 
     // Recover before slow room/list APIs. This makes a seated caller audible as
     // soon as WhatsApp/Meet releases the microphone.
@@ -2393,8 +2420,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
   }
 
   void _configureContinuousAgoraTokenRenewal(int streamId) {
-    final int userId =
-        authController.userProfile.value.user?.id?.toInt() ?? 0;
+    final int userId = authController.userProfile.value.user?.id?.toInt() ?? 0;
     final String channelName = widget.channelName.trim();
     if (streamId <= 0 || userId <= 0 || channelName.isEmpty) {
       liveLog('⚠️ Agora token renewal skipped: invalid room/user/channel');
@@ -2421,10 +2447,12 @@ class _AudioLiveViewState extends State<AudioLiveView>
     final tokenController = liveController.agoraTokenController;
     int initialExpiresIn = 3600;
     try {
-      final Map<String, dynamic> currentPayload =
-      Map<String, dynamic>.from(tokenController.agoraToken);
-      final String responseChannel =
-      tokenController.getChannelNameStringFrom(currentPayload).trim();
+      final Map<String, dynamic> currentPayload = Map<String, dynamic>.from(
+        tokenController.agoraToken,
+      );
+      final String responseChannel = tokenController
+          .getChannelNameStringFrom(currentPayload)
+          .trim();
       final int responseUid = tokenController.getUidIntFrom(currentPayload);
       if ((responseChannel.isEmpty || responseChannel == channelName) &&
           (responseUid == 0 || responseUid == userId)) {
@@ -2445,8 +2473,8 @@ class _AudioLiveViewState extends State<AudioLiveView>
             _effectiveBroadcaster || _shouldPublishCurrentUserMicrophone();
         final int currentPkId = liveController.currentPkId.value;
 
-        final Map<String, dynamic>? payload =
-        await tokenController.requestAgoraToken(
+        final Map<String, dynamic>? payload = await tokenController
+            .requestAgoraToken(
           isBroadcaster: needsBroadcasterToken,
           userId: userId,
           channelName: channelName,
@@ -2461,10 +2489,12 @@ class _AudioLiveViewState extends State<AudioLiveView>
           throw StateError('Fresh Agora token API returned no data');
         }
 
-        final String freshToken =
-        tokenController.getTokenStringFrom(payload).trim();
-        final String responseChannel =
-        tokenController.getChannelNameStringFrom(payload).trim();
+        final String freshToken = tokenController
+            .getTokenStringFrom(payload)
+            .trim();
+        final String responseChannel = tokenController
+            .getChannelNameStringFrom(payload)
+            .trim();
         final int responseUid = tokenController.getUidIntFrom(payload);
 
         if (freshToken.isEmpty) {
@@ -2514,9 +2544,9 @@ class _AudioLiveViewState extends State<AudioLiveView>
         /// The controller already restored the authoritative previous mute
         /// state from the rejoin response/local room session. Forcing false
         /// caused the icon to show unmuted while Agora still had a silent track.
-        final bool keepMuted = liveController.mute.value == true ||
-            (myId > 0 &&
-                websocketController.audioMutedUserMap[myId] == true);
+        final bool keepMuted =
+            liveController.mute.value == true ||
+                (myId > 0 && websocketController.audioMutedUserMap[myId] == true);
 
         liveController.mute.value = keepMuted;
         liveController.isMuted.value = keepMuted;
@@ -2820,19 +2850,13 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
             if (uid == myId) localSpeakingSeen = true;
 
-            _setSpeakingStatus(
-              uid: uid,
-              isSpeaking: volume >= _speakingVolumeThreshold,
-            );
+            _handleSpeakingVolumeSample(uid: uid, volume: volume);
           }
 
           if ((_effectiveBroadcaster || _isCurrentUserOnAnySeat()) &&
               myId > 0 &&
               !localSpeakingSeen) {
-            _setSpeakingStatus(
-              uid: myId,
-              isSpeaking: totalVolume >= _speakingVolumeThreshold,
-            );
+            _handleSpeakingVolumeSample(uid: myId, volume: totalVolume);
           }
         },
         onError: (ErrorCodeType err, String msg) {
@@ -2884,7 +2908,9 @@ class _AudioLiveViewState extends State<AudioLiveView>
                 ? ClientRoleType.clientRoleBroadcaster
                 : ClientRoleType.clientRoleAudience,
             publishMicrophoneTrack: _effectiveBroadcaster,
+            publishCameraTrack: false,
             autoSubscribeAudio: true,
+            autoSubscribeVideo: false,
           ),
         );
       }
@@ -3023,6 +3049,10 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
   bool _viewerIsActiveForCurrentRoom(dynamic viewer) {
     if (viewer is! Map) return false;
+    if (VipPrivileges.from(viewer).invisible &&
+        !liveController.canModerateLive) {
+      return false;
+    }
     final currentSid = _currentStreamIdFromArgs();
     final itemSid =
         int.tryParse(
@@ -3735,13 +3765,17 @@ class _AudioLiveViewState extends State<AudioLiveView>
         source: 'audio_broadcaster_data_$reason',
       );
 
-      /// 2) Force load authoritative lock + gift total + room admin list from backend.
-      await _loadInitialSeatLocks();
-      await websocketController.fetchInitialGiftTotal(streamId: sid);
+      /// 2) Hydrate occupied seats first. This endpoint is the authoritative
+      /// caller/seat snapshot for a newly joined viewer. Ancillary room state
+      /// runs concurrently and must never delay avatar/seat visibility.
+      await liveController.tryToGetCallList(streamId: sid, force: true);
+      if (!mounted || _currentStreamIdFromArgs() != sid) return;
 
-      /// Room Admin is persistent until host removes it. Re-enter/resume hole
-      /// backend guardian list/status reload kore local permission restore korbo.
-      await liveController.syncGuardianStateForRoom(streamId: sid);
+      final Future<void> ancillaryState = Future.wait<void>(<Future<void>>[
+        _loadInitialSeatLocks(),
+        websocketController.fetchInitialGiftTotal(streamId: sid),
+        liveController.syncGuardianStateForRoom(streamId: sid),
+      ]);
 
       /// 3) Tell backend this viewer joined/resumed so backend can broadcast current state.
       final currentCall = _currentUserCallData();
@@ -3761,6 +3795,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
             ? null
             : int.tryParse(currentCall?['seat_no'].toString() ?? ''),
       );
+      await ancillaryState;
 
       websocketController.printSeatTrace(
         'late_join_sync_done',
@@ -3989,6 +4024,10 @@ class _AudioLiveViewState extends State<AudioLiveView>
   @override
   void initState() {
     super.initState();
+    // Decode the small speaking animation once while the room initializes.
+    // This is intentionally fire-and-forget and never delays joining Agora.
+    unawaited(SpeakingWave.preload());
+    unawaited(EntryAnimation.preloadVipEffect());
     streamData = widget.roomData != null
         ? Map<String, dynamic>.from(widget.roomData!)
         : Get.arguments is Map
@@ -4076,6 +4115,11 @@ class _AudioLiveViewState extends State<AudioLiveView>
     final int currentStreamId = _currentStreamIdFromArgs();
     websocketController.resetAudioRoomStateForStream(
       newStreamId: currentStreamId,
+    );
+    liveController.setCanonicalViewerHost(
+      hostUserId: _hostUserIdFromSnapshot(),
+      roomId: currentStreamId,
+      source: 'local',
     );
 
     /// Reset-er por current room-er broadcaster/caller seats abar seed.
@@ -4213,10 +4257,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
         ClientRoleType.clientRoleBroadcaster,
         source: 'getActiveBroadcasterAudio_safe',
       );
-      await _forcePublishLocalMic(
-        engine,
-        reason: 'active_seat_detected',
-      );
+      await _forcePublishLocalMic(engine, reason: 'active_seat_detected');
     }
   }
 
@@ -4292,7 +4333,21 @@ class _AudioLiveViewState extends State<AudioLiveView>
         viewerId: userId,
       );
 
-      websocketController.clearSpecificUserStreamData(
+      // ✅ FIX (stale old seat after fast leave+rejoin, can't take a new
+      // seat, seated user shows as empty): clearSpecificUserStreamData is
+      // async and removes this user's own row from
+      // websocketController.liveCallList — the SAME list _currentUserAlreadyOnMic()
+      // (in LiveView_Circle_Container.dart) and switchAudioSeat's
+      // occupied-seat check (in live_seat_controller.dart) both read to
+      // decide "is this user already seated" / "is this seat free". It was
+      // previously called without awaiting it, so this whole leave flow
+      // (and therefore the point where the user is free to navigate back
+      // in and tap a seat) could finish before that removal had actually
+      // happened. A fast rejoin then saw the stale old-seat row still
+      // present: their profile kept showing on the old seat, and any new
+      // seat tap got routed through "switch" logic (which also gets
+      // confused by the stale row) instead of a fresh seat request.
+      await websocketController.clearSpecificUserStreamData(
         userId: userId.toString(),
         rejectCallIfInCallList: false,
         removeAcceptedCall: true,
@@ -4301,12 +4356,56 @@ class _AudioLiveViewState extends State<AudioLiveView>
         reason: 'audience_full_room_exit',
       );
 
+      // ✅ FIX (fast rejoin shows me still on my old seat): clearSpecificUserStreamData
+      // above only clears this user's row from websocketController.liveCallList.
+      // _currentUserCallData() — which the UI uses to decide "is the current
+      // user on a seat" for seat-grid rendering, mic publishing, and presence
+      // heartbeat — also falls back to checking liveController.callList (a
+      // separate list, populated from the room's REST snapshot) when the
+      // websocket list doesn't have a match. That fallback list was never
+      // being cleared on exit, so a fast rejoin could still find this user's
+      // pre-leave accepted-seat row sitting in it and incorrectly treat them
+      // as still seated — until something else (like refreshing the outer
+      // room list, which re-fetches and overwrites this list) happened to
+      // clear it first. Removing this user's own row here closes that gap.
+      try {
+        liveController.callList.removeWhere(sameUser);
+      } catch (e) {
+        liveLog('⚠️ callList self-row cleanup skipped safely: $e');
+      }
+
       liveController.updateLivePresenceRole(
         role: 'viewer',
         isOnSeat: false,
         seatNo: null,
       );
       liveController.stopLivePresenceHeartbeat();
+
+      // ✅ FIX: previously streamID/streamId only ever got reset to 0 (and
+      // only activeAudioStreamId at that) after the async Agora
+      // leaveChannel() call below finished. dispose() cannot await, so it
+      // calls this whole function fire-and-forget — if the user re-tapped
+      // the SAME room quickly (before that async cleanup finished),
+      // joinAsAudience's "already in this room" early-return guard saw
+      // stale-but-still-matching stream ids together with
+      // AgoraService().isJoinedChannel still true, and silently no-op'd the
+      // rejoin (viewer list/seat/entry then showed nothing until something
+      // else — like browsing away and back — happened to give the async
+      // cleanup enough time to finish first). Clearing the stream-id
+      // trackers synchronously here, right before the slow async call,
+      // closes that window: a rejoin attempted mid-cleanup no longer
+      // matches, regardless of how long the Agora-side leave takes.
+      // Guarded so a newer session that already moved on is never
+      // clobbered.
+      if (websocketController.streamID.value == streamIdValue) {
+        websocketController.streamID.value = 0;
+      }
+      if (liveController.streamId.value == streamIdValue) {
+        liveController.streamId.value = 0;
+      }
+      if (websocketController.activeAudioStreamId.value == streamIdValue) {
+        websocketController.activeAudioStreamId.value = 0;
+      }
 
       try {
         await _agoraService.leaveChannel();
@@ -4486,8 +4585,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
         try {
           /// Host/caller mute korleo audio track open thakbe, mic volume 0/100 diye control.
-          final bool isOnSeatNow =
-          _shouldPublishCurrentUserMicrophone();
+          final bool isOnSeatNow = _shouldPublishCurrentUserMicrophone();
           final role = isOnSeatNow
               ? ClientRoleType.clientRoleBroadcaster
               : ClientRoleType.clientRoleAudience;
@@ -4564,6 +4662,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _musicMiniOffset.dispose();
     // Battery Optimization: Cancel timers
     _batteryCheckTimer?.cancel();
     _uiUpdateTimer?.cancel();
@@ -4644,7 +4743,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
   /// Host normal exit/back/mini close: keep live active.
   /// Important: This function does NOT call tryToRemoveLivestream(),
   /// does NOT broadcast live_ended, and does NOT remove live from list.
-  Future<void> _leaveHostRoomOnlyKeepLive() async {
+  Future<void> _leaveHostRoomOnlyKeepLive({bool navigateBack = true}) async {
     if (_isLiveExiting) return;
 
     _isLiveExiting = false;
@@ -4654,6 +4753,10 @@ class _AudioLiveViewState extends State<AudioLiveView>
     _postJoinMicRestoreConfirmTimer?.cancel();
 
     try {
+      debugPrint(
+        '[LIVE_LEAVE][START] room=${_currentStreamIdFromArgs()} '
+            'remove_livestream=false',
+      );
       _miniLiveOverlay?.remove();
       _miniLiveOverlay = null;
 
@@ -4675,13 +4778,23 @@ class _AudioLiveViewState extends State<AudioLiveView>
       await liveController.leavePermanentRoom(
         livestreamId: _currentStreamIdFromArgs(),
       );
+      if (kDebugMode) {
+        debugPrint(
+          '[LIVE_SESSION][SOFT_LEAVE] room=${_currentStreamIdFromArgs()} '
+              'backend_room_preserved=true',
+        );
+      }
       liveController.isBroadcaster.value = false;
 
-      if (mounted) {
+      if (mounted && navigateBack) {
         Get.back();
       }
 
       liveLog('✅ Host left room only, live kept active');
+      debugPrint(
+        '[LIVE_LEAVE][SUCCESS] room=${_currentStreamIdFromArgs()} '
+            'remove_livestream=false',
+      );
     } catch (e) {
       liveLog('❌ Host leave room only error: $e');
       Fluttertoast.showToast(msg: ('Exit failed').appTr);
@@ -4703,6 +4816,39 @@ class _AudioLiveViewState extends State<AudioLiveView>
       _miniLiveOverlay?.remove();
       _miniLiveOverlay = null;
 
+      final int closingRoomId = _currentStreamIdFromArgs();
+      if (_effectiveBroadcaster) {
+        final bool closed = await liveController.closePermanentRoom(
+          livestreamId: closingRoomId,
+          navigateToEnd: false,
+          deferLocalCleanup: true,
+        );
+        if (!closed) return;
+
+        await liveController.stopLiveMusic(rtcEngine: _agoraService.engine);
+        await liveController.stopYoutube();
+        try {
+          await _agoraService.leaveChannel();
+          _agoraChannelJoined = false;
+          _clearGlobalAgoraJoinedStream(streamId: _localAgoraStreamId);
+        } catch (e) {
+          liveLog('⚠️ leaveChannel after close ignored: $e');
+        }
+        liveController.livePermanentRoomController.completeDeferredCloseCleanup(
+          closingRoomId,
+        );
+        debugPrint('[LIVE_CLOSE][SUCCESS] room=$closingRoomId');
+        Get.offAll(
+              () => const Endlive(),
+          arguments: liveController
+              .livePermanentRoomController
+              .lastPermanentRoomActionData
+              .value,
+          transition: Transition.cupertino,
+        );
+        return;
+      }
+
       /// Local cleanup first. Duplicate leaveChannel ignored.
       try {
         await _agoraService.leaveChannel();
@@ -4717,19 +4863,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
       liveController.stopLivePresenceHeartbeat();
       await _markAudioLiveOfflineForExplicitExit();
 
-      if (_effectiveBroadcaster) {
-        await liveController.stopLiveMusic(rtcEngine: _agoraService.engine);
-        await liveController.stopYoutube();
-
-        /// Permanent rooms are never deleted here. The owner-close API marks
-        /// the room closed, clears active seats/viewers and broadcasts live_ended.
-        await liveController.closePermanentRoom(
-          livestreamId: _currentStreamIdFromArgs(),
-          navigateToEnd: true,
-        );
-      } else {
-        await _leaveAudienceRoomAndSeat(navigateBack: true);
-      }
+      await _leaveAudienceRoomAndSeat(navigateBack: true);
     } catch (e) {
       liveLog('❌ Exit live error: $e');
       Fluttertoast.showToast(msg: ('Exit failed').appTr);
@@ -4807,7 +4941,8 @@ class _AudioLiveViewState extends State<AudioLiveView>
                           () => AudioLiveView(
                         channelName: widget.channelName,
                         isBroadcaster: _effectiveBroadcaster,
-                        token: (_agoraService.currentAgoraToken
+                        token:
+                        (_agoraService.currentAgoraToken
                             ?.trim()
                             .isNotEmpty ??
                             false)
@@ -5323,80 +5458,95 @@ class _AudioLiveViewState extends State<AudioLiveView>
     }
     return WillPopScope(
       onWillPop: () async {
-        // ✅ Entry/SVGA animation finish hole kono Navigator.pop/Get.back call ashle
-        // leave room popup show korbe na. Entry overlay inline widget, route/dialog na.
-        if (websocketController.newViewersJoinded.value == true) {
-          websocketController.hideEntryAnimation();
-          return false;
-        }
-
-        // ✅ Gift animation finish holeo accidental back/pop ignore korbo.
-        if (websocketController.isGiftAnimationShowing.value == true) {
-          return false;
-        }
-
-        if (_effectiveBroadcaster) {
-          final choice = await _showBroadcasterRoomExitChoice();
-          if (choice == 'leave') {
-            await _leaveHostRoomOnlyKeepLive();
-          } else if (choice == 'close') {
-            await _exitLiveRoomNow();
+        if (_backNavigationPending || _isLiveExiting || !mounted) return false;
+        _backNavigationPending = true;
+        try {
+          // ✅ Entry/SVGA animation finish hole kono Navigator.pop/Get.back call ashle
+          // leave room popup show korbe na. Entry overlay inline widget, route/dialog na.
+          if (websocketController.newViewersJoinded.value == true) {
+            websocketController.hideEntryAnimation();
+            return false;
           }
-        } else {
-          final bool? exitLive = await showDialog<bool>(
-            context: context,
-            builder: (dialogContext) => AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15),
-              ),
-              title: Text(
-                ('Leave Live').appTr,
-                style: GoogleFonts.roboto(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+
+          if (_effectiveBroadcaster) {
+            final choice = await _showBroadcasterRoomExitChoice();
+            if (choice == 'leave') {
+              await _leaveHostRoomOnlyKeepLive(navigateBack: false);
+              return true;
+            } else if (choice == 'close') {
+              await _exitLiveRoomNow();
+            }
+          } else {
+            final bool? exitLive = await showDialog<bool>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
                 ),
-              ),
-              content: Text(
-                ('Are you sure you want to leave this live?').appTr,
-                style: GoogleFonts.roboto(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: Text(
-                    ('No').appTr,
-                    style: GoogleFonts.roboto(fontSize: 14, color: Colors.red),
+                title: Text(
+                  ('Leave Live').appTr,
+                  style: GoogleFonts.roboto(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: Text(
-                    ('Yes').appTr,
-                    style: GoogleFonts.roboto(
-                      fontSize: 14,
-                      color: Colors.green,
+                content: Text(
+                  ('Are you sure you want to leave this live?').appTr,
+                  style: GoogleFonts.roboto(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    child: Text(
+                      ('No').appTr,
+                      style: GoogleFonts.roboto(
+                        fontSize: 14,
+                        color: Colors.red,
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          );
-          if (exitLive == true) await _exitLiveRoomNow();
-        }
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(true),
+                    child: Text(
+                      ('Yes').appTr,
+                      style: GoogleFonts.roboto(
+                        fontSize: 14,
+                        color: Colors.green,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+            if (exitLive == true) await _exitLiveRoomNow();
+          }
 
-        /// Navigation manually handle kora hocche.
-        /// true return korle system route pop kore Navigator history empty crash dite pare.
-        return false;
+          /// Navigation manually handle kora hocche.
+          /// true return korle system route pop kore Navigator history empty crash dite pare.
+          return false;
+        } finally {
+          _backNavigationPending = false;
+        }
       },
       child: Scaffold(
         backgroundColor: Color(0xffa19597),
         resizeToAvoidBottomInset: false,
         body: Stack(
           children: [
-            AudioRoomReactiveBackground(childBuilder: _roomBackgroundWidget),
+            // Keep only the background layer reactive. This guarantees that
+            // the temporary Room Background sidebar preview appears instantly
+            // on the Audio room while the rest of the live UI does not rebuild.
+            Obx(() {
+              widget.roomBackground; // stable fallback dependency
+              websocketController.liveRoomUpdateStreamId.value;
+              websocketController.liveRoomBackground.value;
+              return AudioRoomReactiveBackground(
+                childBuilder: _roomBackgroundWidget,
+              );
+            }),
             Positioned(
               top: kHeight * 0.09,
               bottom: kHeight * 0.115,
@@ -5432,8 +5582,8 @@ class _AudioLiveViewState extends State<AudioLiveView>
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(2),
-                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(15),
+                            color: Color(0xff0c0c0c).withOpacity(0.4),
                           ),
                           child: Obx(
                                 () => Castontext(
@@ -5463,12 +5613,12 @@ class _AudioLiveViewState extends State<AudioLiveView>
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              border: Border.all(color: kAppColor1),
-                              borderRadius: BorderRadius.circular(5),
+
+                              borderRadius: BorderRadius.circular(15),
                               gradient: LinearGradient(
                                 colors: [
-                                  Color(0xffe606db).withOpacity(.7),
-                                  Color(0xff3a04a6).withOpacity(.9),
+                                  Color(0xff0c0c0c).withOpacity(.4),
+                                  Color(0xff0c0c0c).withOpacity(.4),
                                 ],
                               ),
                             ),
@@ -5610,7 +5760,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
                     children: [
                       //fast row start
                       Padding(
-                        padding: EdgeInsets.only(left: 3, top: kHeight * 0.032),
+                        padding: EdgeInsets.only(left: 3, top: kHeight * 0.037),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -5627,9 +5777,11 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                       // Main Container (Background + Info + Follow Button)
                                       Container(
                                         padding: EdgeInsets.only(
-                                          right: Get.width * 0.015,
+                                            right: Get.width * 0.015,
+                                            bottom: 3
                                         ),
                                         margin: EdgeInsets.only(
+
                                           left: Get.width * 0.01,
                                         ),
                                         // left gap profile এর জন্য
@@ -5640,13 +5792,10 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                             topRight: Radius.circular(25),
                                             bottomRight: Radius.circular(25),
                                           ),
-                                          border: Border.all(
-                                            color: Colors.white,
-                                            width: .6,
-                                          ),
+
                                           color: Color(
-                                            0xffffffff,
-                                          ).withOpacity(0.2),
+                                            0xff0e0c0c,
+                                          ).withOpacity(0.4),
                                         ),
                                         child: Row(
                                           children: [
@@ -5657,13 +5806,19 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                               CrossAxisAlignment.start,
                                               children: [
                                                 Obx(
-                                                      () => GradientShimmerTextaudio(
-                                                    text: liveRoomTitleText.isNotEmpty
-                                                        ? liveRoomTitleText
-                                                        : ('Live Room').appTr,
-                                                    fontSize: kHeight * 0.021,
-                                                    fontWeight: FontWeight.w500,
-                                                  ),
+                                                      () =>
+                                                      GradientShimmerTextaudio(
+                                                        text:
+                                                        liveRoomTitleText
+                                                            .isNotEmpty
+                                                            ? liveRoomTitleText
+                                                            : ('Live Room')
+                                                            .appTr,
+                                                        fontSize:
+                                                        kHeight * 0.018,
+                                                        fontWeight:
+                                                        FontWeight.w500,
+                                                      ),
                                                 ),
                                                 Text(
                                                   ('Uid : ${broadcasterData['user']['user_id']}')
@@ -5673,7 +5828,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                                     fontSize:
                                                     (Get.height * 0.01)
                                                         .clamp(11.0, 13.0),
-                                                    fontWeight: FontWeight.w500,
+                                                    fontWeight: FontWeight.w400,
                                                   ),
                                                 ),
                                               ],
@@ -5727,10 +5882,10 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                                       gradient: const LinearGradient(
                                                         colors: [
                                                           Color(
-                                                            0xff8A4CF7,
+                                                            0xff5002d5,
                                                           ),
                                                           Color(
-                                                            0xffB460F0,
+                                                            0xff6a04b5,
                                                           ),
                                                         ],
                                                         begin: Alignment
@@ -5773,11 +5928,14 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                             if (websocketController
                                                 .liveCallList
                                                 .isNotEmpty) {
-                                              homeController.liveVisitProfile(
-                                                userId:
-                                                '${broadcasterData['user']['id']}',
-                                                seatData: websocketController
-                                                    .liveCallList[0],
+                                              Get.to(
+                                                    () => LiveRoomSettingPage(
+                                                  livestreamController: livestreamController,
+                                                  websocketController: websocketController,
+                                                  authController: authController,
+                                                ),
+                                                transition: Transition.rightToLeft,
+                                                duration: const Duration(milliseconds: 180),
                                               );
                                             }
                                           },
@@ -5811,7 +5969,8 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                                   ClipOval(
                                                     child: CachedNetworkImage(
                                                       // ROOM IMAGE: host profile replaced by stream image.
-                                                      imageUrl: liveRoomCoverImageUrl,
+                                                      imageUrl:
+                                                      liveRoomCoverImageUrl,
                                                       fit: BoxFit.cover,
                                                       height: size * 0.7,
                                                       width: size * 0.7,
@@ -5864,27 +6023,13 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                   width: Get.width * 0.2,
                                   height: Get.height * 0.05,
                                   child: Obx(() {
-                                    final broadcasterUserId =
-                                    broadcasterData['user'] is Map
-                                        ? (broadcasterData['user']['id'] ??
-                                        broadcasterData['user']['user_id'])
-                                        : (broadcasterData['user_id'] ??
-                                        broadcasterData['id']);
-
                                     // ✅ Perfect viewer list: only current stream active viewers, no old-room ghost.
                                     final filteredList = livestreamController
                                         .liveViewerList
                                         .where(_viewerIsActiveForCurrentRoom)
-                                        .where((viewer) {
-                                      final viewerId = _viewerUserId(
-                                        viewer,
-                                      );
-                                      if (viewerId <= 0) return false;
-                                      if (broadcasterUserId == null)
-                                        return true;
-                                      return viewerId.toString() !=
-                                          broadcasterUserId.toString();
-                                    })
+                                        .where(
+                                          (viewer) => _viewerUserId(viewer) > 0,
+                                    )
                                         .toList();
 
                                     if (filteredList.isEmpty) {
@@ -5919,32 +6064,6 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                   children: [
                                     InkWell(
                                       onTap: () {
-                                        final broadcasterUserIdForSheet =
-                                        broadcasterData['user'] is Map
-                                            ? (broadcasterData['user']['id'] ??
-                                            broadcasterData['user']['user_id'])
-                                            : (broadcasterData['user_id'] ??
-                                            broadcasterData['id']);
-
-                                        final filteredList = livestreamController
-                                            .liveViewerList
-                                            .where(
-                                          _viewerIsActiveForCurrentRoom,
-                                        )
-                                            .where((viewer) {
-                                          final viewerId = _viewerUserId(
-                                            viewer,
-                                          );
-                                          if (viewerId <= 0) return false;
-                                          if (broadcasterUserIdForSheet ==
-                                              null)
-                                            return true;
-                                          return viewerId.toString() !=
-                                              broadcasterUserIdForSheet
-                                                  .toString();
-                                        })
-                                            .toList();
-
                                         Get.bottomSheet(
                                           Container(
                                             height: kHeight * 0.6,
@@ -6017,37 +6136,54 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
                                                 /// 🔹 যদি Viewer না থাকে, তাহলে Center করে Empty Message দেখাও
                                                 Expanded(
-                                                  child: filteredList.isEmpty
-                                                      ? Center(
-                                                    child: Text(
-                                                      ('No viewers yet 👀')
-                                                          .appTr,
-                                                      style:
-                                                      GoogleFonts.roboto(
-                                                        fontSize:
-                                                        kHeight *
-                                                            0.016,
-                                                        fontWeight:
-                                                        FontWeight
-                                                            .w400,
-                                                        color: Colors
-                                                            .grey[600],
+                                                  child: Obx(() {
+                                                    final activeViewers =
+                                                    livestreamController
+                                                        .liveViewerList
+                                                        .where(
+                                                      _viewerIsActiveForCurrentRoom,
+                                                    )
+                                                        .where(
+                                                          (viewer) =>
+                                                      _viewerUserId(
+                                                        viewer,
+                                                      ) >
+                                                          0,
+                                                    )
+                                                        .toList(
+                                                      growable: false,
+                                                    );
+                                                    return activeViewers.isEmpty
+                                                        ? Center(
+                                                      child: Text(
+                                                        ('No viewers yet 👀')
+                                                            .appTr,
+                                                        style: GoogleFonts.roboto(
+                                                          fontSize:
+                                                          kHeight *
+                                                              0.016,
+                                                          fontWeight:
+                                                          FontWeight
+                                                              .w400,
+                                                          color: Colors
+                                                              .grey[600],
+                                                        ),
                                                       ),
-                                                    ),
-                                                  )
-                                                      : LiveViewersList(
-                                                    viewerList:
-                                                    filteredList,
-                                                    isBroadcaster: widget
-                                                        .isBroadcaster,
-                                                    onKickUser: (userId) {
-                                                      livestreamController
-                                                          .kickOutUser(
-                                                        userId,
-                                                      );
-                                                    },
-                                                    isFromPk: false,
-                                                  ),
+                                                    )
+                                                        : LiveViewersList(
+                                                      viewerList:
+                                                      activeViewers,
+                                                      isBroadcaster: widget
+                                                          .isBroadcaster,
+                                                      onKickUser: (userId) {
+                                                        livestreamController
+                                                            .kickOutUser(
+                                                          userId,
+                                                        );
+                                                      },
+                                                      isFromPk: false,
+                                                    );
+                                                  }),
                                                 ),
                                               ],
                                             ),
@@ -6061,45 +6197,29 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                         ),
                                         child: ClipRRect(
                                           borderRadius: BorderRadius.circular(
-                                            7,
+                                            17,
                                           ),
                                           child: Container(
                                             height: Get.height * 0.035,
                                             width: Get.height * 0.05,
                                             decoration: BoxDecoration(
-                                              color: kAppColor.withOpacity(.6),
+                                              color: Color(0xff0c0b0b).withOpacity(.6),
                                             ),
                                             child: Center(
                                               child: Obx(() {
-                                                final broadcasterUserId =
-                                                broadcasterData['user']
-                                                is Map
-                                                    ? (broadcasterData['user']['id'] ??
-                                                    broadcasterData['user']['user_id'])
-                                                    : (broadcasterData['user_id'] ??
-                                                    broadcasterData['id']);
-
                                                 final filteredCount =
                                                     livestreamController
                                                         .liveViewerList
                                                         .where(
                                                       _viewerIsActiveForCurrentRoom,
                                                     )
-                                                        .where((viewer) {
-                                                      final viewerId =
+                                                        .where(
+                                                          (viewer) =>
                                                       _viewerUserId(
                                                         viewer,
-                                                      );
-                                                      if (viewerId <= 0)
-                                                        return false;
-                                                      if (broadcasterUserId ==
-                                                          null)
-                                                        return true;
-                                                      return viewerId
-                                                          .toString() !=
-                                                          broadcasterUserId
-                                                              .toString();
-                                                    })
+                                                      ) >
+                                                          0,
+                                                    )
                                                         .length;
 
                                                 return Text(
@@ -6120,7 +6240,9 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                     InkWell(
                                       onTap: _showLiveMinimizeExitPanel,
                                       child: Container(
-                                        color: Color(0xffff0689),
+                                        decoration: BoxDecoration(color: Color(
+                                            0xff6106ff),borderRadius: BorderRadius.circular(20)),
+
                                         margin: EdgeInsets.only(
                                           right: kWeight * 0.015,
                                           left: kWeight * 0.01,
@@ -6141,7 +6263,6 @@ class _AudioLiveViewState extends State<AudioLiveView>
                     ],
                   ),
                 ),
-
 
                 /// Comments now render directly under the dynamic seat board.
                 /// Keep this transparent spacer only for the existing top profile layer.
@@ -6474,26 +6595,117 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
       if (!visible) return const SizedBox.shrink();
 
-      final screen = MediaQuery.of(context).size;
-      final double cardWidth = screen.width * .92;
-      final double cardHeight = kHeight * .09;
-
-      // Always start fully inside the screen, above the bottom controls.
-      if (_musicPanelOffset == Offset.zero) {
-        _musicPanelOffset = Offset(
-          (screen.width - cardWidth) / 2,
-          screen.height - cardHeight - (kHeight * .145),
-        );
-      }
-
-      final bool paused =
-          status == 'paused' ||
-              liveController.liveMusicStatus.value == 'paused';
+      final bool paused = status == 'paused' ||
+          liveController.liveMusicStatus.value == 'paused';
       final String displayName = name.trim().isNotEmpty
           ? name.trim()
           : (liveController.liveMusicName.value.trim().isNotEmpty
           ? liveController.liveMusicName.value.trim()
           : 'Live room music');
+
+      if (!_musicPanelExpanded) {
+        const double iconSize = 48;
+        final media = MediaQuery.of(context);
+        final screen = media.size;
+        final minX = 8.0;
+        final maxX =
+        math.max(minX, screen.width - iconSize - 8).toDouble();
+        final minY = media.padding.top + 56;
+        final bottomClearance = media.padding.bottom + kHeight * .125;
+        final maxY = math
+            .max(
+          minY,
+          screen.height - iconSize - bottomClearance,
+        )
+            .toDouble();
+        if (_musicMiniOffset.value == Offset.zero) {
+          _musicMiniOffset.value = Offset(maxX - 6, maxY - 8);
+        } else {
+          final current = _musicMiniOffset.value;
+          final clamped = Offset(
+            current.dx.clamp(minX, maxX).toDouble(),
+            current.dy.clamp(minY, maxY).toDouble(),
+          );
+          if (clamped != current) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _musicMiniOffset.value = clamped;
+            });
+          }
+        }
+
+        return ValueListenableBuilder<Offset>(
+          valueListenable: _musicMiniOffset,
+          builder: (_, offset, child) => Positioned(
+            left: offset.dx,
+            top: offset.dy,
+            child: child!,
+          ),
+          child: RepaintBoundary(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _canManageCurrentRoom
+                  ? () {
+                if (_musicMiniDragging) return;
+                setState(() => _musicPanelExpanded = true);
+              }
+                  : null,
+              onPanStart: (_) => _musicMiniDragging = true,
+              onPanUpdate: (details) {
+                final current = _musicMiniOffset.value;
+                _musicMiniOffset.value = Offset(
+                  (current.dx + details.delta.dx)
+                      .clamp(minX, maxX)
+                      .toDouble(),
+                  (current.dy + details.delta.dy)
+                      .clamp(minY, maxY)
+                      .toDouble(),
+                );
+              },
+              onPanEnd: (_) {
+                Future<void>.delayed(const Duration(milliseconds: 80), () {
+                  _musicMiniDragging = false;
+                });
+              },
+              onPanCancel: () => _musicMiniDragging = false,
+              child: Container(
+                width: iconSize,
+                height: iconSize,
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  color: const Color(0xE6111111),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white30),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black38,
+                      blurRadius: 10,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: _SmoothMiniMusicDisc(size: 38, playing: !paused),
+              ),
+            ),
+          ),
+        );
+      }
+
+      final screen = MediaQuery.of(context).size;
+      final double cardWidth = math.min(screen.width * .80, 380.0).toDouble();
+      final double cardHeight =
+      (kHeight * .125).clamp(105.0, 125.0).toDouble();
+
+      // Always start fully inside the screen, above the bottom controls.
+      if (_musicPanelOffset == Offset.zero) {
+        _musicPanelOffset = Offset(
+          (screen.width - cardWidth) / 2,
+          screen.height -
+              cardHeight -
+              MediaQuery.of(context).padding.bottom -
+              (kHeight * .115),
+        );
+      }
+
       final String shortName = displayName.length > 28
           ? '${displayName.substring(0, 28)}..'
           : displayName;
@@ -6503,41 +6715,6 @@ class _AudioLiveViewState extends State<AudioLiveView>
         top: _musicPanelOffset.dy,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: _canManageCurrentRoom
-              ? () async {
-            if (_musicPanelDragging) return;
-
-            await LiveMusicPlayerSheet.show(
-              rtcEngine: _agoraService.engine,
-            );
-          }
-              : null,
-          onPanStart: (_) {
-            _musicPanelDragging = true;
-          },
-          onPanUpdate: (details) {
-            final currentScreen = MediaQuery.of(context).size;
-            final currentCardWidth = currentScreen.width * .92;
-            final currentCardHeight = kHeight * .09;
-            final maxX = currentScreen.width - currentCardWidth - 8.0;
-            final maxY =
-                currentScreen.height -
-                    currentCardHeight -
-                    MediaQuery.of(context).padding.bottom -
-                    8.0;
-
-            _musicPanelOffset = Offset(
-              (_musicPanelOffset.dx + details.delta.dx).clamp(8.0, maxX),
-              (_musicPanelOffset.dy + details.delta.dy).clamp(8.0, maxY),
-            );
-
-            if (mounted) setState(() {});
-          },
-          onPanEnd: (_) {
-            Future.delayed(const Duration(milliseconds: 80), () {
-              _musicPanelDragging = false;
-            });
-          },
           child: Container(
             width: cardWidth,
             height: cardHeight,
@@ -6597,13 +6774,6 @@ class _AudioLiveViewState extends State<AudioLiveView>
 
                 Row(
                   children: [
-                    _SmoothMiniMusicDisc(
-                      size: kHeight * 0.052,
-                      playing: !paused,
-                    ),
-
-                    SizedBox(width: kWeight * 0.018),
-
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -6612,6 +6782,15 @@ class _AudioLiveViewState extends State<AudioLiveView>
                         children: [
                           Row(
                             children: [
+                              if (_canManageCurrentRoom)
+                                _musicIconButton(
+                                  icon: Icons.skip_previous_rounded,
+                                  onTap: () => liveController
+                                      .liveMusicController
+                                      .playPreviousLiveMusic(
+                                    rtcEngine: _agoraService.engine,
+                                  ),
+                                ),
                               if (_canManageCurrentRoom)
                                 _musicIconButton(
                                   icon: paused
@@ -6638,7 +6817,8 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                   onTap: () async {
                                     if (_musicPanelDragging) return;
 
-                                    await liveController.pickAndPlayLiveMusic(
+                                    await liveController.liveMusicController
+                                        .playNextLiveMusic(
                                       rtcEngine: _agoraService.engine,
                                     );
                                   },
@@ -6663,7 +6843,58 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                 ),
                               ),
 
+                              if (_canManageCurrentRoom)
+                                SizedBox(
+                                  width: kWeight * .11,
+                                  child: SliderTheme(
+                                    data: SliderTheme.of(context).copyWith(
+                                      trackHeight: 2,
+                                      thumbShape: const RoundSliderThumbShape(
+                                        enabledThumbRadius: 4,
+                                      ),
+                                      activeTrackColor:
+                                      const Color(0xFFFFC400),
+                                      inactiveTrackColor: Colors.white24,
+                                      thumbColor: const Color(0xFFFFC400),
+                                      overlayShape:
+                                      SliderComponentShape.noOverlay,
+                                    ),
+                                    child: Slider(
+                                      value: liveController.musicVolume.value
+                                          .toDouble(),
+                                      min: 0,
+                                      max: 100,
+                                      onChanged: (value) => liveController
+                                          .setLiveMusicVolume(
+                                        rtcEngine: _agoraService.engine,
+                                        volume: value.round(),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+
+                              if (_canManageCurrentRoom)
+                                _musicIconButton(
+                                  icon: Icons.queue_music_rounded,
+                                  onTap: () => LiveMusicPlayerSheet.show(
+                                    rtcEngine: _agoraService.engine,
+                                    showPlaylist: true,
+                                  ),
+                                ),
+
                               const Spacer(),
+
+                              if (_canManageCurrentRoom)
+                                _musicIconButton(
+                                  icon: Icons.keyboard_arrow_down_rounded,
+                                  color: Colors.white,
+                                  onTap: () {
+                                    if (_musicPanelDragging) return;
+                                    setState(
+                                          () => _musicPanelExpanded = false,
+                                    );
+                                  },
+                                ),
 
                               if (_canManageCurrentRoom)
                                 _musicIconButton(
@@ -6676,6 +6907,11 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                     await liveController.stopLiveMusic(
                                       rtcEngine: _agoraService.engine,
                                     );
+                                    if (mounted) {
+                                      setState(
+                                            () => _musicPanelExpanded = false,
+                                      );
+                                    }
                                   },
                                 ),
                             ],
@@ -7407,6 +7643,10 @@ class _AudioLiveViewState extends State<AudioLiveView>
       liveController.liveYoutubeStatus.value;
       liveController.liveYoutubeVideoId.value;
       liveController.mute.value;
+      final int hostUserId = _currentHostUserIdForSeat();
+      if (hostUserId > 0) {
+        websocketController.speakingUserMap[hostUserId];
+      }
 
       return AudioRoomLayerBoundary(child: getAudioBroadcaster());
     });
@@ -7676,12 +7916,17 @@ class _AudioLiveViewState extends State<AudioLiveView>
                         ),
                       ],
                     ),
-                    child: ClipOval(
-                      child: CachedNetworkImage(
-                        imageUrl: image,
-                        fit: BoxFit.cover,
-                        errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                      ),
+                    // ✅ FIX: previously ClipOval + BoxFit.cover cropped the
+                    // emoji to fill a square box and then clipped the result
+                    // to a circle, cutting off its edges/corners — this is
+                    // why host emoji reactions showed cut off while regular
+                    // seat emoji (which already used BoxFit.contain with no
+                    // clip, see _seatImogiOverlay) displayed fully. Matching
+                    // that same correct pattern here.
+                    child: CachedNetworkImage(
+                      imageUrl: image,
+                      fit: BoxFit.contain,
+                      errorWidget: (_, __, ___) => const SizedBox.shrink(),
                     ),
                   ),
                 );
@@ -7817,29 +8062,20 @@ class _AudioLiveViewState extends State<AudioLiveView>
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              height: size * 2.3,
+              height: size * 2,
               width: size * 2.18,
               child: Stack(
                 alignment: Alignment.center,
                 clipBehavior: Clip.none,
                 children: [
                   Container(
-                    height: size * 1.3,
-                    width: size * 1.3,
+                    height: size * 1.45,
+                    width: size * 1.45,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.black.withOpacity(.22),
-                      border: Border.all(
-                        color: Colors.amber.withOpacity(.75),
-                        width: 1.4,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(.25),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
+                      color: Colors.white.withOpacity(.22),
+
+
                     ),
                     child: Center(
                       child: Image.asset(
@@ -7859,11 +8095,11 @@ class _AudioLiveViewState extends State<AudioLiveView>
                 ],
               ),
             ),
-            SizedBox(height: size * 0.01),
+            // SizedBox(height: size * 0.01),
             SizedBox(
-              width: size * 1.75,
+              width: size * 1.7,
               child: Text(
-                canReturn ? ('Tap to return').appTr : ('Reserved').appTr,
+                canReturn ? ('Home').appTr : ('Reserved').appTr,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
@@ -7889,11 +8125,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
       return CircleAvatar(
         radius: (kHeight * 0.09) / 2,
         backgroundColor: Colors.white.withOpacity(.35),
-        child: Icon(
-          Icons.person,
-          color: Colors.white,
-          size: kHeight * 0.025,
-        ),
+        child: Icon(Icons.person, color: Colors.white, size: kHeight * 0.025),
       );
     }
 
@@ -7911,6 +8143,10 @@ class _AudioLiveViewState extends State<AudioLiveView>
     final String frameAssetPath = _profileFrameAssetPath(frameData);
 
     final String displayName = (user['name'] ?? ('Host').appTr).toString();
+    final hostVip = VipPrivileges.from(<String, dynamic>{
+      ...broadcasterData,
+      'user': user,
+    });
     final int currentHostUserId = _safeInt(
       user['id'] ?? user['user_id'] ?? _hostUserIdFromSnapshot(),
     );
@@ -7952,7 +8188,20 @@ class _AudioLiveViewState extends State<AudioLiveView>
                   children: [
                     if (_isUserSpeaking(user['id']) &&
                         !_isUserMuted(user['id']))
-                      SpeakingWave(size: kHeight * 0.15),
+                      SpeakingWave(size: profileSize * 1.40),
+                    if (hostVip.effectiveColorfulProfile)
+                      IgnorePointer(
+                        child: Container(
+                          height: profileSize * 1.07,
+                          width: profileSize * 1.07,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: LinearGradient(
+                              colors: [Color(0xFF7B2CBF), Color(0xFFFFD76A)],
+                            ),
+                          ),
+                        ),
+                      ),
 
                     Builder(
                       builder: (hostProfileContext) {
@@ -7989,8 +8238,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
                                 color: _isUserMuted(user['id'])
                                     ? Colors.redAccent.withOpacity(.28)
                                     : Colors.black.withOpacity(.28),
-                                blurRadius:
-                                _isUserMuted(user['id']) ? 12 : 8,
+                                blurRadius: _isUserMuted(user['id']) ? 12 : 8,
                                 offset: const Offset(0, 3),
                               ),
                             ],
@@ -8026,9 +8274,8 @@ class _AudioLiveViewState extends State<AudioLiveView>
                           minWidth: frameSize,
                           maxWidth: frameSize,
                           child: RepaintBoundary(
-                            child: frameAssetPath
-                                .toLowerCase()
-                                .endsWith('.svga')
+                            child:
+                            frameAssetPath.toLowerCase().endsWith('.svga')
                                 ? SizedBox(
                               height: frameSize,
                               width: frameSize,
@@ -8069,9 +8316,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
                         switchOutCurve: Curves.easeIn,
                         child: _isUserMuted(user['id'])
                             ? Container(
-                          key: ValueKey(
-                            'owner_muted_${user['id']}',
-                          ),
+                          key: ValueKey('owner_muted_${user['id']}'),
                           height: kHeight * 0.020,
                           width: kHeight * 0.020,
                           decoration: BoxDecoration(
@@ -8096,9 +8341,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
                           ),
                         )
                             : SizedBox(
-                          key: ValueKey(
-                            'owner_unmuted_${user['id']}',
-                          ),
+                          key: ValueKey('owner_unmuted_${user['id']}'),
                           height: kHeight * 0.020,
                           width: kHeight * 0.020,
                         ),
@@ -8129,10 +8372,7 @@ class _AudioLiveViewState extends State<AudioLiveView>
                           gradient: const LinearGradient(
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
-                            colors: [
-                              Color(0xffFACC15),
-                              Color(0xffF97316),
-                            ],
+                            colors: [Color(0xffFACC15), Color(0xffF97316)],
                           ),
                           border: Border.all(
                             color: Colors.white.withOpacity(.85),
@@ -8714,6 +8954,29 @@ class _AudioLiveViewState extends State<AudioLiveView>
             AudioScenarioType.audioScenarioGameStreaming,
       );
 
+      // ✅ FIX: BatteryOptimizer already computes a scaled-down video config
+      // per performance level (getOptimizedVideoConfig/applyOptimizations),
+      // but nothing in the app ever called it, so video encoding never
+      // actually backed off on low battery/thermal pressure — this is a
+      // large part of why the phone runs hot and stutters during long
+      // streams. Only touch it when this device is actually publishing
+      // video (camera seat/video call); audio-only participants don't
+      // encode video so there is nothing to scale down for them.
+      if (_effectiveBroadcaster || _shouldPublishCurrentUserMicrophone()) {
+        try {
+          await engine.setVideoEncoderConfiguration(
+            _batteryOptimizer.getOptimizedVideoConfig(_currentPerformanceLevel),
+          );
+          if (_currentPerformanceLevel == PerformanceLevel.critical) {
+            // Matches BatteryOptimizer.applyOptimizations: stop encoding
+            // local video entirely to save maximum power at critical battery.
+            await engine.enableLocalVideo(false);
+          }
+        } catch (e) {
+          liveLog('Error applying performance video config: $e');
+        }
+      }
+
       // Update ping interval based on performance level
       final pingInterval = _batteryOptimizer.getOptimizedPingInterval(
         _currentPerformanceLevel,
@@ -8753,80 +9016,6 @@ class _AudioLiveViewState extends State<AudioLiveView>
       gravity: ToastGravity.TOP,
       backgroundColor: Colors.orange,
       textColor: Colors.white,
-    );
-  }
-}
-
-class SpeakingWave extends StatefulWidget {
-  final double size;
-
-  const SpeakingWave({super.key, required this.size});
-
-  @override
-  State<SpeakingWave> createState() => _SpeakingWaveState();
-}
-
-class _SpeakingWaveState extends State<SpeakingWave>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _scale;
-  late final Animation<double> _opacity;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 760),
-    )..repeat(reverse: true);
-
-    _scale = Tween<double>(
-      begin: .88,
-      end: 1.18,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-
-    _opacity = Tween<double>(
-      begin: .85,
-      end: .25,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, child) {
-          return Transform.scale(
-            scale: _scale.value,
-            child: Container(
-              height: widget.size,
-              width: widget.size,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.greenAccent.withOpacity(_opacity.value),
-                  width: 2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.greenAccent.withOpacity(_opacity.value * .45),
-                    blurRadius: 14,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
     );
   }
 }

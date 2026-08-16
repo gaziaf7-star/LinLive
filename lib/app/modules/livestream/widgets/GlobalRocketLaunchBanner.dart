@@ -1,12 +1,14 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svga_easyplayer/flutter_svga_easyplayer.dart';
 import 'package:get/get.dart';
 
 import '../../../../constants/image_helper.dart';
 import '../controllers/global_live_banner_queue_controller.dart';
+import 'global_banner_layout.dart';
 import '../controllers/roket_controller.dart';
 
 /// Global Rocket banner.
@@ -328,7 +330,9 @@ class GlobalRocketLaunchBanner extends StatelessWidget {
         key: ValueKey<String>('rocket_position_${item.id}'),
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
-        top: MediaQuery.of(context).padding.top + 7 + (slot * 150),
+        top: MediaQuery.of(context).padding.top +
+            globalBannerTopOffset(context) +
+            globalBannerSlotOffset(context, slot),
         left: 0,
         right: 0,
         child: Material(
@@ -339,7 +343,7 @@ class GlobalRocketLaunchBanner extends StatelessWidget {
             resizeDuration: const Duration(milliseconds: 220),
             onDismissed: (_) => completeItem(),
             child: SizedBox(
-              height: 146,
+              height: globalBigGiftBannerHeight(context),
               child: _RightStayLeftRocketBanner(
                 key: ValueKey<String>(item.id),
                 ownerName: ownerName,
@@ -496,10 +500,7 @@ class _RightStayLeftRocketBannerState
       builder: (BuildContext context, BoxConstraints constraints) {
         final double screenWidth = constraints.maxWidth;
         final bool compact = screenWidth < 370;
-        final double bannerWidth = math.min(
-          math.max(screenWidth * (compact ? .965 : .92), 300),
-          620,
-        );
+        final double bannerWidth = globalBigGiftBannerWidth(screenWidth);
         final double holdX = (screenWidth - bannerWidth) / 2;
         final double startX = screenWidth + 22;
         final double endX = -bannerWidth - 22;
@@ -563,7 +564,7 @@ class _RocketLuckyStyleBannerCard extends StatelessWidget {
   });
 
   static const String _backgroundAsset =
-      'assets/audio_live/broadcast_gift_1781905442_6a35b82260a4d.webp';
+      'assets/audio_live/gift_float_default.svga';
 
   final bool compact;
   final String ownerName;
@@ -575,21 +576,17 @@ class _RocketLuckyStyleBannerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double cardHeight = compact ? 124 : 140;
+    final double cardHeight = globalBigGiftBannerHeight(context);
     final double avatarSize = compact ? 43 : 49;
     final double rocketSize = compact ? 43 : 49;
 
-    return Container(
+    return SizedBox(
       height: cardHeight,
-      decoration: const BoxDecoration(
-        image: DecorationImage(
-          image: AssetImage(_backgroundAsset),
-          fit: BoxFit.fill,
-          filterQuality: FilterQuality.high,
-        ),
-      ),
       child: Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.hardEdge,
         children: <Widget>[
+          const _RocketBannerSvgaBackground(),
           Padding(
             padding: EdgeInsets.only(
               left: compact ? 8 : 12,
@@ -738,6 +735,80 @@ class _RocketLuckyStyleBannerCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _RocketBannerSvgaBackground extends StatefulWidget {
+  const _RocketBannerSvgaBackground();
+
+  static MovieEntity? _cachedMovie;
+  static final Future<MovieEntity?> _loadingFuture = _loadMovie();
+
+  static Future<MovieEntity?> _loadMovie() async {
+    try {
+      final movie = await SVGAParser.shared.decodeFromAssets(
+        _RocketLuckyStyleBannerCard._backgroundAsset,
+      );
+      movie.autorelease = false;
+      return _cachedMovie = movie;
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('Rocket global banner SVGA failed to load: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+      return null;
+    }
+  }
+
+  @override
+  State<_RocketBannerSvgaBackground> createState() =>
+      _RocketBannerSvgaBackgroundState();
+}
+
+class _RocketBannerSvgaBackgroundState
+    extends State<_RocketBannerSvgaBackground>
+    with SingleTickerProviderStateMixin {
+  late final SVGAAnimationController _controller;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = SVGAAnimationController(vsync: this)..isMute = true;
+    _attachMovie();
+  }
+
+  Future<void> _attachMovie() async {
+    final movie =
+        _RocketBannerSvgaBackground._cachedMovie ??
+        await _RocketBannerSvgaBackground._loadingFuture;
+    if (!mounted || movie == null) return;
+    _controller.videoItem = movie;
+    _controller.repeat();
+    setState(() => _ready = true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: _ready
+          ? SVGAImage(
+              _controller,
+              fit: BoxFit.fill,
+              allowDrawingOverflow: false,
+              preferredSize: Size(
+                MediaQuery.sizeOf(context).width,
+                globalBigGiftBannerHeight(context),
+              ),
+            )
+          : const SizedBox.shrink(),
     );
   }
 }

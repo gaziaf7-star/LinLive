@@ -3,7 +3,9 @@ part of '../websocket_controller.dart';
 extension LuckyEventHandler on WebsocketController {
   void _handleLuckyGiftResult(Map<String, dynamic> payload) {
     try {
-      _forceGiftPrint('🍀 LUCKY GIFT RESULT RAW PAYLOAD', payload);
+      if (kLiveDebug) {
+        _forceGiftPrint('🍀 LUCKY GIFT RESULT RAW PAYLOAD', payload);
+      }
 
       final Map<String, dynamic> data = payload['data'] is Map
           ? Map<String, dynamic>.from(payload['data'])
@@ -15,7 +17,7 @@ extension LuckyEventHandler on WebsocketController {
           payload['livestream_id'] ??
           payload['stream_id'];
 
-      _forceGiftPrint('🍀 LUCKY GIFT RESULT ROOT PARSED', {
+      if (kLiveDebug) _forceGiftPrint('🍀 LUCKY GIFT RESULT ROOT PARSED', {
         'resolved_livestream_id': livestreamId,
         'is_current_stream': livestreamId == null
             ? true
@@ -106,7 +108,7 @@ extension LuckyEventHandler on WebsocketController {
           ? toMap(payload['lucky_result'])
           : <String, dynamic>{};
 
-      _forceGiftPrint('🍀 LUCKY SENDER GIFT RESULT PARTS', {
+      if (kLiveDebug) _forceGiftPrint('🍀 LUCKY SENDER GIFT RESULT PARTS', {
         'sender': sender,
         'receiver': data['receiver'],
         'gift': gift,
@@ -204,7 +206,7 @@ extension LuckyEventHandler on WebsocketController {
         });
       }
 
-      _forceGiftPrint('🍀 LUCKY NORMALIZED RESULTS BEFORE TARGET RESOLVE', {
+      if (kLiveDebug) _forceGiftPrint('🍀 LUCKY NORMALIZED RESULTS BEFORE TARGET RESOLVE', {
         'normalized_results': normalizedResults,
         'current_gifts_data_before_result': giftsData,
         'is_gift_animation_showing': isGiftAnimationShowing.value,
@@ -365,7 +367,7 @@ extension LuckyEventHandler on WebsocketController {
         }
       }
 
-      _forceGiftPrint('🍀 LUCKY ANIMATION TARGETS RESOLVED', {
+      if (kLiveDebug) _forceGiftPrint('🍀 LUCKY ANIMATION TARGETS RESOLVED', {
         'receiver_ids': luckyAnimationReceiverIds,
         'receiver_seat_nos': luckyAnimationSeatNos,
         'current_live_call_list': liveCallList.toList(),
@@ -480,7 +482,7 @@ extension LuckyEventHandler on WebsocketController {
           'timestamp': data['timestamp'] ?? DateTime.now().toIso8601String(),
         };
 
-        _forceGiftPrint(
+        if (kLiveDebug) _forceGiftPrint(
           '🍀 LUCKY SINGLE RESULT NORMALIZED #${commentsToAdd.length + 1}',
           {
             'source_result': result,
@@ -514,7 +516,7 @@ extension LuckyEventHandler on WebsocketController {
         }
       }
 
-      _forceGiftPrint('🍀 LUCKY FINAL RESULT COLLECTION', {
+      if (kLiveDebug) _forceGiftPrint('🍀 LUCKY FINAL RESULT COLLECTION', {
         'all_normalized_results': commentsToAdd,
         'best_result': bestResult,
         'result_count': commentsToAdd.length,
@@ -574,7 +576,7 @@ extension LuckyEventHandler on WebsocketController {
             'result_event_id': bestResult['event_id'],
           };
           giftsData.refresh();
-          _forceGiftPrint('🍀 LUCKY FINAL GIFTS DATA BOUND TO ANIMATION', {
+          if (kLiveDebug) _forceGiftPrint('🍀 LUCKY FINAL GIFTS DATA BOUND TO ANIMATION', {
             'gifts_data': giftsData,
             'best_result': bestResult,
             'animation_receiver_ids': luckyAnimationReceiverIds,

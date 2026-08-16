@@ -123,7 +123,7 @@ class _SvipSettingsPageState extends State<SvipSettingsPage> {
                     ),
                   ),
                   Text(
-                    ('SVIP Settings').appTr,
+                    ('${controller.sectionLabel} Settings').appTr,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.roboto(
@@ -157,9 +157,7 @@ class _SvipSettingsPageState extends State<SvipSettingsPage> {
                   return _NoActiveVip(scale: s);
                 }
 
-                final master = screen?.masterSwitch;
-                final switches = screen?.switches ??
-                    const <VipSettingSwitchItem>[];
+                final permissionSwitches = controller.permissionSwitchItems;
 
                 return RefreshIndicator(
                   color: const Color(0xff39d66f),
@@ -170,57 +168,35 @@ class _SvipSettingsPageState extends State<SvipSettingsPage> {
                       parent: BouncingScrollPhysics(),
                     ),
                     children: [
+                      // ✅ ONLY VIP PRIVILEGES:
+                      // Backend/API `permission_switches`-e je item gula ashbe
+                      // sudhu oi gula-i ei page-e show hobe.
                       _SettingsSectionHeader(
-                        title: ('SVIP Settings').appTr,
+                        title: ('VIP Privileges').appTr,
                         scale: s,
                       ),
-                      if (master != null)
-                        _apiSwitchTile(master, s, isMaster: true),
-                      ...switches.map((item) => _apiSwitchTile(item, s)),
-                      _SettingsSectionHeader(
-                        title: ('Honorary privilege').appTr,
-                        scale: s,
-                      ),
-                      _SettingsLinkTile(
-                        scale: s,
-                        badges: [_badgeForLevel(1)],
-                        title: ('View visitor records').appTr,
-                      ),
-                      _SettingsLinkTile(
-                        scale: s,
-                        badges: [_badgeForLevel(1)],
-                        title: ('Profile background').appTr,
-                      ),
-                      _SettingsLinkTile(
-                        scale: s,
-                        badges: [_badgeForLevel(3)],
-                        title: ('Customized theme').appTr,
-                      ),
-                      _SettingsLinkTile(
-                        scale: s,
-                        badges: [_badgeForLevel(4)],
-                        title: ('Special ID').appTr,
-                      ),
-                      _SettingsLinkTile(
-                        scale: s,
-                        badges: [_badgeForLevel(6)],
-                        title: ('Dynamic Avatar(Gif)').appTr,
-                      ),
-                      _SettingsSectionHeader(
-                        title: ('Other privilege').appTr,
-                        scale: s,
-                      ),
-                      _SettingsLinkTile(
-                        scale: s,
-                        badges: [_badgeForLevel(7)],
-                        title: ('Unban account').appTr,
-                      ),
-                      _SettingsLinkTile(
-                        scale: s,
-                        badges: [_badgeForLevel(9)],
-                        title: ('Ban account').appTr,
-                        showBottomLine: false,
-                      ),
+
+                      if (permissionSwitches.isEmpty)
+                        Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 20 * s,
+                            vertical: 36 * s,
+                          ),
+                          child: Text(
+                            ('No VIP privileges available').appTr,
+                            textAlign: TextAlign.center,
+                            style: GoogleFonts.roboto(
+                              color: const Color(0xff888888),
+                              fontSize: 14.5 * s,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        )
+                      else
+                        ...permissionSwitches.map(
+                              (item) => _apiPermissionSwitchTile(item, s),
+                        ),
+
                       SizedBox(height: 22 * s),
                     ],
                   ),
@@ -255,6 +231,46 @@ class _SvipSettingsPageState extends State<SvipSettingsPage> {
         controller.updateVipSetting(key: item.key, value: next);
       },
       emphasize: isMaster,
+    );
+  }
+
+
+  Widget _apiPermissionSwitchTile(
+      Map<String, dynamic> item,
+      double scale,
+      ) {
+    final key = VipHelpers.toStr(item['key']).trim();
+    if (key.isEmpty) return const SizedBox.shrink();
+
+    final label = VipHelpers.firstStr(
+      item,
+      ['label', 'title'],
+      fallback: key.replaceAll('_', ' '),
+    );
+    final description = VipHelpers.firstStr(
+      item,
+      ['description', 'subtitle', 'text'],
+    );
+    final icon = VipHelpers.toStr(item['icon']).trim();
+
+    final levelNo = controller.currentVip.value?.vipLevelNo ??
+        widget.level?.levelNo ??
+        1;
+    final saving = controller.isSettingSaving(key);
+    final anySaving = controller.isSettingsLoading.value;
+    final value = controller.settingValue(key);
+
+    return _SettingsSwitchTile(
+      scale: scale,
+      badges: [_badgeForLevel(levelNo)],
+      title: icon.isEmpty ? label.appTr : '$icon ${label.appTr}',
+      description: description.appTr,
+      value: value,
+      loading: saving,
+      enabled: !anySaving,
+      onChanged: (next) {
+        controller.updateVipSetting(key: key, value: next);
+      },
     );
   }
 }
@@ -841,4 +857,3 @@ List<Color> _badgeColors(String label) {
       return const [Color(0xfff95a6e), Color(0xffa82235)];
   }
 }
-

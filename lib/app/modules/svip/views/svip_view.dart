@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:meetlivepro/app/modules/svip/views/vipModel.dart';
@@ -12,11 +13,15 @@ import 'Widgets/vipMEdiaView.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 class SvipView extends StatelessWidget {
-  SvipView({super.key});
+  final VipSectionMode mode;
+  late final SvipController svipController;
 
-  final SvipController svipController = Get.isRegistered<SvipController>()
-      ? Get.find<SvipController>()
-      : Get.put(SvipController());
+  SvipView({super.key, this.mode = VipSectionMode.vip}) {
+    final String tag = mode.name;
+    svipController = Get.isRegistered<SvipController>(tag: tag)
+        ? Get.find<SvipController>(tag: tag)
+        : Get.put(SvipController(mode: mode), tag: tag);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +44,7 @@ class SvipView extends StatelessWidget {
             return _VipLevelBody(
               level: level,
               controller: svipController,
-              style: _VipStyle.byIndex(selectedIndex),
+              style: _VipStyle.byIndex(selectedIndex, mode: svipController.mode),
             );
           }),
           _TopBar(controller: svipController),
@@ -59,7 +64,10 @@ class SvipView extends StatelessWidget {
               child: _BottomBuyCard(
                 level: level,
                 controller: svipController,
-                style: _VipStyle.byIndex(svipController.selectedTab.value),
+                style: _VipStyle.byIndex(
+                  svipController.selectedTab.value,
+                  mode: svipController.mode,
+                ),
               ),
             );
           }),
@@ -88,7 +96,7 @@ class _VipStyle {
     required this.bgAsset,
   });
 
-  static _VipStyle byIndex(int index) {
+  static _VipStyle byIndex(int index, {VipSectionMode mode = VipSectionMode.vip}) {
     final List<_VipStyle> styles = [
       const _VipStyle(
         bgDark: Color(0xff0c0700),
@@ -164,6 +172,16 @@ class _VipStyle {
       ),
     ];
 
+    if (mode == VipSectionMode.svip) {
+      // The SVIP tier reuses the same palette but starts from its deepest,
+      // richest tones (the look originally reserved for the 8th/top tier)
+      // instead of restarting at VIP1's bronze look, so the SVIP page still
+      // reads as a distinct, more premium space than the VIP page.
+      const svipStyleOrder = [7, 5, 3, 6, 1, 4, 2, 0];
+      final safeIndex = index < 0 ? 0 : index;
+      return styles[svipStyleOrder[safeIndex % svipStyleOrder.length]];
+    }
+
     if (index < 0 || index >= styles.length) return styles.first;
     return styles[index];
   }
@@ -198,9 +216,12 @@ class _TopBar extends StatelessWidget {
                 ),
                 const Spacer(),
                 _PremiumTopTitle(
-                  title: ('SVIP').appTr,
+                  title: controller.sectionLabel.appTr,
                   selected: true,
-                  color: _VipStyle.byIndex(controller.selectedTab.value).primary,
+                  color: _VipStyle.byIndex(
+                    controller.selectedTab.value,
+                    mode: controller.mode,
+                  ).primary,
                 ),
                 SizedBox(width: w * .105),
                 _PremiumTopTitle(
@@ -361,7 +382,10 @@ class _VipTabBar extends StatelessWidget {
       child: Obx(() {
         final levels = controller.vipLevels;
         if (levels.isEmpty) return const SizedBox.shrink();
-        final style = _VipStyle.byIndex(controller.selectedTab.value);
+        final style = _VipStyle.byIndex(
+          controller.selectedTab.value,
+          mode: controller.mode,
+        );
 
         return Container(
           height: Get.height * .065,
@@ -901,6 +925,12 @@ class _VipIdentityGrid extends StatelessWidget {
         mediaUrl: _vipTitlePlayUrl(level),
       ),
       _VipCardItem(
+        'VIP Name',
+        _vipNameShowImageUrl(level),
+        Icons.text_fields_rounded,
+        mediaUrl: _vipNamePlayUrl(level),
+      ),
+      _VipCardItem(
         'VIP Badge',
         _vipBadgeShowImageUrl(level),
         Icons.verified_rounded,
@@ -917,6 +947,12 @@ class _VipIdentityGrid extends StatelessWidget {
         _vipProfileCardShowImageUrl(level),
         Icons.contact_page_rounded,
         mediaUrl: _vipProfileCardPlayUrl(level),
+      ),
+      _VipCardItem(
+        'Chat Bubble',
+        _vipChatBubbleShowImageUrl(level),
+        Icons.chat_bubble_outline_rounded,
+        mediaUrl: _vipChatBubblePlayUrl(level),
       ),
       _VipCardItem('Chat Color', '', Icons.chat_bubble_rounded, colorText: level.chatBubbleColor),
     ];
@@ -1048,38 +1084,39 @@ class _VipSmartNetworkImage extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(borderRadius),
-      child: Image.network(
-        url,
+      child: CachedNetworkImage(
+        imageUrl: url,
         fit: fit,
         filterQuality: FilterQuality.high,
-        gaplessPlayback: true,
-        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-          if (wasSynchronouslyLoaded || frame != null) {
-            return TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0.92, end: 1),
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              child: child,
-              builder: (context, value, builtChild) {
-                return Opacity(
-                  opacity: value.clamp(0.0, 1.0),
-                  child: Transform.scale(
-                    scale: value,
-                    child: builtChild,
-                  ),
-                );
-              },
-            );
-          }
-
-          return _VipShimmerBox(
-            borderRadius: borderRadius,
-            baseColor: shimmerBaseColor,
-            highlightColor: shimmerHighlightColor,
+        // The package's own cross-fade is disabled here because imageBuilder
+        // below reproduces the exact same scale + fade entrance the design
+        // already used with Image.network's frameBuilder. Two fades stacked
+        // on top of each other would look like a double-flicker.
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        imageBuilder: (context, imageProvider) {
+          return TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.92, end: 1),
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            child: Image(
+              image: imageProvider,
+              fit: fit,
+              filterQuality: FilterQuality.high,
+              gaplessPlayback: true,
+            ),
+            builder: (context, value, builtChild) {
+              return Opacity(
+                opacity: value.clamp(0.0, 1.0),
+                child: Transform.scale(
+                  scale: value,
+                  child: builtChild,
+                ),
+              );
+            },
           );
         },
-        loadingBuilder: (context, child, loadingProgress) {
-          if (loadingProgress == null) return child;
+        progressIndicatorBuilder: (context, url, downloadProgress) {
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -1099,17 +1136,14 @@ class _VipSmartNetworkImage extends StatelessWidget {
                   child: CircularProgressIndicator(
                     strokeWidth: 1.7,
                     valueColor: AlwaysStoppedAnimation<Color>(shimmerHighlightColor),
-                    value: loadingProgress.expectedTotalBytes == null
-                        ? null
-                        : loadingProgress.cumulativeBytesLoaded /
-                        loadingProgress.expectedTotalBytes!,
+                    value: downloadProgress.progress,
                   ),
                 ),
               ),
             ],
           );
         },
-        errorBuilder: (_, __, ___) => fallback,
+        errorWidget: (context, url, error) => fallback,
       ),
     );
   }
@@ -1894,25 +1928,17 @@ class _BottomBuyCard extends StatelessWidget {
                                 child: ClipOval(
                                   child: profileImageUrl.isEmpty
                                       ? _VipProfileFallback(style: style)
-                                      : Image.network(
-                                    profileImageUrl,
+                                      : CachedNetworkImage(
+                                    imageUrl: profileImageUrl,
                                     fit: BoxFit.cover,
                                     filterQuality: FilterQuality.high,
-                                    gaplessPlayback: true,
-                                    loadingBuilder: (
-                                        context,
-                                        child,
-                                        loadingProgress,
-                                        ) {
-                                      if (loadingProgress == null) {
-                                        return child;
-                                      }
-                                      return _VipProfileFallback(
-                                        style: style,
-                                        loading: true,
-                                      );
-                                    },
-                                    errorBuilder: (_, __, ___) =>
+                                    fadeInDuration: const Duration(milliseconds: 180),
+                                    placeholder: (context, url) =>
+                                        _VipProfileFallback(
+                                          style: style,
+                                          loading: true,
+                                        ),
+                                    errorWidget: (context, url, error) =>
                                         _VipProfileFallback(style: style),
                                   ),
                                 ),
@@ -2440,6 +2466,18 @@ String _vipDynamicString(dynamic item, List<String> getterNames) {
       } else if (name == 'profileCardImageShowImageUrl') {
         final v = _cleanVipUrl(item.profileCardImageShowImageUrl?.toString() ?? '');
         if (v.isNotEmpty) return v;
+      } else if (name == 'nameImageUrl') {
+        final v = _cleanVipUrl(item.nameImageUrl?.toString() ?? '');
+        if (v.isNotEmpty) return v;
+      } else if (name == 'nameImageShowImageUrl') {
+        final v = _cleanVipUrl(item.nameImageShowImageUrl?.toString() ?? '');
+        if (v.isNotEmpty) return v;
+      } else if (name == 'chatBubbleImageUrl') {
+        final v = _cleanVipUrl(item.chatBubbleImageUrl?.toString() ?? '');
+        if (v.isNotEmpty) return v;
+      } else if (name == 'chatBubbleImageShowImageUrl') {
+        final v = _cleanVipUrl(item.chatBubbleImageShowImageUrl?.toString() ?? '');
+        if (v.isNotEmpty) return v;
       }
     } catch (_) {}
   }
@@ -2533,6 +2571,22 @@ String _vipProfileCardPlayUrl(VipLevel level) {
   );
 }
 
+String _vipNamePlayUrl(VipLevel level) {
+  return _vipRawOrModelUrl(
+    level,
+    rawKeys: ['name_image_url', 'nameImageUrl', 'name_image', 'nameImage'],
+    modelGetters: ['nameImageUrl', 'nameImage'],
+  );
+}
+
+String _vipChatBubblePlayUrl(VipLevel level) {
+  return _vipRawOrModelUrl(
+    level,
+    rawKeys: ['chat_bubble_image_url', 'chatBubbleImageUrl', 'chat_bubble_image', 'chatBubbleImage'],
+    modelGetters: ['chatBubbleImageUrl', 'chatBubbleImage'],
+  );
+}
+
 String _vipFrameShowImageUrl(VipLevel level) {
   final dynamic item = level;
 
@@ -2616,6 +2670,40 @@ String _vipProfileCardShowImageUrl(VipLevel level) {
   }
 
   return _vipStaticPreviewOnly(_vipProfileCardPlayUrl(level));
+}
+
+String _vipNameShowImageUrl(VipLevel level) {
+  final dynamic item = level;
+
+  final modelValue = _vipDynamicString(item, ['nameImageShowImageUrl']);
+  final modelStatic = _vipStaticPreviewOnly(modelValue);
+  if (modelStatic.isNotEmpty) return modelStatic;
+
+  final raw = _vipRawMap(item);
+  if (raw != null) {
+    final v = _vipStringFromMap(raw, ['name_image_show_image_url', 'nameImageShowImageUrl', 'name_image_show_image']);
+    final staticValue = _vipStaticPreviewOnly(v);
+    if (staticValue.isNotEmpty) return staticValue;
+  }
+
+  return _vipStaticPreviewOnly(_vipNamePlayUrl(level));
+}
+
+String _vipChatBubbleShowImageUrl(VipLevel level) {
+  final dynamic item = level;
+
+  final modelValue = _vipDynamicString(item, ['chatBubbleImageShowImageUrl']);
+  final modelStatic = _vipStaticPreviewOnly(modelValue);
+  if (modelStatic.isNotEmpty) return modelStatic;
+
+  final raw = _vipRawMap(item);
+  if (raw != null) {
+    final v = _vipStringFromMap(raw, ['chat_bubble_image_show_image_url', 'chatBubbleImageShowImageUrl', 'chat_bubble_image_show_image']);
+    final staticValue = _vipStaticPreviewOnly(v);
+    if (staticValue.isNotEmpty) return staticValue;
+  }
+
+  return _vipStaticPreviewOnly(_vipChatBubblePlayUrl(level));
 }
 
 String _vipAssetName(dynamic asset) {

@@ -19,6 +19,7 @@ class LiveSeatController extends GetxController {
 
   final LivestreamController livestreamController;
   final RxBool seatSwitchLoading = false.obs;
+  final RxInt pendingSeatNo = 0.obs;
 
   int currentUserSeatNo({bool ignorePresence = false}) {
     final currentUserId =
@@ -94,8 +95,14 @@ class LiveSeatController extends GetxController {
       Fluttertoast.showToast(msg: ('User not found').appTr);
       return null;
     }
+    final int capacity =
+        livestreamController.websocketController.activeSeatCapacity;
+    if (toSeatNo <= 0 || toSeatNo > capacity) {
+      Fluttertoast.showToast(msg: ('Invalid seat number').appTr);
+      return null;
+    }
 
-    final oldSeatNo = fromSeatNo ?? currentUserSeatNo();
+    final oldSeatNo = fromSeatNo ?? currentUserSeatNo(ignorePresence: true);
 
     if (oldSeatNo > 0) {
       final seatsData = await getAvailableSeats(livestreamId);
@@ -104,13 +111,16 @@ class LiveSeatController extends GetxController {
       }
     }
 
-    final verifiedOldSeatNo = currentUserSeatNo();
+    final verifiedOldSeatNo = currentUserSeatNo(ignorePresence: true);
     if (verifiedOldSeatNo == 0) {
       Fluttertoast.showToast(msg: ('Please join a seat first').appTr);
       return null;
     }
 
-    final safeOldSeatNo = fromSeatNo ?? verifiedOldSeatNo;
+    final safeOldSeatNo =
+        fromSeatNo != null && fromSeatNo == verifiedOldSeatNo
+        ? fromSeatNo
+        : verifiedOldSeatNo;
 
     if (safeOldSeatNo == 0) {
       Fluttertoast.showToast(msg: ('Please join a seat first').appTr);
@@ -164,6 +174,7 @@ class LiveSeatController extends GetxController {
       }
 
       seatSwitchLoading.value = true;
+      pendingSeatNo.value = toSeatNo;
 
       final body = {
         'user_id': currentUserId,
@@ -237,6 +248,12 @@ class LiveSeatController extends GetxController {
           : ('Seat switch failed').appTr;
 
       Fluttertoast.showToast(msg: message);
+      if (response.statusCode == 409 || response.statusCode == 422) {
+        await livestreamController.tryToGetCallList(
+          streamId: livestreamId,
+          force: true,
+        );
+      }
       return null;
     } catch (e) {
       liveLog('❌ switchAudioSeat error: $e');
@@ -244,6 +261,7 @@ class LiveSeatController extends GetxController {
       return null;
     } finally {
       seatSwitchLoading.value = false;
+      pendingSeatNo.value = 0;
     }
   }
 

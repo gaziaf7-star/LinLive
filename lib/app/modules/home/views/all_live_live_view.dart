@@ -55,16 +55,9 @@ class AllLiveListView extends GetView<HomeController> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF3B072F).withOpacity(.22),
-              Color(0xFF3B072F).withOpacity(.96),
-            ],
-          ),
-        ),
+        // Keep this page transparent so the Home API background + white fade
+        // from HomeView stays visible behind the live list.
+        color: Colors.transparent,
         child: CustomRefreshIndicator(
           onRefresh: () async => controller.refreshLivestreamList(),
           builder:
@@ -356,8 +349,8 @@ class _EmptyLiveList extends StatelessWidget {
         Center(
           child: Column(
             children: [
-              Lottie.asset(
-                'assets/flaticons/nYuPvdjcOD.json',
+              Image.asset(
+                'assets/audio_live/emptyimage.png',
                 height: kHeight * 0.14,
                 width: kHeight * 0.14,
                 fit: BoxFit.cover,

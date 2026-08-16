@@ -958,6 +958,51 @@ class HomeController extends GetxController {
   bool _liveCountryBootstrappedFromProfile = false;
   bool _liveCountryChangedByUser = false;
 
+  // HomeController can survive longer than one login session.
+  // Bind the selected country to the current authenticated account so a
+  // previous user's/manual country's value can never leak into a new account.
+  int _liveCountryBoundUserId = 0;
+
+  int _currentLiveCountryAuthUserId() {
+    final dynamic rawId = authController.userProfile.value.user?.id;
+    if (rawId is num) return rawId.toInt();
+    return int.tryParse(rawId?.toString().trim() ?? '') ?? 0;
+  }
+
+  String _registrationProfileCountryRaw() {
+    return authController.userProfile.value.user?.country?.toString().trim() ?? '';
+  }
+
+  String _registrationProfileCountryNormalized() {
+    final String raw = _registrationProfileCountryRaw();
+    if (!_isUsableProfileCountry(raw)) return '';
+    return _normalizeLiveCountry(raw);
+  }
+
+  String get registrationLiveCountryName {
+    final String normalized = _registrationProfileCountryNormalized();
+    return normalized.isEmpty ? '' : _countryDisplayName(normalized);
+  }
+
+  String get registrationLiveCountryFlag {
+    final String normalized = _registrationProfileCountryNormalized();
+    return normalized.isEmpty ? '🌐' : _countryFlag(normalized);
+  }
+
+  void _bindLiveCountryToCurrentAccount() {
+    final int currentUserId = _currentLiveCountryAuthUserId();
+    if (currentUserId <= 0) return;
+
+    if (_liveCountryBoundUserId == currentUserId) return;
+
+    _liveCountryBoundUserId = currentUserId;
+    _liveCountryBootstrappedFromProfile = false;
+    _liveCountryChangedByUser = false;
+    selectedLiveCountryName.value = 'Global';
+    selectedLiveCountryFlag.value = '🌐';
+    selectedLiveCountryMatchCount.value = 0;
+  }
+
   /// UI te only available live countries show korar jonno.
   /// Format: {'name': 'Bangladesh', 'key': 'bangladesh', 'flag': '🇧🇩', 'count': '4'}
   final RxList<Map<String, String>> availableLiveCountryOptions =
@@ -1239,28 +1284,34 @@ class HomeController extends GetxController {
     return '';
   }
 
-  bool _isSelectedCountryLive(dynamic raw) {
-    final selected = _normalizeLiveCountry(selectedLiveCountryName.value);
+  String _effectiveHomeCountryNormalized() {
+    final String selected = _normalizeLiveCountry(selectedLiveCountryName.value);
 
-    if (selected.isEmpty || selected == 'global' || selected == 'all') {
-      return false;
+    if (selected.isNotEmpty && selected != 'global' && selected != 'all') {
+      return selected;
     }
 
-    final liveCountry = _countryOfLive(raw);
+    // Before async bootstrap completes, never treat Country tab as "All".
+    // Fall back to the authenticated profile country selected during account
+    // registration/onboarding.
+    return _registrationProfileCountryNormalized();
+  }
+
+  bool _isSelectedCountryLive(dynamic raw) {
+    final String selected = _effectiveHomeCountryNormalized();
+    if (selected.isEmpty) return false;
+
+    final String liveCountry = _countryOfLive(raw);
     if (liveCountry.isEmpty) return false;
 
-    // Country filter must be strict. Selecting Bangladesh must never show
-    // another country's room just because one country name contains another.
+    // Strict equality: Bangladesh tab cannot show India/Pakistan/etc rooms.
     return liveCountry == selected;
   }
 
-  /// Home tab-er country filter-er public helpers.
-  /// Existing sorting logic reuse kore, duplicate country resolver banay na.
+  /// Home Country tab only returns the current account/profile country's live.
+  /// If auth country is still restoring, return no mixed-country data instead
+  /// of briefly showing the global list under the country tab.
   bool liveMatchesSelectedCountry(dynamic raw) {
-    final selected = _normalizeLiveCountry(selectedLiveCountryName.value);
-    if (selected.isEmpty || selected == 'global' || selected == 'all') {
-      return true;
-    }
     return _isSelectedCountryLive(raw);
   }
 
@@ -1281,56 +1332,58 @@ class HomeController extends GetxController {
   }
 
   /// Home may build before the stored auth profile has finished restoring.
-  /// Wait briefly for the real account country instead of leaving the tab Global.
+  /// Wait for the authenticated account and bind the Home Country tab to
+  /// user.country (the country saved by registration/onboarding in current API).
   Future<void> bootstrapSelectedLiveCountryFromProfile() async {
-    if (_liveCountryBootstrappedFromProfile || _liveCountryChangedByUser) {
-      return;
-    }
+    for (int attempt = 0; attempt < 80; attempt++) {
+      _bindLiveCountryToCurrentAccount();
 
-    for (int attempt = 0; attempt < 24; attempt++) {
       if (_liveCountryChangedByUser) return;
 
-      final rawCountry =
-          authController.userProfile.value.user?.country?.toString().trim() ?? '';
+      final int userId = _currentLiveCountryAuthUserId();
+      final String rawCountry = _registrationProfileCountryRaw();
 
-      if (_isUsableProfileCountry(rawCountry)) {
+      if (userId > 0 && _isUsableProfileCountry(rawCountry)) {
         syncSelectedLiveCountryFromProfile(force: true);
         return;
       }
 
-      await Future<void>.delayed(const Duration(milliseconds: 125));
+      await Future<void>.delayed(const Duration(milliseconds: 150));
     }
   }
 
-  /// Login / Google onboarding / Edit Profile API-te saved country-ke
-  /// Home-er PK-er porer default country tab banabe.
+  /// Auth profile user.country is the current source of truth for the Home
+  /// registration-country tab. New login/account automatically resets stale
+  /// country state from the previous account.
   void syncSelectedLiveCountryFromProfile({bool force = false}) {
+    _bindLiveCountryToCurrentAccount();
+
     if (_liveCountryChangedByUser && !force) return;
 
-    final current = _normalizeLiveCountry(selectedLiveCountryName.value);
-    if (!force &&
-        current.isNotEmpty &&
-        current != 'global' &&
-        current != 'all') {
-      _liveCountryBootstrappedFromProfile = true;
-      return;
-    }
+    final int userId = _currentLiveCountryAuthUserId();
+    if (userId <= 0) return;
 
-    final rawCountry =
-        authController.userProfile.value.user?.country?.toString().trim() ?? '';
+    final String rawCountry = _registrationProfileCountryRaw();
+    if (!_isUsableProfileCountry(rawCountry)) return;
 
-    if (!_isUsableProfileCountry(rawCountry)) {
-      return;
-    }
+    final String normalized = _normalizeLiveCountry(rawCountry);
+    final String countryName = _countryDisplayName(normalized);
+    final String countryFlag = _countryFlag(normalized);
 
-    final normalized = _normalizeLiveCountry(rawCountry);
+    final String current = _normalizeLiveCountry(selectedLiveCountryName.value);
+    final bool alreadySame =
+        current == normalized && selectedLiveCountryFlag.value == countryFlag;
 
-    selectedLiveCountryName.value = _countryDisplayName(normalized);
-    selectedLiveCountryFlag.value = _countryFlag(normalized);
+    _liveCountryBoundUserId = userId;
     _liveCountryBootstrappedFromProfile = true;
 
+    if (!force && alreadySame) return;
+
+    selectedLiveCountryName.value = countryName;
+    selectedLiveCountryFlag.value = countryFlag;
+
     debugPrint(
-      '🌍 Home account country => '
+      '🌍 Home registration/profile country => '
           '${selectedLiveCountryFlag.value} ${selectedLiveCountryName.value}',
     );
 
@@ -1343,8 +1396,14 @@ class HomeController extends GetxController {
     int minimumResults = 8,
     int maxAdditionalPages = 8,
   }) async {
-    final selected = _normalizeLiveCountry(selectedLiveCountryName.value);
-    if (selected.isEmpty || selected == 'global' || selected == 'all') return;
+    _bindLiveCountryToCurrentAccount();
+
+    if (_effectiveHomeCountryNormalized().isEmpty) {
+      syncSelectedLiveCountryFromProfile(force: true);
+    }
+
+    final String selected = _effectiveHomeCountryNormalized();
+    if (selected.isEmpty) return;
 
     int loadedPages = 0;
     int waitCycles = 0;
@@ -1373,6 +1432,7 @@ class HomeController extends GetxController {
   }
 
   Future<void> refreshSelectedCountryLivestreams() async {
+    await bootstrapSelectedLiveCountryFromProfile();
     await refreshLivestreamList();
     await ensureSelectedCountryLivestreams(
       minimumResults: 8,
@@ -1384,6 +1444,7 @@ class HomeController extends GetxController {
     required String name,
     required String flagEmoji,
   }) {
+    _bindLiveCountryToCurrentAccount();
     _liveCountryChangedByUser = true;
     _liveCountryBootstrappedFromProfile = true;
 
@@ -1672,6 +1733,9 @@ class HomeController extends GetxController {
           append: !refresh && page > 1,
         );
 
+        // If auth profile is already available, set the first Home tab to the
+        // account's saved country before sorting/filtering the live cards.
+        syncSelectedLiveCountryFromProfile();
         _sortLiveStreamList();
 
       } else {
@@ -3693,6 +3757,40 @@ class HomeController extends GetxController {
         name.toLowerCase() != 'null';
   }
 
+  /// Supports both CP API response formats:
+  /// Old: { "user_1": {...}, "user_2": {...} }
+  /// New: { "couples": [{...}, {...}] }
+  Map<String, dynamic> _normalizeCpActiveCouple(dynamic raw) {
+    final Map<String, dynamic> item = _cpSafeMap(raw);
+    if (item.isEmpty) return <String, dynamic>{};
+
+    Map<String, dynamic> userOne = _cpSafeMap(item['user_1']);
+    Map<String, dynamic> userTwo = _cpSafeMap(item['user_2']);
+
+    final dynamic rawCouples = item['couples'];
+    if ((userOne.isEmpty || userTwo.isEmpty) && rawCouples is List) {
+      if (rawCouples.isNotEmpty) {
+        userOne = _cpSafeMap(rawCouples[0]);
+      }
+      if (rawCouples.length > 1) {
+        userTwo = _cpSafeMap(rawCouples[1]);
+      }
+    }
+
+    if (!_cpHasRealUser(userOne) || !_cpHasRealUser(userTwo)) {
+      return <String, dynamic>{};
+    }
+
+    return <String, dynamic>{
+      ...item,
+      // Keep old keys for existing Home UI / backward compatibility.
+      'user_1': userOne,
+      'user_2': userTwo,
+      // Keep the new API format available too.
+      'couples': <Map<String, dynamic>>[userOne, userTwo],
+    };
+  }
+
   Future<void> loadCpActiveCouples({
     bool silent = true,
     bool force = false,
@@ -3734,14 +3832,14 @@ class HomeController extends GetxController {
       final List<dynamic> list =
       rawList is List ? List<dynamic>.from(rawList) : <dynamic>[];
 
-      // Keep only real active couples with both users available.
-      // Deleted-user rows such as user_1=null / N/A are intentionally hidden
-      // from the compact Home card so the UI always shows a proper couple.
-      final List<dynamic> clean = list.where((raw) {
-        final Map<String, dynamic> item = _cpSafeMap(raw);
-        return _cpHasRealUser(item['user_1']) &&
-            _cpHasRealUser(item['user_2']);
-      }).toList();
+      // Normalize both old and new API response formats.
+      // Current production API returns:
+      // { "couples": [userOne, userTwo] }
+      // Older app code expected user_1 / user_2, so normalize once here.
+      final List<Map<String, dynamic>> clean = list
+          .map(_normalizeCpActiveCouple)
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
 
       cpActiveCouples.assignAll(clean);
       cpActiveCouples.refresh();

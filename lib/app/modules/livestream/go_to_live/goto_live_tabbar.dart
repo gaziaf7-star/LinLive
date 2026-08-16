@@ -53,7 +53,7 @@ class _GotoLiveTabViewState extends State<GotoLiveTabView>
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        backgroundColor: kAppColor1.withOpacity(.5),
+        backgroundColor: Colors.white.withOpacity(.1),
         body: Stack(
           children: [
             // Foreground content
@@ -75,7 +75,16 @@ class _GotoLiveTabViewState extends State<GotoLiveTabView>
         ),
         bottomNavigationBar: Container(
           decoration:  BoxDecoration(
-            color: kAppColor1.withOpacity(.4),
+            gradient:  LinearGradient(
+              colors: [
+                Color(0xff5904d8),
+                Color(0xff6d05c1),
+                Color(0xff5904d8),
+
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
           ),
           child: SafeArea(
             top: false,
@@ -89,7 +98,9 @@ class _GotoLiveTabViewState extends State<GotoLiveTabView>
                   borderRadius: BorderRadius.circular(12),
                   gradient:  LinearGradient(
                     colors: [
-                      kPostIconColor, kPostIconColor.withOpacity(.6),  kPostIconColor
+                      Color(0xff5904d8),
+                      Color(0xff6d05c1),
+                      Color(0xff5904d8),
 
                     ],
                     begin: Alignment.topLeft,

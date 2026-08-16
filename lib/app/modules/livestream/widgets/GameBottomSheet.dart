@@ -91,83 +91,85 @@ class _GameBottomSheetState extends State<GameBottomSheet>
           top: Radius.circular(16),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Center(
-            child: Text(
-              ('GAME CENTER').appTr,
-              style: GoogleFonts.lato(
-                fontSize: (screenSize.width * 0.045)
-                    .clamp(16.0, 19.0)
-                    .toDouble(),
-                color: Colors.black,
-                fontWeight: FontWeight.w700,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Center(
+              child: Text(
+                ('GAME CENTER').appTr,
+                style: GoogleFonts.lato(
+                  fontSize: (screenSize.width * 0.045)
+                      .clamp(16.0, 19.0)
+                      .toDouble(),
+                  color: Colors.black,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-          ),
-          SizedBox(
-            height: (screenSize.height * 0.010)
-                .clamp(7.0, 10.0)
-                .toDouble(),
-          ),
-          // Container(
-          //   height: 42,
-          //   padding: const EdgeInsets.all(4),
-          //   decoration: BoxDecoration(
-          //     color: const Color(0xFFF2F2F4),
-          //     borderRadius: BorderRadius.circular(12),
-          //   ),
-          //   child: TabBar(
-          //     controller: _tabController,
-          //     indicator: BoxDecoration(
-          //       color: Colors.white,
-          //       borderRadius: BorderRadius.circular(9),
-          //       boxShadow: const <BoxShadow>[
-          //         BoxShadow(
-          //           color: Color(0x16000000),
-          //           blurRadius: 8,
-          //           offset: Offset(0, 2),
-          //         ),
-          //       ],
-          //     ),
-          //     indicatorSize: TabBarIndicatorSize.tab,
-          //     dividerColor: Colors.transparent,
-          //     labelColor: const Color(0xFF6D2CE8),
-          //     unselectedLabelColor: Colors.black54,
-          //     labelStyle: GoogleFonts.lato(
-          //       fontWeight: FontWeight.w800,
-          //       fontSize: 13,
-          //     ),
-          //     unselectedLabelStyle: GoogleFonts.lato(
-          //       fontWeight: FontWeight.w600,
-          //       fontSize: 13,
-          //     ),
-          //     tabs: <Widget>[
-          //       Tab(text: ('Top').appTr),
-          //       Tab(text: ('Top1').appTr),
-          //     ],
-          //   ),
-          // ),
-          SizedBox(
-            height: (screenSize.height * 0.012)
-                .clamp(8.0, 12.0)
-                .toDouble(),
-          ),
+            SizedBox(
+              height: (screenSize.height * 0.010)
+                  .clamp(7.0, 10.0)
+                  .toDouble(),
+            ),
+            // Container(
+            //   height: 42,
+            //   padding: const EdgeInsets.all(4),
+            //   decoration: BoxDecoration(
+            //     color: const Color(0xFFF2F2F4),
+            //     borderRadius: BorderRadius.circular(12),
+            //   ),
+            //   child: TabBar(
+            //     controller: _tabController,
+            //     indicator: BoxDecoration(
+            //       color: Colors.white,
+            //       borderRadius: BorderRadius.circular(9),
+            //       boxShadow: const <BoxShadow>[
+            //         BoxShadow(
+            //           color: Color(0x16000000),
+            //           blurRadius: 8,
+            //           offset: Offset(0, 2),
+            //         ),
+            //       ],
+            //     ),
+            //     indicatorSize: TabBarIndicatorSize.tab,
+            //     dividerColor: Colors.transparent,
+            //     labelColor: const Color(0xFF6D2CE8),
+            //     unselectedLabelColor: Colors.black54,
+            //     labelStyle: GoogleFonts.lato(
+            //       fontWeight: FontWeight.w800,
+            //       fontSize: 13,
+            //     ),
+            //     unselectedLabelStyle: GoogleFonts.lato(
+            //       fontWeight: FontWeight.w600,
+            //       fontSize: 13,
+            //     ),
+            //     tabs: <Widget>[
+            //       Tab(text: ('Top').appTr),
+            //       Tab(text: ('Top1').appTr),
+            //     ],
+            //   ),
+            // ),
+            SizedBox(
+              height: (screenSize.height * 0.012)
+                  .clamp(8.0, 12.0)
+                  .toDouble(),
+            ),
 
-          Expanded(
-            child: _buildBaishunGames(context, gridSpacing),
-          ),
-          // Expanded(
-          //   child: TabBarView(
-          //     controller: _tabController,
-          //     children: <Widget>[
-          //       _buildLocalGames(context, gridSpacing),
-          //
-          //     ],
-          //   ),
-          // ),
-        ],
+            Expanded(
+              child: _buildBaishunGames(context, gridSpacing),
+            ),
+            // Expanded(
+            //   child: TabBarView(
+            //     controller: _tabController,
+            //     children: <Widget>[
+            //       _buildLocalGames(context, gridSpacing),
+            //
+            //     ],
+            //   ),
+            // ),
+          ],
+        ),
       ),
     );
   }

@@ -30,76 +30,87 @@ extension RedPacketEventHandler on WebsocketController {
       payload,
     ];
 
+    // ✅ FIX: previously a single pass stopped at the first candidate that
+    // satisfied EITHER "has a real id" OR "has a livestream_id" — so a
+    // candidate carrying only room-routing metadata (livestream_id, no
+    // actual red-packet id) could be selected before a later candidate
+    // that genuinely had the id, permanently losing it (normalized['id']
+    // then recomputed to 0 from the wrong, id-less candidate). Two passes:
+    // first look for a real id anywhere in the candidate list; only fall
+    // back to a livestream_id-only match if truly none of them have one.
+    Map<String, dynamic>? matched;
+
     for (final item in candidates) {
       final map = _redPacketPayloadMap(item);
       if (map.isEmpty) continue;
-      if (_redPacketIdFrom(map) > 0 || map['livestream_id'] != null) {
-        final normalized = <String, dynamic>{...map};
-
-        normalized['id'] = _redPacketIdFrom(normalized);
-        normalized['livestream_id'] =
-            normalized['livestream_id'] ??
-            normalized['stream_id'] ??
-            data['livestream_id'] ??
-            data['stream_id'] ??
-            payload['livestream_id'] ??
-            payload['stream_id'];
-
-        normalized['message'] =
-            normalized['message'] ??
-            data['message'] ??
-            payload['message'] ??
-            'Sent you a Lucky Bag';
-
-        normalized['sender'] =
-            normalized['sender'] ??
-            data['sender'] ??
-            payload['sender'] ??
-            data['user'] ??
-            payload['user'];
-
-        normalized['expires_in_seconds'] =
-            normalized['expires_in_seconds'] ??
-            normalized['duration_seconds'] ??
-            data['expires_in_seconds'] ??
-            data['duration_seconds'] ??
-            payload['expires_in_seconds'] ??
-            payload['duration_seconds'] ??
-            30;
-
-        final int serverUnlockSeconds = _toInt(
-          normalized['unlock_after_seconds'] ??
-              normalized['open_after_seconds'] ??
-              normalized['unlock_after'] ??
-              normalized['open_after'] ??
-              data['unlock_after_seconds'] ??
-              data['open_after_seconds'] ??
-              payload['unlock_after_seconds'] ??
-              payload['open_after_seconds'],
-        );
-        final int safeOpenAfter = serverUnlockSeconds > 0
-            ? serverUnlockSeconds
-            : 30;
-        normalized['open_after_seconds'] =
-            normalized['open_after_seconds'] ?? safeOpenAfter;
-        normalized['unlock_after_seconds'] =
-            normalized['unlock_after_seconds'] ?? safeOpenAfter;
-
-        normalized['status'] =
-            normalized['status'] ??
-            data['status'] ??
-            payload['status'] ??
-            'active';
-        normalized['is_global'] =
-            normalized['is_global'] ??
-            data['is_global'] ??
-            payload['is_global'] ??
-            false;
-        normalized['event_received_at_ms'] =
-            DateTime.now().millisecondsSinceEpoch;
-
-        return normalized;
+      if (_redPacketIdFrom(map) > 0) {
+        matched = map;
+        break;
       }
+    }
+
+    matched ??= () {
+      for (final item in candidates) {
+        final map = _redPacketPayloadMap(item);
+        if (map.isEmpty) continue;
+        if (map['livestream_id'] != null) return map;
+      }
+      return null;
+    }();
+
+    if (matched != null) {
+      final map = matched;
+      final normalized = <String, dynamic>{...map};
+
+      normalized['id'] = _redPacketIdFrom(normalized);
+      normalized['livestream_id'] =
+          normalized['livestream_id'] ??
+              normalized['stream_id'] ??
+              data['livestream_id'] ??
+              data['stream_id'] ??
+              payload['livestream_id'] ??
+              payload['stream_id'];
+
+      normalized['message'] =
+          normalized['message'] ??
+              data['message'] ??
+              payload['message'] ??
+              'Sent you a Lucky Bag';
+
+      normalized['sender'] =
+          normalized['sender'] ??
+              data['sender'] ??
+              payload['sender'] ??
+              data['user'] ??
+              payload['user'];
+
+      normalized['expires_in_seconds'] =
+          normalized['expires_in_seconds'] ??
+              normalized['duration_seconds'] ??
+              data['expires_in_seconds'] ??
+              data['duration_seconds'] ??
+              payload['expires_in_seconds'] ??
+              payload['duration_seconds'] ??
+              30;
+
+      normalized['status'] =
+          normalized['status'] ??
+              data['status'] ??
+              payload['status'] ??
+              'active';
+      normalized['is_global'] =
+          normalized['is_global'] ??
+              data['is_global'] ??
+              payload['is_global'] ??
+              false;
+      final Map<String, dynamic>? previous = currentRedPacket.isNotEmpty &&
+          _sameRedPacket(currentRedPacket, normalized)
+          ? Map<String, dynamic>.from(currentRedPacket)
+          : null;
+      return normalizeRedPacketTiming(
+        normalized,
+        previousPacket: previous,
+      );
     }
 
     return <String, dynamic>{};
@@ -137,8 +148,8 @@ extension RedPacketEventHandler on WebsocketController {
     final packet = _normalizeRedPacket(payload);
 
     _printFullLiveDebug('RED PACKET WEBSOCKET SENT NORMALIZED', <
-      String,
-      dynamic
+        String,
+        dynamic
     >{
       'local_time': DateTime.now().toIso8601String(),
       'local_epoch_ms': DateTime.now().millisecondsSinceEpoch,
@@ -291,9 +302,9 @@ extension RedPacketEventHandler on WebsocketController {
   }
 
   void _handleUnifiedRedPacketClosed(
-    Map<String, dynamic> payload, {
-    String source = 'red_packet_closed',
-  }) {
+      Map<String, dynamic> payload, {
+        String source = 'red_packet_closed',
+      }) {
     _printFullLiveDebug('RED PACKET WEBSOCKET CLOSED RAW', <String, dynamic>{
       'local_time': DateTime.now().toIso8601String(),
       'local_epoch_ms': DateTime.now().millisecondsSinceEpoch,

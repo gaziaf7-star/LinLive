@@ -136,7 +136,7 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
       if (!mounted) return;
 
       final bool oldSelectionStillAvailable = available.any(
-        (GoogleRechargePackage item) => item.productId == _selectedProductId,
+            (GoogleRechargePackage item) => item.productId == _selectedProductId,
       );
 
       setState(() {
@@ -353,233 +353,252 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
     return ('Updated just now').appTr;
   }
 
+  double get _uiScale {
+    final double width = MediaQuery.sizeOf(context).width;
+    return (width / 360.0).clamp(0.86, 1.12).toDouble();
+  }
+
+  double _s(double value) => value * _uiScale;
+
+  void _openWalletDestination() {
+    Get.to(() => Reselar());
+  }
+
   @override
   Widget build(BuildContext context) {
     final MediaQueryData media = MediaQuery.of(context);
     final double width = media.size.width;
-    final double topPadding = media.padding.top;
-    final double expandedHeight = (width * 0.48).clamp(178.0, 230.0).toDouble();
+    final double horizontalPadding = _s(14);
 
     return Scaffold(
-      backgroundColor: const Color(0xfff7f5fb),
-      body: RefreshIndicator(
-        color: kAppColor1,
-        backgroundColor: Colors.white,
-        onRefresh: _handlePullRefresh,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(
-            parent: BouncingScrollPhysics(),
-          ),
-          slivers: <Widget>[
-            SliverAppBar(
-              pinned: true,
-              stretch: true,
-              elevation: 0,
-              scrolledUnderElevation: 0,
-              backgroundColor: const Color(0xff4b071d),
-              expandedHeight: expandedHeight,
-              toolbarHeight: 62,
-              automaticallyImplyLeading: false,
-              leadingWidth: 62,
-              leading: Padding(
-                padding: const EdgeInsets.only(left: 12, top: 8, bottom: 8),
-                child: InkWell(
-                  onTap: Get.back,
-                  borderRadius: BorderRadius.circular(30),
-                  child: const Icon(Icons.arrow_back, color: Colors.white),
-                ),
-              ),
-              titleSpacing: 4,
-              title: Text(
-                ('Coin Recharge').appTr,
-                style: GoogleFonts.poppins(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              actions: <Widget>[
+      backgroundColor: const Color(0xfff7f7fb),
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          color: const Color(0xffff8a00),
+          backgroundColor: Colors.white,
+          onRefresh: _handlePullRefresh,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
+            padding: EdgeInsets.only(bottom: media.padding.bottom + _s(28)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                _walletHeader(),
+                SizedBox(height: _s(8)),
+                _walletTabs(),
+                SizedBox(height: _s(24)),
                 Padding(
-                  padding: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
-                  child: InkWell(
-                    onTap: () {
-                      Get.to(Reselar());
-                    },
-                    borderRadius: BorderRadius.circular(30),
-                    child: Padding(
-                      padding: EdgeInsets.all(8),
-                      child: Text(
-                        'TOP',
-                        style: GoogleFonts.poppins(color: Colors.white),
-                      ),
+                  padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: _goldBalanceCard(),
+                ),
+                SizedBox(height: _s(11)),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: _resellerCard(),
+                ),
+                SizedBox(height: _s(12)),
+                _firstRechargeBanner(),
+                SizedBox(height: _s(20)),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: Text(
+                    ('Select Recharge Amount').appTr,
+                    style: GoogleFonts.poppins(
+                      color: const Color(0xff101014),
+                      fontSize: _s(width < 340 ? 15 : 16),
+                      fontWeight: FontWeight.w500,
+                      height: 1.2,
                     ),
                   ),
                 ),
-              ],
-              flexibleSpace: FlexibleSpaceBar(
-                stretchModes: const <StretchMode>[
-                  StretchMode.zoomBackground,
-                  StretchMode.fadeTitle,
-                ],
-                background: _premiumBalanceHeader(
-                  topPadding: topPadding,
-                  width: width,
+                SizedBox(height: _s(12)),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                  child: _coinPackageArea(),
                 ),
-              ),
+                SizedBox(height: _s(70)),
+              ],
             ),
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(
-                width < 380 ? 14 : 18,
-                20,
-                width < 380 ? 14 : 18,
-                32,
-              ),
-              sliver: SliverList(
-                delegate: SliverChildListDelegate(<Widget>[
-                  _sectionTitle(
-                    icon: Icons.diamond_rounded,
-                    title: ('Select coin package').appTr,
-                    subtitle:
-                        ('Price is provided securely by Google Play').appTr,
-                  ),
-                  const SizedBox(height: 14),
-                  _coinPackageArea(),
-                  const SizedBox(height: 24),
-                  _sectionTitle(
-                    icon: Icons.verified_user_rounded,
-                    title: ('Payment method').appTr,
-                    subtitle: ('Digital purchases are processed by Google Play')
-                        .appTr,
-                  ),
-                  const SizedBox(height: 14),
-                  _googlePlayMethodCard(),
-                  const SizedBox(height: 16),
-                  _agreementCard(),
-                  const SizedBox(height: 18),
-                  _purchaseButton(),
-                  const SizedBox(height: 12),
-                  _securityNote(),
-                  const SizedBox(height: 28),
-                ]),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _premiumBalanceHeader({
-    required double topPadding,
-    required double width,
-  }) {
-    return Stack(
-      fit: StackFit.expand,
-      children: <Widget>[
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: <Color>[
-                Color(0xff2d0311),
-                Color(0xff65052a),
-                Color(0xff9d123f),
-              ],
-            ),
-          ),
-        ),
-        const Positioned.fill(
-          child: IgnorePointer(
-            child: CustomPaint(painter: _PremiumCoinPatternPainter()),
-          ),
-        ),
-        Positioned(
-          right: -45,
-          top: -30,
-          child: Container(
-            width: 180,
-            height: 180,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: <Color>[
-                  Colors.white.withOpacity(.17),
-                  Colors.white.withOpacity(0),
-                ],
+  Widget _walletHeader() {
+    return SizedBox(
+      height: _s(52),
+      width: double.infinity,
+      child: Stack(
+        alignment: Alignment.center,
+        children: <Widget>[
+          Positioned(
+            left: _s(12),
+            child: InkWell(
+              onTap: Get.back,
+              borderRadius: BorderRadius.circular(_s(30)),
+              child: Padding(
+                padding: EdgeInsets.all(_s(8)),
+                child: Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  size: _s(22),
+                  color: const Color(0xff303035),
+                ),
               ),
             ),
           ),
-        ),
-        Positioned(
-          left: -55,
-          bottom: -75,
-          child: Container(
-            width: 190,
-            height: 190,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: <Color>[
-                  const Color(0xffffadca).withOpacity(.18),
-                  const Color(0xffffadca).withOpacity(0),
-                ],
-              ),
+          Text(
+            ('Wallet').appTr,
+            style: GoogleFonts.poppins(
+              color: Colors.black,
+              fontSize: _s(22),
+              fontWeight: FontWeight.w600,
+              height: 1,
             ),
           ),
-        ),
-        Padding(
-          padding: EdgeInsets.fromLTRB(
-            width < 380 ? 18 : 22,
-            topPadding + 70,
-            width < 380 ? 18 : 22,
-            18,
-          ),
-          child: Obx(() {
-            final dynamic user = authController.userProfile.value.user;
-            final dynamic mainCoins = user?.coins;
-            final dynamic earnedCoins = user?.earnedCoins;
+        ],
+      ),
+    );
+  }
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: <Widget>[
-                Row(
+  Widget _walletTabs() {
+    return SizedBox(
+      height: _s(42),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: _walletTab(
+              label: ('Coin').appTr,
+              selected: true,
+              onTap: null,
+            ),
+          ),
+          Expanded(
+            child: _walletTab(
+              label: ('Top').appTr,
+              selected: false,
+              onTap: _openWalletDestination,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _walletTab({
+    required String label,
+    required bool selected,
+    required VoidCallback? onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            label,
+            style: GoogleFonts.poppins(
+              color: selected
+                  ? const Color(0xff202024)
+                  : const Color(0xff99969c),
+              fontSize: _s(15),
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+          SizedBox(height: _s(7)),
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            width: _s(25),
+            height: _s(3),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xff161619) : Colors.transparent,
+              borderRadius: BorderRadius.circular(_s(30)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _goldBalanceCard() {
+    return Obx(() {
+      final dynamic user = authController.userProfile.value.user;
+      final dynamic mainCoins = user?.coins;
+
+      return SizedBox(
+        height: _s(110),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: <Color>[
+                      Color(0xffff7000),
+                      Color(0xffff8a05),
+                      Color(0xffffc53e),
+                      Color(0xffffed79),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(_s(10)),
+                ),
+                padding: EdgeInsets.fromLTRB(
+                  _s(16),
+                  _s(14),
+                  _s(142),
+                  _s(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Image.asset(
-                      'assets/frame/diamonds.png',
-                      fit: BoxFit.contain,
-                      height: kHeight * 0.05,
+                    Text(
+                      ('Gold Coins Balance').appTr,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: _s(15),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(
-                            ('Available Coins').appTr,
-                            style: GoogleFonts.poppins(
-                              color: Colors.white.withOpacity(.78),
-                              fontSize: kHeight * 0.02,
-                              fontWeight: FontWeight.w500,
+                    SizedBox(height: _s(5)),
+                    Row(
+                      children: <Widget>[
+                        Container(
+                          width: _s(25),
+                          height: _s(25),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xffffd968).withOpacity(.55),
+                            border: Border.all(
+                              color: const Color(0xffffdf79),
+                              width: _s(1.2),
                             ),
                           ),
-                          const SizedBox(height: 6),
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 280),
-                            transitionBuilder:
-                                (Widget child, Animation<double> animation) {
-                                  return FadeTransition(
-                                    opacity: animation,
-                                    child: SlideTransition(
-                                      position: Tween<Offset>(
-                                        begin: const Offset(0, .18),
-                                        end: Offset.zero,
-                                      ).animate(animation),
-                                      child: child,
-                                    ),
-                                  );
-                                },
+                          alignment: Alignment.center,
+                          child: Text(
+                            'J',
+                            style: GoogleFonts.poppins(
+                              color: const Color(0xffff9808),
+                              fontSize: _s(16),
+                              height: 1,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: _s(8)),
+                        Expanded(
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 260),
                             child: Text(
                               _formatNumber(mainCoins),
                               key: ValueKey<String>(
@@ -589,124 +608,130 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
                               overflow: TextOverflow.ellipsis,
                               style: GoogleFonts.poppins(
                                 color: Colors.white,
-                                fontSize: width < 380 ? 28 : 34,
-                                height: 1.06,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: .2,
+                                fontSize: _s(28),
+                                fontWeight: FontWeight.w500,
+                                height: 1,
                               ),
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    Row(
+                      children: <Widget>[
+                        Icon(
+                          Icons.receipt_long_outlined,
+                          size: _s(15),
+                          color: Colors.white,
+                        ),
+                        SizedBox(width: _s(5)),
+                        Expanded(
+                          child: Text(
+                            ('Recharge record').appTr,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontSize: _s(11.5),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 13),
-                Align(
-                  alignment: Alignment.bottomRight,
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: <Widget>[
-                      _headerInfoChip(
-                        icon: Icons.savings_rounded,
-                        text:
-                            '${('Earned').appTr}: ${_formatNumber(earnedCoins)}',
-                      ),
-                      _headerInfoChip(
-                        icon: Icons.sync_rounded,
-                        text: _syncLabel(),
-                      ),
-                    ],
-                  ),
+              ),
+            ),
+            Positioned(
+              right: _s(-3),
+              top: _s(-18),
+              width: _s(145),
+              height: _s(128),
+              child: IgnorePointer(
+                child: Image.asset(
+                  'assets/audio_live/walletcoin.png',
+                  fit: BoxFit.contain,
+                  alignment: Alignment.topRight,
                 ),
-              ],
-            );
-          }),
+              ),
+            ),
+          ],
         ),
-      ],
-    );
+      );
+    });
   }
 
-  Widget _headerInfoChip({required IconData icon, required String text}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(.11),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: Colors.white.withOpacity(.18)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(icon, color: Colors.white.withOpacity(.90), size: 14),
-          const SizedBox(width: 6),
-          Text(
-            text,
-            style: GoogleFonts.poppins(
-              color: Colors.white.withOpacity(.90),
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _sectionTitle({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-  }) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Container(
-          width: 42,
-          height: 42,
+  Widget _resellerCard() {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(_s(10)),
+      child: InkWell(
+        onTap: _openWalletDestination,
+        borderRadius: BorderRadius.circular(_s(10)),
+        child: Container(
+          height: _s(54),
+          padding: EdgeInsets.symmetric(horizontal: _s(10)),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: <Color>[Color(0xff8f0c3a), Color(0xff5e0625)],
-            ),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(_s(10)),
             boxShadow: <BoxShadow>[
               BoxShadow(
-                color: const Color(0xff7e082f).withOpacity(.18),
-                blurRadius: 16,
-                offset: const Offset(0, 7),
+                color: Colors.black.withOpacity(.02),
+                blurRadius: _s(7),
+                offset: Offset(0, _s(2)),
               ),
             ],
           ),
-          child: Icon(icon, color: Colors.white, size: 21),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Row(
             children: <Widget>[
-              Text(
-                title,
-                style: GoogleFonts.poppins(
-                  color: const Color(0xff21151c),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
+              Image.asset(
+                'assets/audio_live/bagwallet.png',
+                width: _s(42),
+                height: _s(42),
+                fit: BoxFit.contain,
+              ),
+              SizedBox(width: _s(10)),
+              Expanded(
+                child: Text(
+                  ('Recommend Coins reseller').appTr,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xff66666a),
+                    fontSize: _s(15),
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: GoogleFonts.poppins(
-                  color: const Color(0xff83757d),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
+              SizedBox(width: _s(6)),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                color: const Color(0xffc6c6c9),
+                size: _s(17),
               ),
             ],
           ),
         ),
-      ],
+      ),
+    );
+  }
+
+  Widget _firstRechargeBanner() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(_s(9)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 15.0),
+        child: SizedBox(
+          width: double.infinity,
+          height: _s(64),
+          child: Image.asset(
+            'assets/audio_live/recharge.png',
+            fit: BoxFit.cover,
+            alignment: Alignment.center,
+          ),
+        ),
+      ),
     );
   }
 
@@ -731,11 +756,8 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final int crossAxisCount = constraints.maxWidth < 345
-            ? 2
-            : constraints.maxWidth > 650
-            ? 4
-            : 3;
+        final int crossAxisCount = constraints.maxWidth < _s(300) ? 2 : 3;
+        final double ratio = crossAxisCount == 2 ? 0.96 : 0.82;
 
         return GridView.builder(
           shrinkWrap: true,
@@ -743,9 +765,9 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
           itemCount: _packages.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: crossAxisCount == 2 ? 1.65 : 1.42,
+            crossAxisSpacing: _s(8),
+            mainAxisSpacing: _s(8),
+            childAspectRatio: ratio,
           ),
           itemBuilder: (BuildContext context, int index) {
             final GoogleRechargePackage item = _packages[index];
@@ -753,6 +775,7 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
               item.productId,
             );
             final bool isSelected = _selectedProductId == item.productId;
+            final String imagePath = _packageImageForIndex(index);
 
             return Material(
               color: Colors.transparent,
@@ -760,98 +783,75 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
                 onTap: _purchaseBusy
                     ? null
                     : () {
-                        setState(() {
-                          _selectedProductId = item.productId;
-                        });
-                      },
-                borderRadius: BorderRadius.circular(12),
+                  setState(() {
+                    _selectedProductId = item.productId;
+                  });
+                  _showPurchaseSheet(item, playProduct);
+                },
+                borderRadius: BorderRadius.circular(_s(9)),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOut,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 9,
+                  padding: EdgeInsets.fromLTRB(
+                    _s(5),
+                    _s(8),
+                    _s(5),
+                    _s(7),
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
+                    color: const Color(0xfffffaf7),
+                    borderRadius: BorderRadius.circular(_s(9)),
                     border: Border.all(
                       color: isSelected
-                          ? const Color(0xff8f0c3a)
-                          : const Color(0xffeee7eb),
-                      width: isSelected ? 1.6 : 1,
+                          ? const Color(0xffffc78f)
+                          : const Color(0xfffff4ed),
+                      width: isSelected ? _s(1.1) : _s(.7),
                     ),
-                    boxShadow: <BoxShadow>[
-                      BoxShadow(
-                        color: isSelected
-                            ? const Color(0xff8f0c3a).withOpacity(.13)
-                            : Colors.black.withOpacity(.035),
-                        blurRadius: isSelected ? 18 : 10,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
                   ),
-                  child: Stack(
+                  child: Column(
                     children: <Widget>[
-                      Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: <Widget>[
-                                Image.asset(
-                                  'assets/frame/diamonds.png',
-                                  height: 16,
-                                  width: 16,
-                                ),
-                                const SizedBox(width: 5),
-                                Flexible(
-                                  child: Text(
-                                    _formatNumber(item.coins),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: GoogleFonts.poppins(
-                                      color: const Color(0xff261820),
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              playProduct?.price ?? item.fallbackPrice,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.poppins(
-                                color: const Color(0xff8f0c3a),
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
+                      Expanded(
+                        child: Center(
+                          child: Image.asset(
+                            imagePath,
+                            width: _s(58),
+                            height: _s(48),
+                            fit: BoxFit.contain,
+                          ),
                         ),
                       ),
-                      Positioned(
-                        right: 0,
-                        top: 0,
-                        child: AnimatedScale(
-                          duration: const Duration(milliseconds: 180),
-                          scale: isSelected ? 1 : 0,
-                          child: Container(
-                            width: 16,
-                            height: 16,
-                            decoration: const BoxDecoration(
-                              color: Color(0xff8f0c3a),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.check_rounded,
-                              size: 11,
-                              color: Colors.white,
-                            ),
+                      SizedBox(height: _s(3)),
+                      Text(
+                        _formatNumber(item.coins),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(
+                          color: const Color(0xff101014),
+                          fontSize: _s(14.5),
+                          fontWeight: FontWeight.w500,
+                          height: 1,
+                        ),
+                      ),
+                      SizedBox(height: _s(8)),
+                      Container(
+                        width: double.infinity,
+                        constraints: BoxConstraints(minHeight: _s(24)),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: _s(4),
+                          vertical: _s(4),
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xffeebd98),
+                          borderRadius: BorderRadius.circular(_s(30)),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          playProduct?.price ?? item.fallbackPrice,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontSize: _s(11.5),
+                            fontWeight: FontWeight.w400,
                           ),
                         ),
                       ),
@@ -866,25 +866,112 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
     );
   }
 
+  String _packageImageForIndex(int index) {
+    switch (index % 3) {
+      case 1:
+        return 'assets/audio_live/walletcoin.png';
+      case 2:
+        return 'assets/audio_live/walletcoin.png';
+      default:
+        return 'assets/audio_live/walletcoin.png';
+    }
+  }
+
+  void _showPurchaseSheet(
+      GoogleRechargePackage item,
+      ProductDetails? playProduct,
+      ) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext sheetContext) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter modalSetState) {
+            return SafeArea(
+              top: false,
+              child: Container(
+                padding: EdgeInsets.fromLTRB(
+                  _s(20),
+                  _s(12),
+                  _s(20),
+                  MediaQuery.of(context).padding.bottom + _s(18),
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(
+                    top: Radius.circular(_s(26)),
+                  ),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Center(
+                      child: Container(
+                        width: _s(44),
+                        height: _s(5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xffdedde1),
+                          borderRadius: BorderRadius.circular(_s(20)),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: _s(18)),
+                    Text(
+                      ('Recharge').appTr,
+                      style: GoogleFonts.poppins(
+                        fontSize: _s(20),
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xff111115),
+                      ),
+                    ),
+                    SizedBox(height: _s(5)),
+                    Text(
+                      '${_formatNumber(item.coins)} ${('coins').appTr} • ${playProduct?.price ?? item.fallbackPrice}',
+                      style: GoogleFonts.poppins(
+                        fontSize: _s(12.5),
+                        fontWeight: FontWeight.w500,
+                        color: const Color(0xff7a777f),
+                      ),
+                    ),
+                    SizedBox(height: _s(18)),
+                    _googlePlayMethodCard(),
+                    SizedBox(height: _s(14)),
+                    _agreementCard(modalSetState: modalSetState),
+                    SizedBox(height: _s(16)),
+                    _purchaseButton(),
+                    SizedBox(height: _s(12)),
+                    _securityNote(),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _packageLoadingGrid() {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final int count = constraints.maxWidth < 345 ? 2 : 3;
+        final int count = constraints.maxWidth < _s(300) ? 2 : 3;
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          itemCount: 6,
+          itemCount: 3,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: count,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: count == 2 ? 1.65 : 1.42,
+            crossAxisSpacing: _s(8),
+            mainAxisSpacing: _s(8),
+            childAspectRatio: count == 2 ? .96 : .82,
           ),
           itemBuilder: (BuildContext context, int index) {
             return Container(
               decoration: BoxDecoration(
-                color: const Color(0xffeee9ed),
-                borderRadius: BorderRadius.circular(12),
+                color: const Color(0xfffffaf7),
+                borderRadius: BorderRadius.circular(_s(9)),
               ),
             );
           },
@@ -899,31 +986,39 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(_s(12)),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xffeee7eb)),
+        borderRadius: BorderRadius.circular(_s(12)),
+        border: Border.all(color: const Color(0xffeeeef2)),
       ),
       child: Row(
         children: <Widget>[
-          const Icon(Icons.info_outline_rounded, color: Color(0xff8f0c3a)),
-          const SizedBox(width: 10),
+          Icon(
+            Icons.info_outline_rounded,
+            color: const Color(0xffff8a00),
+            size: _s(20),
+          ),
+          SizedBox(width: _s(8)),
           Expanded(
             child: Text(
               message,
               style: GoogleFonts.poppins(
-                color: const Color(0xff61545b),
-                fontSize: 12,
+                color: const Color(0xff615e66),
+                fontSize: _s(11),
                 fontWeight: FontWeight.w500,
               ),
             ),
           ),
           TextButton(
-            onPressed: () {
-              unawaited(onRetry());
-            },
-            child: Text(('Retry').appTr),
+            onPressed: () => unawaited(onRetry()),
+            child: Text(
+              ('Retry').appTr,
+              style: TextStyle(
+                color: const Color(0xffff8a00),
+                fontSize: _s(12),
+              ),
+            ),
           ),
         ],
       ),
@@ -932,35 +1027,28 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
 
   Widget _googlePlayMethodCard() {
     return Container(
-      padding: const EdgeInsets.all(13),
+      padding: EdgeInsets.all(_s(12)),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xff8f0c3a), width: 1.3),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: Colors.black.withOpacity(.035),
-            blurRadius: 12,
-            offset: const Offset(0, 5),
-          ),
-        ],
+        color: const Color(0xfffffaf7),
+        borderRadius: BorderRadius.circular(_s(16)),
+        border: Border.all(color: const Color(0xffffd5ae)),
       ),
       child: Row(
         children: <Widget>[
           Container(
-            width: 44,
-            height: 44,
+            width: _s(42),
+            height: _s(42),
             decoration: BoxDecoration(
-              color: const Color(0xfff8edf2),
-              borderRadius: BorderRadius.circular(14),
+              color: const Color(0xffffebd9),
+              borderRadius: BorderRadius.circular(_s(13)),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.play_circle_fill_rounded,
-              color: Color(0xff8f0c3a),
-              size: 25,
+              color: const Color(0xffff8500),
+              size: _s(25),
             ),
           ),
-          const SizedBox(width: 12),
+          SizedBox(width: _s(11)),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -968,64 +1056,64 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
                 Text(
                   ('Google Play Billing').appTr,
                   style: GoogleFonts.poppins(
-                    color: const Color(0xff271920),
-                    fontSize: 13,
+                    color: const Color(0xff211f24),
+                    fontSize: _s(12.5),
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 2),
+                SizedBox(height: _s(2)),
                 Text(
                   ('Secure payment using your Google Play account').appTr,
                   style: GoogleFonts.poppins(
-                    color: const Color(0xff8a7c83),
-                    fontSize: 10.5,
+                    color: const Color(0xff89858d),
+                    fontSize: _s(10),
                     fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
             ),
           ),
-          const Icon(
+          Icon(
             Icons.verified_rounded,
-            color: Color(0xff168847),
-            size: 24,
+            color: const Color(0xff168847),
+            size: _s(22),
           ),
         ],
       ),
     );
   }
 
-  Widget _agreementCard() {
+  Widget _agreementCard({StateSetter? modalSetState}) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(10, 8, 12, 8),
+      padding: EdgeInsets.fromLTRB(_s(7), _s(5), _s(9), _s(5)),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xffeee7eb)),
+        color: const Color(0xfffffaf7),
+        borderRadius: BorderRadius.circular(_s(14)),
+        border: Border.all(color: const Color(0xffeeeef2)),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
           Checkbox(
             value: _isChecked,
-            activeColor: const Color(0xff8f0c3a),
+            activeColor: const Color(0xffff8500),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(5),
+              borderRadius: BorderRadius.circular(_s(5)),
             ),
             onChanged: _purchaseBusy
                 ? null
                 : (bool? value) {
-                    setState(() {
-                      _isChecked = value ?? false;
-                    });
-                  },
+              setState(() {
+                _isChecked = value ?? false;
+              });
+              modalSetState?.call(() {});
+            },
           ),
           Expanded(
             child: RichText(
               text: TextSpan(
                 style: GoogleFonts.poppins(
-                  color: const Color(0xff4f4248),
-                  fontSize: 11,
+                  color: const Color(0xff4f4c53),
+                  fontSize: _s(10.5),
                   fontWeight: FontWeight.w500,
                 ),
                 children: <InlineSpan>[
@@ -1033,8 +1121,8 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
                   TextSpan(
                     text: ('User Recharge Disclaimer Agreement').appTr,
                     style: GoogleFonts.poppins(
-                      color: const Color(0xff8f0c3a),
-                      fontSize: 11,
+                      color: const Color(0xffff8500),
+                      fontSize: _s(10.5),
                       fontWeight: FontWeight.w700,
                     ),
                     recognizer: TapGestureRecognizer()
@@ -1054,9 +1142,9 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
   Widget _purchaseButton() {
     final bool enabled =
         !_billingLoading &&
-        _billingError == null &&
-        _selectedProductId != null &&
-        !_purchaseBusy;
+            _billingError == null &&
+            _selectedProductId != null &&
+            !_purchaseBusy;
 
     return SizedBox(
       width: double.infinity,
@@ -1064,44 +1152,30 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
         onPressed: enabled ? _buySelectedPackage : null,
         style: ElevatedButton.styleFrom(
           elevation: 0,
-          backgroundColor: const Color(0xff8f0c3a),
-          disabledBackgroundColor: const Color(0xffc8b8bf),
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          backgroundColor: const Color(0xffff8500),
+          disabledBackgroundColor: const Color(0xffffd4aa),
+          padding: EdgeInsets.symmetric(vertical: _s(13)),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(_s(14)),
           ),
         ),
         child: _purchaseBusy
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  const SizedBox(
-                    width: 17,
-                    height: 17,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    ('Processing purchase...').appTr,
-                    style: GoogleFonts.poppins(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ],
-              )
+            ? SizedBox(
+          width: _s(18),
+          height: _s(18),
+          child: const CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white,
+          ),
+        )
             : Text(
-                ('Pay with Google Play').appTr,
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
-              ),
+          ('Pay with Google Play').appTr,
+          style: GoogleFonts.poppins(
+            color: Colors.white,
+            fontSize: _s(12.5),
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
     );
   }
@@ -1110,22 +1184,22 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        const Padding(
-          padding: EdgeInsets.only(top: 1),
+        Padding(
+          padding: EdgeInsets.only(top: _s(1)),
           child: Icon(
             Icons.lock_outline_rounded,
-            size: 15,
-            color: Color(0xff766871),
+            size: _s(14),
+            color: const Color(0xff77747b),
           ),
         ),
-        const SizedBox(width: 7),
+        SizedBox(width: _s(6)),
         Expanded(
           child: Text(
             ('Google Play processes the payment. Coins are added only after secure server verification.')
                 .appTr,
             style: GoogleFonts.poppins(
-              color: const Color(0xff766871),
-              fontSize: 10.5,
+              color: const Color(0xff77747b),
+              fontSize: _s(10),
               height: 1.45,
               fontWeight: FontWeight.w500,
             ),
@@ -1134,37 +1208,4 @@ class _CoinTopUpState extends State<CoinTopUp> with WidgetsBindingObserver {
       ],
     );
   }
-}
-
-class _PremiumCoinPatternPainter extends CustomPainter {
-  const _PremiumCoinPatternPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final Paint linePaint = Paint()
-      ..color = Colors.white.withOpacity(.055)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = .8;
-
-    final Paint dotPaint = Paint()
-      ..color = Colors.white.withOpacity(.075)
-      ..style = PaintingStyle.fill;
-
-    const double gap = 34;
-    for (double y = 8; y < size.height; y += gap) {
-      for (double x = 8; x < size.width; x += gap) {
-        final Path path = Path()
-          ..moveTo(x, y - 4)
-          ..lineTo(x + 4, y)
-          ..lineTo(x, y + 4)
-          ..lineTo(x - 4, y)
-          ..close();
-        canvas.drawPath(path, linePaint);
-        canvas.drawCircle(Offset(x + 15, y + 15), 1.1, dotPaint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

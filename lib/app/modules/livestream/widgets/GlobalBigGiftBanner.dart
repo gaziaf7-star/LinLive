@@ -2,17 +2,20 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svga_easyplayer/flutter_svga_easyplayer.dart';
 import 'package:get/get.dart';
 
 import '../../../../constants/image_helper.dart';
 import '../controllers/global_live_banner_queue_controller.dart';
+import 'global_banner_layout.dart';
 
 class GlobalBigGiftBanner extends StatelessWidget {
   const GlobalBigGiftBanner({super.key, this.onOpenLive});
 
   static const String _backgroundAsset =
-      'assets/audio_live/bigGiftBannerImage-removebg-preview.png';
+      'assets/audio_live/broadcast_gift_1781905442_6a35b82260a4d.webp';
 
   final void Function(int livestreamId, Map<String, dynamic> data)? onOpenLive;
 
@@ -32,14 +35,8 @@ class GlobalBigGiftBanner extends StatelessWidget {
     return raw.isEmpty ? '' : ImageHelper.getImageUrl(raw);
   }
 
-  String _compactCoins(int value) {
-    if (value >= 1000000) {
-      final number = value / 1000000;
-      return '${number == number.roundToDouble() ? number.toInt() : number.toStringAsFixed(1)}M';
-    }
-    final number = value / 1000;
-    return '${number == number.roundToDouble() ? number.toInt() : number.toStringAsFixed(1)}K';
-  }
+  String _coinText(int value) =>
+      '${value.toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',')} Coins';
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +50,15 @@ class GlobalBigGiftBanner extends StatelessWidget {
       final data = Map<String, dynamic>.from(item.payload);
       final sender = _map(data['sender']);
       final gift = _map(data['gift']);
-      final value = _int(data['gift_value']);
+      final unitCoin = _int(
+        data['unit_coin'] ?? data['unit_gift_coin'] ?? gift['coin'],
+      );
+      final quantity = _int(data['quantity']).clamp(1, 1000);
+      final value = _int(
+        data['batch_total'] ??
+            data['gift_value'] ??
+            (unitCoin > 0 ? unitCoin * quantity : 0),
+      );
       if (value < 100000) {
         Future<void>.microtask(() => queue.finish(item.id));
         return const SizedBox.shrink();
@@ -65,7 +70,10 @@ class GlobalBigGiftBanner extends StatelessWidget {
         key: ValueKey<String>('big_gift_position_${item.id}'),
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
-        top: MediaQuery.of(context).padding.top + 7 + (slot * 150),
+        top: MediaQuery.of(context).padding.top +
+            globalBannerTopOffset(context) +
+            globalBannerSlotOffset(context, slot) +
+            10.0,
         left: 0,
         right: 0,
         child: Material(
@@ -76,7 +84,7 @@ class GlobalBigGiftBanner extends StatelessWidget {
             resizeDuration: const Duration(milliseconds: 220),
             onDismissed: (_) => finish(),
             child: SizedBox(
-              height: 146,
+              height: globalBigGiftBannerHeight(context),
               child: _BigGiftMotion(
                 key: ValueKey<String>(item.id),
                 displaySeconds: item.displaySeconds,
@@ -96,7 +104,8 @@ class GlobalBigGiftBanner extends StatelessWidget {
                       gift['image'] ??
                       gift['icon'],
                 ),
-                coinText: _compactCoins(value),
+                giftName: _text(gift['name'] ?? gift['gift_name'], 'gift'),
+                coinText: _coinText(value),
                 onTap: () {
                   final livestreamId = _int(
                     data['livestream_id'] ?? data['stream_id'],
@@ -121,6 +130,7 @@ class _BigGiftMotion extends StatefulWidget {
     required this.senderName,
     required this.senderImage,
     required this.giftImage,
+    required this.giftName,
     required this.coinText,
     required this.onTap,
     required this.onCompleted,
@@ -130,6 +140,7 @@ class _BigGiftMotion extends StatefulWidget {
   final String senderName;
   final String senderImage;
   final String giftImage;
+  final String giftName;
   final String coinText;
   final VoidCallback onTap;
   final VoidCallback onCompleted;
@@ -144,22 +155,41 @@ class _BigGiftMotionState extends State<_BigGiftMotion>
   static const _exitDuration = Duration(milliseconds: 560);
   late final AnimationController _controller;
   late final Duration _totalDuration;
+  late final ValueNotifier<int> _secondsLeft;
   bool _completed = false;
+  bool _sizeLogged = false;
 
   @override
   void initState() {
     super.initState();
     _totalDuration = Duration(
       milliseconds:
-          _enterDuration.inMilliseconds +
+      _enterDuration.inMilliseconds +
           Duration(seconds: widget.displaySeconds).inMilliseconds +
           _exitDuration.inMilliseconds,
     );
+    _secondsLeft = ValueNotifier<int>(widget.displaySeconds);
     _controller = AnimationController(vsync: this, duration: _totalDuration)
+      ..addListener(_updateCountdown)
       ..addStatusListener((status) {
         if (status == AnimationStatus.completed) _finish();
       })
       ..forward();
+  }
+
+  void _updateCountdown() {
+    final elapsed = _controller.lastElapsedDuration ?? Duration.zero;
+    final displayElapsedMs = math.max(
+      0,
+      elapsed.inMilliseconds - _enterDuration.inMilliseconds,
+    );
+    final remainingMs = math.max(
+      0,
+      Duration(seconds: widget.displaySeconds).inMilliseconds -
+          displayElapsedMs,
+    );
+    final next = (remainingMs / Duration.millisecondsPerSecond).ceil();
+    if (_secondsLeft.value != next) _secondsLeft.value = next;
   }
 
   void _finish() {
@@ -172,7 +202,7 @@ class _BigGiftMotionState extends State<_BigGiftMotion>
     final enter = _enterDuration.inMilliseconds / _totalDuration.inMilliseconds;
     final stay =
         Duration(seconds: widget.displaySeconds).inMilliseconds /
-        _totalDuration.inMilliseconds;
+            _totalDuration.inMilliseconds;
     final exitStart = enter + stay;
     final hold = (screenWidth - width) / 2;
     if (progress <= enter) {
@@ -188,7 +218,9 @@ class _BigGiftMotionState extends State<_BigGiftMotion>
 
   @override
   void dispose() {
+    _controller.removeListener(_updateCountdown);
     _controller.dispose();
+    _secondsLeft.dispose();
     super.dispose();
   }
 
@@ -196,11 +228,25 @@ class _BigGiftMotionState extends State<_BigGiftMotion>
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final requestedHeight = globalBigGiftBannerHeight(context);
         final screenWidth = constraints.maxWidth;
-        final double width = math.min(
-          math.max(screenWidth * .92, 300.0),
-          620.0,
-        );
+        final bool compact = screenWidth < 370;
+        final double width = globalBigGiftBannerWidth(screenWidth);
+        if (!_sizeLogged) {
+          _sizeLogged = true;
+          final parentMaxHeight = constraints.maxHeight;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            final box = this.context.findRenderObject();
+            final renderedHeight = box is RenderBox ? box.size.height : -1.0;
+            debugPrint(
+              '[BIG_GIFT_UI][SIZE] width=$width '
+                  'height=$renderedHeight requested_height=$requestedHeight '
+                  'parent_max_height=$parentMaxHeight '
+                  'requested_width=$width',
+            );
+          });
+        }
         return AnimatedBuilder(
           animation: _controller,
           child: Align(
@@ -214,7 +260,10 @@ class _BigGiftMotionState extends State<_BigGiftMotion>
                   senderName: widget.senderName,
                   senderImage: widget.senderImage,
                   giftImage: widget.giftImage,
+                  giftName: widget.giftName,
                   coinText: widget.coinText,
+                  secondsLeft: _secondsLeft,
+                  compact: compact,
                 ),
               ),
             ),
@@ -234,32 +283,46 @@ class _BigGiftCard extends StatelessWidget {
     required this.senderName,
     required this.senderImage,
     required this.giftImage,
+    required this.giftName,
     required this.coinText,
+    required this.secondsLeft,
+    required this.compact,
   });
 
   final String senderName;
   final String senderImage;
   final String giftImage;
+  final String giftName;
   final String coinText;
+  final ValueListenable<int> secondsLeft;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 140,
+      height: globalBigGiftBannerHeight(context),
       child: Stack(
         fit: StackFit.expand,
+        clipBehavior: Clip.hardEdge,
         children: [
-          const Image(
-            image: AssetImage(GlobalBigGiftBanner._backgroundAsset),
-            fit: BoxFit.contain,
+          Image.asset(
+            GlobalBigGiftBanner._backgroundAsset,
+            fit: BoxFit.fill,
             filterQuality: FilterQuality.high,
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(46, 38, 50, 34),
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 58 : 64,
+            ),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                _RoundImage(url: senderImage, size: 48, fallback: Icons.person),
-                const SizedBox(width: 9),
+                _RoundImage(
+                  url: senderImage,
+                  size: compact ? 35 : 39,
+                  fallback: Icons.person,
+                ),
+                SizedBox(width: compact ? 7 : 9),
                 Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -279,7 +342,7 @@ class _BigGiftCard extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        'sent a $coinText gift',
+                        'sent $giftName · $coinText',
                         maxLines: 1,
                         style: const TextStyle(
                           color: Color(0xffffef9d),
@@ -295,14 +358,109 @@ class _BigGiftCard extends StatelessWidget {
                 ),
                 _RoundImage(
                   url: giftImage,
-                  size: 52,
+                  size: compact ? 42 : 44,
                   fallback: Icons.card_giftcard,
+                ),
+                const SizedBox(width: 5),
+                ValueListenableBuilder<int>(
+                  valueListenable: secondsLeft,
+                  builder: (context, seconds, _) => Container(
+                    width: 28,
+                    height: 28,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: .42),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white70),
+                    ),
+                    child: Text(
+                      '${seconds}s',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _BigGiftSvgaBackground extends StatefulWidget {
+  const _BigGiftSvgaBackground();
+
+  static MovieEntity? _cachedMovie;
+  static final Future<MovieEntity?> _loadingFuture = _loadMovie();
+
+  static Future<MovieEntity?> _loadMovie() async {
+    try {
+      final movie = await SVGAParser.shared.decodeFromAssets(
+        GlobalBigGiftBanner._backgroundAsset,
+      );
+      movie.autorelease = false;
+      return _cachedMovie = movie;
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('Big gift banner SVGA failed to load: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+      return null;
+    }
+  }
+
+  @override
+  State<_BigGiftSvgaBackground> createState() =>
+      _BigGiftSvgaBackgroundState();
+}
+
+class _BigGiftSvgaBackgroundState extends State<_BigGiftSvgaBackground>
+    with SingleTickerProviderStateMixin {
+  late final SVGAAnimationController _controller;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = SVGAAnimationController(vsync: this)..isMute = true;
+    _attachMovie();
+  }
+
+  Future<void> _attachMovie() async {
+    final movie =
+        _BigGiftSvgaBackground._cachedMovie ??
+            await _BigGiftSvgaBackground._loadingFuture;
+    if (!mounted || movie == null) return;
+    _controller.videoItem = movie;
+    _controller.repeat();
+    setState(() => _ready = true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: _ready
+          ? SVGAImage(
+        _controller,
+        fit: BoxFit.fill,
+        allowDrawingOverflow: false,
+        preferredSize: Size(
+          MediaQuery.sizeOf(context).width,
+          globalBigGiftBannerHeight(context),
+        ),
+      )
+          : const SizedBox.shrink(),
     );
   }
 }
@@ -325,21 +483,34 @@ class _RoundImage extends StatelessWidget {
       alignment: Alignment.center,
       child: Icon(fallback, color: Colors.white),
     );
+    final isSvga = url.toLowerCase().split('?').first.endsWith('.svga');
     return ClipOval(
       child: SizedBox(
         width: size,
         height: size,
         child: url.isEmpty
             ? placeholder
+            : isSvga
+            ? SVGAEasyPlayer(
+          key: ValueKey<String>('big_gift_icon_$url'),
+          resUrl: url.startsWith('http://') || url.startsWith('https://')
+              ? url
+              : null,
+          assetsName:
+          url.startsWith('http://') || url.startsWith('https://')
+              ? null
+              : url,
+          fit: BoxFit.cover,
+        )
             : CachedNetworkImage(
-                imageUrl: url,
-                fit: BoxFit.cover,
-                memCacheWidth: (size * MediaQuery.devicePixelRatioOf(context))
-                    .round(),
-                fadeInDuration: Duration.zero,
-                placeholder: (context, url) => placeholder,
-                errorWidget: (context, url, error) => placeholder,
-              ),
+          imageUrl: url,
+          fit: BoxFit.cover,
+          memCacheWidth: (size * MediaQuery.devicePixelRatioOf(context))
+              .round(),
+          fadeInDuration: Duration.zero,
+          placeholder: (context, url) => placeholder,
+          errorWidget: (context, url, error) => placeholder,
+        ),
       ),
     );
   }

@@ -26,6 +26,7 @@ class RocketLaunchOverlay extends StatefulWidget {
 
 class _RocketLaunchOverlayState extends State<RocketLaunchOverlay> {
   late final RocketController controller;
+  String _lastVisibleEventKey = '';
 
   @override
   void initState() {
@@ -58,7 +59,11 @@ class _RocketLaunchOverlayState extends State<RocketLaunchOverlay> {
       final Map<String, dynamic> data =
       Map<String, dynamic>.from(controller.roomLaunchData);
       final int eventLivestreamId = _livestreamId(data);
-      if (widget.livestreamId <= 0 || eventLivestreamId != widget.livestreamId) {
+      // The controller is synchronously bound from the authoritative active
+      // room before it accepts a launch. The widget argument can briefly still
+      // be 0/old while AudioLiveView is completing its reactive room setup.
+      if (eventLivestreamId <= 0 ||
+          eventLivestreamId != controller.currentLivestreamId.value) {
         return const SizedBox.shrink();
       }
 
@@ -70,6 +75,14 @@ class _RocketLaunchOverlayState extends State<RocketLaunchOverlay> {
         data['level_no'],
         data['timestamp'],
       ].map((dynamic e) => e?.toString() ?? '').join('|');
+
+      if (_lastVisibleEventKey != eventKey) {
+        _lastVisibleEventKey = eventKey;
+        debugPrint(
+          '[ROCKET_LAUNCH][OVERLAY_VISIBLE] '
+          'event_id=${data['event_id'] ?? data['launch_event_id'] ?? ''}',
+        );
+      }
 
       return Positioned.fill(
         child: IgnorePointer(

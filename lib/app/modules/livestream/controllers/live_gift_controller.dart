@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:fluttertoast/fluttertoast.dart';
@@ -58,9 +59,13 @@ class LiveGiftController extends GetxController {
   int _quickGiftClientSerial = 0;
 
   static const int _quickGiftSeconds = 7;
-  static const Duration _quickGiftRequestGap = Duration(milliseconds: 120);
+  static const Duration _quickGiftBatchWindow = Duration(milliseconds: 100);
+  String _openQuickGiftBatchKey = '';
+  String _openQuickGiftBatchClientEventId = '';
+  int _openQuickGiftBatchUntilMs = 0;
 
   int _giftClientEventSerial = 0;
+  Future<void>? _giftListFetchInFlight;
 
   String _newGiftClientEventId({
     required int senderId,
@@ -249,11 +254,25 @@ class LiveGiftController extends GetxController {
         : quickGiftComboCount.value + 1;
 
     final int clientSerial = ++_quickGiftClientSerial;
-    final String clientEventId = _newGiftClientEventId(
-      senderId: senderId,
-      giftId: giftId,
-      streamId: jobStreamId,
-    );
+    final int nowMs = DateTime.now().millisecondsSinceEpoch;
+    final String batchKey = '$jobStreamId|$jobGeneration|$giftId|'
+        '${receiverIds.join(',')}|${livestreamController.pkCommentGiftMetaBody()}';
+    if (_openQuickGiftBatchKey != batchKey ||
+        nowMs > _openQuickGiftBatchUntilMs ||
+        _openQuickGiftBatchClientEventId.isEmpty) {
+      _openQuickGiftBatchKey = batchKey;
+      _openQuickGiftBatchClientEventId = _newGiftClientEventId(
+        senderId: senderId,
+        giftId: giftId,
+        streamId: jobStreamId,
+      );
+    }
+    _openQuickGiftBatchUntilMs =
+        nowMs + _quickGiftBatchWindow.inMilliseconds;
+    final String clientEventId = _openQuickGiftBatchClientEventId;
+    if (kDebugMode) {
+      debugPrint('[GIFT] tap stream=$jobStreamId gift=$giftId');
+    }
     final Map<String, dynamic> job = <String, dynamic>{
       'client_serial': clientSerial,
       'client_event_id': clientEventId,
@@ -264,6 +283,8 @@ class LiveGiftController extends GetxController {
       'gift': gift,
       'stream_id': jobStreamId,
       'room_generation': jobGeneration,
+      'batch_key': batchKey,
+      'queued_at_ms': nowMs,
     };
 
     /// Do not wait for the previous API call. Every physical/auto tap creates
@@ -314,7 +335,30 @@ class LiveGiftController extends GetxController {
         final Map<String, dynamic> job = Map<String, dynamic>.from(
           _quickGiftSendQueue.removeFirst(),
         );
-        quickGiftPendingCount.value = _quickGiftSendQueue.length + 1;
+        // Keep a short collection window open so rapid identical taps become
+        // one backend transaction with quantity=N. Optimistic visuals already
+        // ran synchronously for every physical tap.
+        await Future<void>.delayed(_quickGiftBatchWindow);
+        final String batchKey = job['batch_key']?.toString() ?? '';
+        final String batchClientEventId =
+            job['client_event_id']?.toString() ?? '';
+        int batchQuantity = 1;
+        while (_quickGiftSendQueue.isNotEmpty &&
+            _quickGiftSendQueue.first['batch_key']?.toString() == batchKey &&
+            _quickGiftSendQueue.first['client_event_id']?.toString() ==
+                batchClientEventId) {
+          _quickGiftSendQueue.removeFirst();
+          batchQuantity++;
+        }
+        if (kDebugMode) {
+          final int queuedAt = int.tryParse('${job['queued_at_ms'] ?? 0}') ?? 0;
+          debugPrint(
+            '[GIFT] batch_flush qty=$batchQuantity '
+            'delayMs=${DateTime.now().millisecondsSinceEpoch - queuedAt}',
+          );
+        }
+        quickGiftPendingCount.value =
+            _quickGiftSendQueue.length + batchQuantity;
 
         final receiverIds = _safeQuickReceiverIds(job['receiver_ids']);
         final int receiverId = int.tryParse('${job['receiver_id'] ?? 0}') ?? 0;
@@ -362,14 +406,11 @@ class LiveGiftController extends GetxController {
               : null,
           requestStreamId: jobStreamId,
           requestGeneration: jobGeneration,
+          quantity: batchQuantity,
         );
 
         quickGiftPendingCount.value = _quickGiftSendQueue.length;
 
-        if (pumpEpoch == _quickGiftQueueEpoch &&
-            _quickGiftSendQueue.isNotEmpty) {
-          await Future<void>.delayed(_quickGiftRequestGap);
-        }
       }
     } finally {
       _quickGiftQueueRunning = false;
@@ -422,6 +463,22 @@ class LiveGiftController extends GetxController {
         (backCoin != null &&
             backCoin.toString() != 'null' &&
             backCoin.toString().isNotEmpty);
+  }
+
+  bool _isVipGift(Map<String, dynamic> gift) {
+    final category = (gift['category'] ??
+            gift['gift_category'] ??
+            gift['gift_type'] ??
+            gift['type'] ??
+            '')
+        .toString()
+        .toLowerCase();
+    final raw = gift['is_vip'] ?? gift['vip_only'] ?? gift['requires_vip'];
+    return category.contains('vip') ||
+        raw == true ||
+        raw == 1 ||
+        raw?.toString().toLowerCase() == 'true' ||
+        raw?.toString() == '1';
   }
 
   void _luckyPrint(String title, dynamic value) {
@@ -599,11 +656,13 @@ class LiveGiftController extends GetxController {
         'event_id': 'local_$clientEventId',
       };
 
-      _luckyPrint('GIFT LOCAL OPTIMISTIC PAYLOAD ALL DATA', {
-        'gift_object': gift,
-        'local_is_lucky_detection': isLuckyGift(gift),
-        'optimistic_payload': optimisticPayload,
-      });
+      if (kLiveDebug) {
+        _luckyPrint('GIFT LOCAL OPTIMISTIC PAYLOAD ALL DATA', {
+          'gift_object': gift,
+          'local_is_lucky_detection': isLuckyGift(gift),
+          'optimistic_payload': optimisticPayload,
+        });
+      }
 
       ws.handleOptimisticGift(optimisticPayload);
 
@@ -692,6 +751,7 @@ class LiveGiftController extends GetxController {
     Map<String, dynamic>? localGift,
     int? requestStreamId,
     int? requestGeneration,
+    int quantity = 1,
   }) async {
     String resolvedClientEventId = clientEventId?.trim() ?? '';
     final int sendStreamId =
@@ -723,8 +783,21 @@ class LiveGiftController extends GetxController {
         );
       }
 
+      final Map<String, dynamic> safeLocalGift =
+          localGift ?? const <String, dynamic>{};
+      final permissionGift = safeLocalGift.isNotEmpty
+          ? safeLocalGift
+          : _localGiftAssetById(giftId, giftPrice);
+      if (_isVipGift(permissionGift) &&
+          !livestreamController.currentVipPrivileges.vipGift) {
+        Fluttertoast.showToast(msg: ('Activate VIP to use VIP Gift').appTr);
+        return null;
+      }
+
       // 🧾 Local check before API call (extra layer)
-      if (userCoins < giftPrice) {
+      final int safeQuantity = quantity.clamp(1, 1000).toInt();
+      final int batchGiftCost = giftPrice * safeQuantity;
+      if (userCoins < batchGiftCost) {
         Fluttertoast.showToast(
           msg: ("Insufficient balance. Please recharge!").appTr,
           backgroundColor: Colors.white,
@@ -765,7 +838,7 @@ class LiveGiftController extends GetxController {
         "receiver_id": receivers.isNotEmpty ? receivers.first : receiverId,
         "receiver_ids": receivers,
         "gift_id": giftId,
-        "quantity": 1,
+        "quantity": safeQuantity,
         "client_event_id": resolvedClientEventId,
         "client_request_id": resolvedClientEventId,
         "stream_id": sendStreamId,
@@ -789,45 +862,48 @@ class LiveGiftController extends GetxController {
       }
 
       final Map<String, dynamic> selectedGiftForDebug =
-          localGift != null && localGift.isNotEmpty
+          safeLocalGift.isNotEmpty
           ? <String, dynamic>{
-              ...Map<String, dynamic>.from(localGift),
-              'id': localGift['id'] ?? localGift['gift_id'] ?? giftId,
-              'gift_id': localGift['gift_id'] ?? localGift['id'] ?? giftId,
+              ...safeLocalGift,
+              'id': safeLocalGift['id'] ?? safeLocalGift['gift_id'] ?? giftId,
+              'gift_id':
+                  safeLocalGift['gift_id'] ?? safeLocalGift['id'] ?? giftId,
               'coin':
-                  localGift['coin'] ??
-                  localGift['coins'] ??
-                  localGift['price'] ??
+                  safeLocalGift['coin'] ??
+                  safeLocalGift['coins'] ??
+                  safeLocalGift['price'] ??
                   giftPrice,
               'coins':
-                  localGift['coins'] ??
-                  localGift['coin'] ??
-                  localGift['price'] ??
+                  safeLocalGift['coins'] ??
+                  safeLocalGift['coin'] ??
+                  safeLocalGift['price'] ??
                   giftPrice,
             }
           : _localGiftAssetById(giftId, giftPrice);
 
       // DEBUG V2: Print every gift request. Some backends expose a Lucky gift
       // as a normal gift_sent request and only return Lucky fields later.
-      _luckyPrint('ALL GIFT SEND API REQUEST RAW', {
-        'url': kSentGift,
-        'request_data': data,
-        'selected_gift_from_local_list': selectedGiftForDebug,
-        'local_is_lucky_detection': isLuckyGift(selectedGiftForDebug),
-        'gift_id': giftId,
-        'gift_price': giftPrice,
-        'sender_id': userId,
-        'sender_balance_before': userCoins,
-        'receiver_id_argument': receiverId,
-        'resolved_receiver_ids': receivers,
-        'receiver_ids_override': receiverIdsOverride,
-        'selected_receiver_ids_state': selectedReceiverIds.toList(),
-        'selected_seat_no': selectedSeatNo.value,
-        'stream_id': sendStreamId,
-        'dispatch_local_animation': dispatchLocalAnimation,
-      });
+      if (kLiveDebug) {
+        _luckyPrint('ALL GIFT SEND API REQUEST RAW', {
+          'url': kSentGift,
+          'request_data': data,
+          'selected_gift_from_local_list': selectedGiftForDebug,
+          'local_is_lucky_detection': isLuckyGift(selectedGiftForDebug),
+          'gift_id': giftId,
+          'gift_price': giftPrice,
+          'sender_id': userId,
+          'sender_balance_before': userCoins,
+          'receiver_id_argument': receiverId,
+          'resolved_receiver_ids': receivers,
+          'receiver_ids_override': receiverIdsOverride,
+          'selected_receiver_ids_state': selectedReceiverIds.toList(),
+          'selected_seat_no': selectedSeatNo.value,
+          'stream_id': sendStreamId,
+          'dispatch_local_animation': dispatchLocalAnimation,
+        });
+      }
 
-      if (isLuckyGift(selectedGiftForDebug)) {
+      if (kLiveDebug && isLuckyGift(selectedGiftForDebug)) {
         _luckyPrint('LUCKY GIFT SEND API REQUEST', {
           'url': kSentGift,
           'request_data': data,
@@ -867,6 +943,9 @@ class LiveGiftController extends GetxController {
               .trim() ??
           '';
 
+      final Stopwatch? requestStopwatch = kDebugMode
+          ? (Stopwatch()..start())
+          : null;
       final response = await livestreamController.dio.post(
         kSentGift,
         data: data,
@@ -883,6 +962,12 @@ class LiveGiftController extends GetxController {
           receiveTimeout: const Duration(seconds: 25),
         ),
       );
+      if (requestStopwatch != null) {
+        debugPrint(
+          '[GIFT] request durationMs=${requestStopwatch.elapsedMilliseconds} '
+          'qty=$safeQuantity',
+        );
+      }
 
       final dynamic responseBody = response.data;
       final String responseMessage = _giftBackendMessage(responseBody);
@@ -899,24 +984,27 @@ class LiveGiftController extends GetxController {
       }
 
       // DEBUG V2: Always print the complete API response before parsing.
-      _luckyPrint('ALL GIFT SEND API RESPONSE RAW', {
-        'status_code': response.statusCode,
-        'status_message': response.statusMessage,
-        'request_url': kSentGift,
-        'request_data': data,
-        'selected_gift_from_local_list': selectedGiftForDebug,
-        'local_is_lucky_detection': isLuckyGift(selectedGiftForDebug),
-        'response_runtime_type': response.data.runtimeType.toString(),
-        'response_data': response.data,
-        'response_headers': response.headers.map,
-      });
+      if (kLiveDebug) {
+        _luckyPrint('ALL GIFT SEND API RESPONSE RAW', {
+          'status_code': response.statusCode,
+          'status_message': response.statusMessage,
+          'request_url': kSentGift,
+          'request_data': data,
+          'selected_gift_from_local_list': selectedGiftForDebug,
+          'local_is_lucky_detection': isLuckyGift(selectedGiftForDebug),
+          'response_runtime_type': response.data.runtimeType.toString(),
+          'response_data': response.data,
+          'response_headers': response.headers.map,
+        });
+      }
 
-      if (isLuckyGift(selectedGiftForDebug) ||
+      if (kLiveDebug &&
+          (isLuckyGift(selectedGiftForDebug) ||
           (response.data is Map &&
               ((response.data as Map)['action_type'] == 'lucky_gift_result' ||
                   (response.data as Map)['is_lucky_gift'] == true ||
                   (response.data as Map)['lucky_results'] is List ||
-                  (response.data as Map)['lucky_result'] is Map))) {
+                  (response.data as Map)['lucky_result'] is Map)))) {
         _luckyPrint('LUCKY GIFT SEND API FULL RESPONSE', {
           'status_code': response.statusCode,
           'status_message': response.statusMessage,
@@ -968,7 +1056,7 @@ class LiveGiftController extends GetxController {
                         .where((e) => e > 0)
                         .toList(growable: false),
                     baselineCoins: receiverCoinBaseline,
-                    coinValue: giftPrice,
+                    coinValue: batchGiftCost,
                   );
             } catch (e) {
               liveLog('⚠️ Sender gift coin reconciliation skipped => $e');
@@ -981,27 +1069,29 @@ class LiveGiftController extends GetxController {
               responseData['is_lucky_gift'] == true ||
               responseData['lucky_results'] is List ||
               responseData['lucky_result'] is Map) {
-            _luckyPrint('LUCKY GIFT SEND RESPONSE PARSED', {
-              'response_data': responseData,
-              'data': livestreamController.liveLuckyGiftController.mapOf(
-                responseData['data'],
-              ),
-              'sender': livestreamController.liveLuckyGiftController.mapOf(
-                responseData['sender'],
-              ),
-              'receiver': livestreamController.liveLuckyGiftController.mapOf(
-                responseData['receiver'],
-              ),
-              'gift': livestreamController.liveLuckyGiftController.mapOf(
-                responseData['gift'] ?? responseData['gift_data'],
-              ),
-              'lucky_result': livestreamController.liveLuckyGiftController
-                  .mapOf(responseData['lucky_result']),
-              'lucky_results': responseData['lucky_results'],
-              'multiplier': responseData['multiplier'],
-              'win_amount': responseData['win_amount'],
-              'is_win': responseData['is_win'],
-            });
+            if (kLiveDebug) {
+              _luckyPrint('LUCKY GIFT SEND RESPONSE PARSED', {
+                'response_data': responseData,
+                'data': livestreamController.liveLuckyGiftController.mapOf(
+                  responseData['data'],
+                ),
+                'sender': livestreamController.liveLuckyGiftController.mapOf(
+                  responseData['sender'],
+                ),
+                'receiver': livestreamController.liveLuckyGiftController.mapOf(
+                  responseData['receiver'],
+                ),
+                'gift': livestreamController.liveLuckyGiftController.mapOf(
+                  responseData['gift'] ?? responseData['gift_data'],
+                ),
+                'lucky_result': livestreamController.liveLuckyGiftController
+                    .mapOf(responseData['lucky_result']),
+                'lucky_results': responseData['lucky_results'],
+                'multiplier': responseData['multiplier'],
+                'win_amount': responseData['win_amount'],
+                'is_win': responseData['is_win'],
+              });
+            }
             // Loss responses arrive for every tap. Rebuilding the Lucky result
             // state for each loss adds avoidable work during long Combo bursts.
             // Only a real positive payout needs the WIN/times UI.
@@ -1131,7 +1221,23 @@ class LiveGiftController extends GetxController {
     return null;
   }
 
-  Future<void> fetchGiftList() async {
+  Future<void> fetchGiftList() {
+    // Gift definitions are static across live rooms. Preserve the already
+    // decoded catalog and collapse concurrent callers into one HTTP request.
+    if (giftList.isNotEmpty) return Future<void>.value();
+    final running = _giftListFetchInFlight;
+    if (running != null) return running;
+
+    final Future<void> request = _fetchGiftListFromServer();
+    _giftListFetchInFlight = request;
+    return request.whenComplete(() {
+      if (identical(_giftListFetchInFlight, request)) {
+        _giftListFetchInFlight = null;
+      }
+    });
+  }
+
+  Future<void> _fetchGiftListFromServer() async {
     try {
       final response = await livestreamController.dio.get(
         kGiftList,
@@ -1236,7 +1342,8 @@ class LiveGiftController extends GetxController {
 
   void resetGiftRoomState({required int streamId}) {
     resetQuickGiftState();
-    giftList.clear();
+    // Keep the static gift catalog cached between rooms. Room-scoped history,
+    // totals, receiver selections and animations are still reset below.
     giftHistory.clear();
     totalGiftCoins.value = 0;
     selectedGiftSendingId.value = 0;
@@ -1264,6 +1371,9 @@ class LiveGiftController extends GetxController {
     quickGiftData.clear();
     _quickGiftExpireAtMs = 0;
     _quickGiftLastSoundPlayed = false;
+    _openQuickGiftBatchKey = '';
+    _openQuickGiftBatchClientEventId = '';
+    _openQuickGiftBatchUntilMs = 0;
   }
 
   Future<void> disposeGiftState() async {

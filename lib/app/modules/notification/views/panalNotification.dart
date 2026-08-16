@@ -25,11 +25,11 @@ class Panalnotification extends StatelessWidget {
     final NotificationController controller = _controller;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F6FA),
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         scrolledUnderElevation: 0,
-        backgroundColor:kAppbarColor,
-        surfaceTintColor: Colors.white,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
         leading: IconButton(
@@ -94,60 +94,84 @@ class Panalnotification extends StatelessWidget {
           }),
           const SizedBox(width: 6),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: const Color(0xFFE8EAF0)),
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(0),
+          child: SizedBox.shrink(),
         ),
       ),
-      body: Obx(() {
-        if (controller.isLoading.value &&
-            controller.notificationListData.isEmpty) {
-          return const _NotificationLoadingList();
-        }
-
-        if (controller.hasError.value &&
-            controller.notificationListData.isEmpty) {
-          return _NotificationErrorState(
-            message: controller.errorMessage.value,
-            onRetry: controller.showNotificationData,
-          );
-        }
-
-        if (controller.notificationListData.isEmpty) {
-          return _NotificationEmptyState(
-            onRefresh: controller.refreshNotifications,
-          );
-        }
-
-        return RefreshIndicator(
-          color: const Color(0xFFF02D55),
-          backgroundColor: Colors.white,
-          onRefresh: controller.refreshNotifications,
-          child: ListView.separated(
-            physics: const AlwaysScrollableScrollPhysics(
-              parent: BouncingScrollPhysics(),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  stops: [0.00, 0.16, 0.32, 0.48, 0.64, 1.00],
+                  colors: [
+                    Colors.transparent,
+                    Color(0x18FFFFFF),
+                    Color(0x76FFFFFF),
+                    Color(0xE8FFFFFF),
+                    Colors.white,
+                    Colors.white,
+                  ],
+                ),
+              ),
             ),
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
-            itemCount: controller.notificationListData.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (BuildContext context, int index) {
-              final Map<String, dynamic> notification =
-              controller.notificationListData[index];
-              return _NotificationCard(
-                notification: notification,
-                onTap: () {
-                  final int id = _toInt(
-                    notification['id'] ?? notification['notification_id'],
-                  );
-                  if (id > 0) {
-                    controller.markAsRead(id);
-                  }
-                },
-              );
-            },
           ),
-        );
-      }),
+          Obx(() {
+            if (controller.isLoading.value &&
+                controller.notificationListData.isEmpty) {
+              return const _NotificationLoadingList();
+            }
+
+            if (controller.hasError.value &&
+                controller.notificationListData.isEmpty) {
+              return _NotificationErrorState(
+                message: controller.errorMessage.value,
+                onRetry: controller.showNotificationData,
+              );
+            }
+
+            if (controller.notificationListData.isEmpty) {
+              return _NotificationEmptyState(
+                onRefresh: controller.refreshNotifications,
+              );
+            }
+
+            return RefreshIndicator(
+              color: const Color(0xFFF02D55),
+              backgroundColor: Colors.white,
+              onRefresh: controller.refreshNotifications,
+              child: ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 28),
+                itemCount: controller.notificationListData.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (BuildContext context, int index) {
+                  final Map<String, dynamic> notification =
+                  controller.notificationListData[index];
+                  return _NotificationCard(
+                    notification: notification,
+                    onTap: () {
+                      final int id = _toInt(
+                        notification['id'] ?? notification['notification_id'],
+                      );
+                      if (id > 0) {
+                        controller.markAsRead(id);
+                      }
+                    },
+                  );
+                },
+              ),
+            );
+          }),
+        ],
+      ),
     );
   }
 }
@@ -232,9 +256,9 @@ class _NotificationCard extends StatelessWidget {
             ),
             boxShadow: <BoxShadow>[
               BoxShadow(
-                color: Colors.black.withOpacity(isRead ? 0.035 : 0.055),
-                blurRadius: 16,
-                offset: const Offset(0, 7),
+                color: Colors.black.withOpacity(isRead ? 0.020 : 0.030),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
               ),
             ],
           ),

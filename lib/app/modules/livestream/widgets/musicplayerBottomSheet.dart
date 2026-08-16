@@ -6,33 +6,25 @@ import 'package:get/get.dart';
 
 import '../controllers/livestream_controller.dart';
 
-import 'package:meetlivepro/app/localization/app_localizer.dart';
+/// Full-screen host music library. Playback remains owned by the existing
+/// LiveMusicController and the already-joined Agora engine.
 class LiveMusicPlayerSheet extends StatefulWidget {
+  const LiveMusicPlayerSheet({super.key, required this.rtcEngine, this.initialPlaylist = false});
+
   final RtcEngine? rtcEngine;
+  final bool initialPlaylist;
 
-  const LiveMusicPlayerSheet({super.key, required this.rtcEngine});
-
-  static Future<void> show({required RtcEngine? rtcEngine}) async {
-    final LivestreamController controller =
-    Get.find<LivestreamController>();
-
-    // Prevent two music sheets from opening at the same time.
+  static Future<void> show({required RtcEngine? rtcEngine, bool showPlaylist = false}) async {
+    final controller = Get.find<LivestreamController>();
     if (controller.isMusicPlayerSheetOpen.value) return;
-
     controller.isMusicPlayerSheetOpen.value = true;
-
     try {
-      await Get.bottomSheet<void>(
-        LiveMusicPlayerSheet(rtcEngine: rtcEngine),
-        isScrollControlled: true,
-        ignoreSafeArea: false,
-        backgroundColor: Colors.transparent,
-        barrierColor: Colors.black.withOpacity(.68),
-        enterBottomSheetDuration: const Duration(milliseconds: 320),
-        exitBottomSheetDuration: const Duration(milliseconds: 220),
+      await Get.to<void>(
+        () => LiveMusicPlayerSheet(rtcEngine: rtcEngine, initialPlaylist: showPlaylist),
+        transition: Transition.rightToLeft,
+        duration: const Duration(milliseconds: 220),
       );
     } finally {
-      // Works for close button, back button and swipe-down close.
       controller.isMusicPlayerSheetOpen.value = false;
     }
   }
@@ -41,467 +33,140 @@ class LiveMusicPlayerSheet extends StatefulWidget {
   State<LiveMusicPlayerSheet> createState() => _LiveMusicPlayerSheetState();
 }
 
-class _LiveMusicPlayerSheetState extends State<LiveMusicPlayerSheet>
-    with SingleTickerProviderStateMixin {
+class _LiveMusicPlayerSheetState extends State<LiveMusicPlayerSheet> {
   final LivestreamController controller = Get.find<LivestreamController>();
-  late final AnimationController _discController;
+  late int tab = widget.initialPlaylist ? 1 : 0;
 
   @override
   void initState() {
     super.initState();
-    _discController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 7),
-    );
-  }
-
-  @override
-  void dispose() {
-    _discController.dispose();
-    super.dispose();
+    if (tab == 0) controller.liveMusicController.loadLocalMusics();
   }
 
   @override
   Widget build(BuildContext context) {
-    final height = MediaQuery.sizeOf(context).height;
-    return Container(
-      constraints: BoxConstraints(maxHeight: height * .88),
-      decoration: const BoxDecoration(
-        color: Color(0xFF0B1020),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(icon: const Icon(Icons.arrow_back_ios_new, color: Colors.black, size: 21), onPressed: Get.back),
+        titleSpacing: 0,
+        title: Row(children: [_tab('Local', 0), _tab('Play List', 1)]),
       ),
-      child: SafeArea(
-        top: false,
-        child: Obx(() {
-          final status = controller.liveMusicStatus.value;
-          final hasMusic = controller.liveMusicName.value.trim().isNotEmpty &&
-              status != 'stopped';
-          final paused = status == 'paused';
-          if (!hasMusic || paused) {
-            if (_discController.isAnimating) {
-              _discController.stop(canceled: false);
-            }
-          } else if (!_discController.isAnimating) {
-            _discController.repeat();
-          }
+      body: Obx(() {
+        final hasTrack = controller.selectedMusicPath.value.isNotEmpty;
+        return Column(children: [
+          Expanded(child: tab == 0 ? _localList() : _playlist()),
+          if (hasTrack) _bottomPlayer(),
+        ]);
+      }),
+    );
+  }
 
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 10),
-              Container(
-                width: 46,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(.18),
-                  borderRadius: BorderRadius.circular(99),
-                ),
-              ),
-              _header(hasMusic),
-              Flexible(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-                  child: Column(
-                    children: [
-                      _artwork(hasMusic, paused),
-                      const SizedBox(height: 18),
-                      Text(
-                        hasMusic ? controller.liveMusicName.value : ('No music selected').appTr,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 19,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        hasMusic
-                            ? (paused ? ('Paused in live room').appTr: ('Playing for everyone').appTr)
-                            : ('Choose an audio file from your device').appTr,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(.58),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      _progress(hasMusic),
-                      const SizedBox(height: 10),
-                      _mainControls(hasMusic, paused),
-                      const SizedBox(height: 18),
-                      _volumeCard(),
-                      const SizedBox(height: 18),
-                      _actionButtons(hasMusic),
-                      if (controller.recentLiveMusics.isNotEmpty) ...[
-                        const SizedBox(height: 24),
-                        _recentSection(),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          );
-        }),
+  Widget _tab(String label, int index) => InkWell(
+        onTap: () {
+          setState(() => tab = index);
+          if (index == 0) controller.liveMusicController.loadLocalMusics();
+        },
+        child: Container(
+          margin: const EdgeInsets.only(right: 34),
+          padding: const EdgeInsets.fromLTRB(4, 20, 4, 13),
+          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: tab == index ? const Color(0xFFFFC400) : Colors.transparent, width: 3))),
+          child: Text(label, style: TextStyle(color: Colors.black, fontSize: 17, fontWeight: tab == index ? FontWeight.w700 : FontWeight.w500)),
+        ),
+      );
+
+  Widget _localList() {
+    final music = controller.liveMusicController;
+    if (music.localMusicLoading.value) return const Center(child: CircularProgressIndicator(color: Color(0xFFFFC400)));
+    if (music.localMusicPermissionDenied.value) {
+      return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.library_music_outlined, size: 52, color: Colors.black38),
+        const SizedBox(height: 12),
+        const Text('Allow audio access to show music on this phone'),
+        TextButton(onPressed: () => music.loadLocalMusics(force: true), child: const Text('Try again')),
+      ]));
+    }
+    return RefreshIndicator(
+      color: const Color(0xFFFFC400),
+      onRefresh: () => music.loadLocalMusics(force: true),
+      child: ListView.builder(
+        padding: EdgeInsets.only(bottom: controller.selectedMusicPath.value.isEmpty ? 12 : 4),
+        itemCount: music.localMusics.length + 1,
+        itemBuilder: (_, index) {
+          if (index == 0) return Padding(padding: const EdgeInsets.fromLTRB(18, 15, 18, 10), child: Text('${music.localMusics.length} songs', style: const TextStyle(color: Colors.black54, fontSize: 13)));
+          return _songRow(music.localMusics[index - 1], index - 1, false);
+        },
       ),
     );
   }
 
-  Widget _header(bool hasMusic) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 14, 12),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFFF80230), Color(0xFF8D52EF)],
-              ),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(Icons.graphic_eq_rounded, color: Colors.white),
-          ),
+  Widget _playlist() {
+    final songs = controller.liveMusicController.musicPlaylist;
+    if (songs.isEmpty) return const Center(child: Text('No songs selected', style: TextStyle(color: Colors.black45)));
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      itemCount: songs.length,
+      itemBuilder: (_, index) => _songRow(songs[index], index, true),
+    );
+  }
+
+  Widget _songRow(Map<String, dynamic> song, int index, bool playlist) {
+    final path = (song['path'] ?? '').toString();
+    final selected = path == controller.selectedMusicPath.value;
+    final title = (song['title'] ?? song['name'] ?? 'Unknown Music').toString();
+    var artist = (song['artist'] ?? '').toString().trim();
+    if (artist.isEmpty || artist == '<unknown>') artist = '<unknown>';
+    final duration = int.tryParse('${song['duration'] ?? 0}') ?? 0;
+    return InkWell(
+      onTap: () => playlist
+          ? controller.liveMusicController.playPlaylistMusic(rtcEngine: widget.rtcEngine, index: index)
+          : controller.liveMusicController.selectLocalMusic(rtcEngine: widget.rtcEngine, music: song),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: Color(0xFFF1F1F1)))),
+        child: Row(children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 15, color: selected ? const Color(0xFFB88600) : Colors.black, fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
+            const SizedBox(height: 4),
+            Text(duration > 0 ? '$artist  •  ${controller.formatMusicTime(duration)}' : artist, style: const TextStyle(fontSize: 12, color: Colors.black45)),
+          ])),
           const SizedBox(width: 12),
-           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(('Live Music Studio').appTr,
-                    style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
-                SizedBox(height: 2),
-                Text(('Professional room audio control').appTr,
-                    style: TextStyle(color: Color(0xFF8F9AB5), fontSize: 11)),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: () => Get.back(),
-            icon: const Icon(Icons.close_rounded, color: Colors.white70),
-          ),
-        ],
+          Container(width: 40, height: 40, decoration: const BoxDecoration(color: Color(0xFFFFC400), shape: BoxShape.circle), child: Icon(selected && controller.liveMusicStatus.value != 'paused' ? Icons.graphic_eq : Icons.play_arrow_rounded, color: Colors.black, size: 25)),
+        ]),
       ),
     );
   }
 
-  Widget _artwork(bool hasMusic, bool paused) {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Container(
-          width: 190,
-          height: 190,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(color: const Color(0xFFF80230).withOpacity(.25), blurRadius: 45, spreadRadius: 6),
-              BoxShadow(color: const Color(0xFF21D4FD).withOpacity(.15), blurRadius: 55, spreadRadius: 4),
-            ],
-          ),
-        ),
-        RotationTransition(
-          turns: _discController,
-          child: Container(
-            width: 170,
-            height: 170,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const SweepGradient(
-                colors: [Color(0xFF131B31), Color(0xFF39415A), Color(0xFF111827), Color(0xFF131B31)],
-              ),
-              border: Border.all(color: Colors.white.withOpacity(.18), width: 2),
-            ),
-            child: Center(
-              child: Container(
-                width: 72,
-                height: 72,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(colors: [Color(0xFFF80230), Color(0xFF8D52EF)]),
-                ),
-                child: Icon(
-                  hasMusic ? (paused ? Icons.pause_rounded : Icons.music_note_rounded) : Icons.library_music_rounded,
-                  color: Colors.white,
-                  size: 35,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _progress(bool hasMusic) {
+  Widget _bottomPlayer() {
+    final paused = controller.liveMusicStatus.value == 'paused';
     final duration = controller.musicDurationMs.value;
     final position = controller.musicPositionMs.value
         .clamp(0, math.max(duration, 0))
         .toInt();
-    return Column(
-      children: [
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            trackHeight: 4,
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 15),
-            activeTrackColor: const Color(0xFFF80230),
-            inactiveTrackColor: Colors.white.withOpacity(.12),
-            thumbColor: Colors.white,
-            overlayColor: const Color(0xFFF80230).withOpacity(.18),
-          ),
-          child: Slider(
-            value: duration > 0 ? position.toDouble() : 0,
-            max: duration > 0 ? duration.toDouble() : 1,
-            onChanged: hasMusic && duration > 0
-                ? (value) => controller.musicPositionMs.value = value.round()
-                : null,
-            onChangeEnd: hasMusic && duration > 0
-                ? (value) => controller.seekLiveMusic(
-              rtcEngine: widget.rtcEngine,
-              positionMs: value.round(),
-            )
-                : null,
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(controller.formatMusicTime(position), style: _timeStyle),
-              Text(duration > 0 ? controller.formatMusicTime(duration) : '--:--', style: _timeStyle),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  TextStyle get _timeStyle => TextStyle(color: Colors.white.withOpacity(.48), fontSize: 11, fontWeight: FontWeight.w600);
-
-  Widget _mainControls(bool hasMusic, bool paused) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        _roundButton(
-          icon: controller.musicRepeat.value ? Icons.repeat_one_rounded : Icons.repeat_rounded,
-          small: true,
-          active: controller.musicRepeat.value,
-          onTap: hasMusic
-              ? () => controller.toggleLiveMusicRepeat(rtcEngine: widget.rtcEngine)
-              : null,
-        ),
-        const SizedBox(width: 22),
-        _roundButton(
-          icon: Icons.replay_10_rounded,
-          onTap: hasMusic
-              ? () => controller.seekLiveMusic(
-            rtcEngine: widget.rtcEngine,
-            positionMs: controller.musicPositionMs.value - 10000,
-          )
-              : null,
-        ),
-        const SizedBox(width: 14),
-        GestureDetector(
-          onTap: !hasMusic
-              ? () => controller.pickAndPlayLiveMusic(rtcEngine: widget.rtcEngine)
-              : () => paused
-              ? controller.resumeLiveMusic(rtcEngine: widget.rtcEngine)
-              : controller.pauseLiveMusic(rtcEngine: widget.rtcEngine),
-          child: Container(
-            width: 68,
-            height: 68,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const LinearGradient(colors: [Color(0xFFF80230), Color(0xFFFF5274)]),
-              boxShadow: [BoxShadow(color: const Color(0xFFF80230).withOpacity(.42), blurRadius: 24, spreadRadius: 2)],
-            ),
-            child: controller.musicLoading.value
-                ? const Padding(padding: EdgeInsets.all(22), child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
-                : Icon(!hasMusic || paused ? Icons.play_arrow_rounded : Icons.pause_rounded, color: Colors.white, size: 40),
-          ),
-        ),
-        const SizedBox(width: 14),
-        _roundButton(
-          icon: Icons.forward_10_rounded,
-          onTap: hasMusic
-              ? () => controller.seekLiveMusic(
-            rtcEngine: widget.rtcEngine,
-            positionMs: controller.musicPositionMs.value + 10000,
-          )
-              : null,
-        ),
-        const SizedBox(width: 22),
-        _roundButton(
-          icon: Icons.queue_music_rounded,
-          small: true,
-          onTap: () => controller.pickAndPlayLiveMusic(rtcEngine: widget.rtcEngine),
-        ),
-      ],
-    );
-  }
-
-  Widget _roundButton({required IconData icon, VoidCallback? onTap, bool small = false, bool active = false}) {
-    final size = small ? 38.0 : 46.0;
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: active ? const Color(0xFFF80230).withOpacity(.18) : Colors.white.withOpacity(.07),
-          border: Border.all(color: active ? const Color(0xFFF80230).withOpacity(.55) : Colors.white.withOpacity(.10)),
-        ),
-        child: Icon(icon, color: onTap == null ? Colors.white24 : (active ? const Color(0xFFFF6B87) : Colors.white), size: small ? 20 : 24),
+    return SafeArea(
+      top: false,
+      child: Container(
+        color: const Color(0xFF111111),
+        padding: const EdgeInsets.fromLTRB(14, 10, 10, 8),
+        child: Row(children: [
+          _yellowButton(paused ? Icons.play_arrow_rounded : Icons.pause_rounded, () => paused ? controller.resumeLiveMusic(rtcEngine: widget.rtcEngine) : controller.pauseLiveMusic(rtcEngine: widget.rtcEngine), 52),
+          const SizedBox(width: 11),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(controller.liveMusicName.value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+            SliderTheme(data: SliderTheme.of(context).copyWith(trackHeight: 2, thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5), activeTrackColor: const Color(0xFFFFC400), inactiveTrackColor: Colors.white30, thumbColor: const Color(0xFFFFC400), overlayShape: SliderComponentShape.noOverlay), child: Slider(value: duration > 0 ? position.toDouble() : 0, max: duration > 0 ? duration.toDouble() : 1, onChanged: duration > 0 ? (v) => controller.musicPositionMs.value = v.round() : null, onChangeEnd: duration > 0 ? (v) => controller.seekLiveMusic(rtcEngine: widget.rtcEngine, positionMs: v.round()) : null)),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(controller.formatMusicTime(position), style: _time), Text(duration > 0 ? controller.formatMusicTime(duration) : '--:--', style: _time)]),
+          ])),
+          IconButton(onPressed: () => controller.liveMusicController.playPreviousLiveMusic(rtcEngine: widget.rtcEngine), icon: const Icon(Icons.skip_previous_rounded, color: Colors.white)),
+          IconButton(onPressed: () => controller.liveMusicController.playNextLiveMusic(rtcEngine: widget.rtcEngine), icon: const Icon(Icons.skip_next_rounded, color: Colors.white)),
+          IconButton(onPressed: () => setState(() => tab = 1), icon: const Icon(Icons.queue_music_rounded, color: Colors.white)),
+        ]),
       ),
     );
   }
 
-  Widget _volumeCard() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(15, 13, 12, 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(.055),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(.08)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.volume_up_rounded, color: Color(0xFF21D4FD), size: 23),
-          const SizedBox(width: 10),
-           Text(('Music volume').appTr, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: SliderTheme(
-              data: SliderTheme.of(context).copyWith(
-                trackHeight: 3,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                activeTrackColor: const Color(0xFF21D4FD),
-                inactiveTrackColor: Colors.white.withOpacity(.10),
-                thumbColor: Colors.white,
-              ),
-              child: Slider(
-                value: controller.musicVolume.value.toDouble(),
-                min: 0,
-                max: 100,
-                onChanged: (value) {
-                  controller.musicVolume.value = value.round();
-                  controller.setLiveMusicVolume(rtcEngine: widget.rtcEngine, volume: value.round());
-                },
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 34,
-            child: Text('${controller.musicVolume.value}%', textAlign: TextAlign.right, style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w700)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _actionButtons(bool hasMusic) {
-    return Row(
-      children: [
-        Expanded(
-          child: _wideButton(
-            icon: hasMusic ? Icons.swap_horiz_rounded : Icons.add_rounded,
-            label: hasMusic ? 'Change music' : 'Choose music',
-            primary: true,
-            onTap: () => controller.pickAndPlayLiveMusic(rtcEngine: widget.rtcEngine),
-          ),
-        ),
-        if (hasMusic) ...[
-          const SizedBox(width: 12),
-          Expanded(
-            child: _wideButton(
-              icon: Icons.stop_rounded,
-              label: ('Stop').appTr,
-              onTap: () => controller.stopLiveMusic(rtcEngine: widget.rtcEngine),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _wideButton({required IconData icon, required String label, required VoidCallback onTap, bool primary = false}) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
-        child: Ink(
-          height: 50,
-          decoration: BoxDecoration(
-            gradient: primary ? const LinearGradient(colors: [Color(0xFFF80230), Color(0xFF8D52EF)]) : null,
-            color: primary ? null : Colors.white.withOpacity(.08),
-            borderRadius: BorderRadius.circular(15),
-            border: primary ? null : Border.all(color: Colors.white.withOpacity(.10)),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [Icon(icon, color: Colors.white, size: 20), const SizedBox(width: 8), Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800))],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _recentSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-         Row(
-          children: [
-            Icon(Icons.history_rounded, color: Color(0xFF8F9AB5), size: 18),
-            SizedBox(width: 7),
-            Text(('Recently played').appTr, style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-          ],
-        ),
-        const SizedBox(height: 10),
-        ...controller.recentLiveMusics.take(5).map((music) {
-          final selected = music['path'] == controller.selectedMusicPath.value;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () => controller.playRecentLiveMusic(rtcEngine: widget.rtcEngine, music: music),
-                borderRadius: BorderRadius.circular(14),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: selected ? const Color(0xFFF80230).withOpacity(.11) : Colors.white.withOpacity(.04),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: selected ? const Color(0xFFF80230).withOpacity(.35) : Colors.white.withOpacity(.06)),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 38,
-                        height: 38,
-                        decoration: BoxDecoration(color: Colors.white.withOpacity(.08), borderRadius: BorderRadius.circular(11)),
-                        child: Icon(selected ? Icons.graphic_eq_rounded : Icons.music_note_rounded, color: selected ? const Color(0xFFFF6B87) : Colors.white70, size: 20),
-                      ),
-                      const SizedBox(width: 11),
-                      Expanded(child: Text(music['name'] ?? ('Music').appTr, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700))),
-                      const Icon(Icons.play_arrow_rounded, color: Colors.white54),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        }),
-      ],
-    );
-  }
+  Widget _yellowButton(IconData icon, VoidCallback onTap, double size) => InkWell(onTap: onTap, customBorder: const CircleBorder(), child: Container(width: size, height: size, decoration: const BoxDecoration(color: Color(0xFFFFC400), shape: BoxShape.circle), child: Icon(icon, color: Colors.black, size: 31)));
+  TextStyle get _time => const TextStyle(color: Colors.white54, fontSize: 10);
 }

@@ -6,6 +6,7 @@ import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:dio/dio.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -13,9 +14,12 @@ import 'package:get/get_core/src/get_main.dart';
 import 'package:get/get_instance/src/extension_instance.dart';
 import 'package:get/get_navigation/src/extension_navigation.dart';
 import 'package:get/get_navigation/src/root/get_material_app.dart';
+import 'package:get/get_state_manager/src/rx_flutter/rx_obx_widget.dart';
 import 'package:get_storage/get_storage.dart';
 
 import 'app/localization/app_localizer.dart';
+import 'app/modules/livestream/controllers/live_banner_controller.dart';
+import 'app/theme/app_theme_controller.dart';
 import 'app/modules/home/views/home_view.dart';
 import 'app/modules/livestream/controllers/roket_controller.dart';
 import 'app/modules/messanger/server_functions/ChatPushNotificationService.dart';
@@ -37,6 +41,7 @@ import 'app/modules/livestream/widgets/GlobalLuckyBagBanner.dart';
 import 'app/modules/livestream/widgets/GlobalLuckyWinBanner.dart';
 import 'app/modules/livestream/widgets/GlobalRocketLaunchBanner.dart';
 import 'app/modules/livestream/widgets/GlobalBigGiftBanner.dart';
+import 'app/modules/livestream/widgets/global_banner_layout.dart';
 import 'app/modules/livestream/widgets/minimized_video_live_window.dart';
 import 'app/modules/messanger/views/audio_call_view.dart';
 import 'app/modules/messanger/views/video_call_view.dart';
@@ -62,6 +67,12 @@ Future<void> main() async {
       WidgetsFlutterBinding.ensureInitialized();
 
       await GetStorage.init();
+      // Restore the persisted theme and begin its non-blocking refresh before
+      // slower platform/service initialization and before any screen builds.
+      _putIfAbsent<AppThemeController>(() => AppThemeController());
+      if (kDebugMode) {
+        debugPrint('APP_THEME controller registered (permanent singleton)');
+      }
       final AppLanguageController languageController =
           Get.isRegistered<AppLanguageController>()
           ? Get.find<AppLanguageController>()
@@ -710,6 +721,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    globalLiveBannerQueue().updateAppActive(state == AppLifecycleState.resumed);
     unawaited(_handleAppLifecycleForLiveAudio(state));
   }
 
@@ -729,15 +741,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       if (state == AppLifecycleState.resumed) {
         debugPrint('✅ App foreground: keep live realtime/audio active');
         ws.resumeUnifiedLiveStreamReconnectAfterForeground();
-
+        // Do not start a secondary Flutter engine during normal foreground
+        // live interaction. If background audio previously started it, update
+        // the existing service only; the service is stopped by the real room
+        // exit/end path.
         if (hasActiveLiveAudio) {
-          await startLiveForegroundService(
+          await updateLiveForegroundService(
             title: live.isBroadcaster.value
                 ? 'Lin Live host room running'
                 : 'Lin Live audio room running',
-            content: live.isBroadcaster.value
-                ? 'Your microphone and live audio are active.'
-                : 'Live audio is active.',
+            content: 'Live audio is active.',
           );
         }
         return;
@@ -996,15 +1009,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _openGlobalLuckyGiftLiveRoom(livestreamId, data, bannerType: 'rocket');
   }
 
-  void _openGlobalBigGiftLiveRoom(
-    int livestreamId,
-    Map<String, dynamic> data,
-  ) {
-    _openGlobalLuckyGiftLiveRoom(
-      livestreamId,
-      data,
-      bannerType: 'big_gift',
-    );
+  void _openGlobalBigGiftLiveRoom(int livestreamId, Map<String, dynamic> data) {
+    _openGlobalLuckyGiftLiveRoom(livestreamId, data, bannerType: 'big_gift');
   }
 
   @override
@@ -1020,6 +1026,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       title: ('Lin Live').appTr,
       initialRoute: AppPages.INITIAL,
       getPages: AppPages.routes,
+      routingCallback: (routing) {
+        globalLiveBannerQueue().updatePresentationRoute(routing?.current);
+      },
       debugShowCheckedModeBanner: false,
       locale: AppLanguageController.to.currentLocale.value,
       fallbackLocale: const Locale('en', 'US'),
@@ -1045,17 +1054,19 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         Locale('zh', 'CN'),
       ],
 
-      /// ✅ Global Lucky Bag banner must be here, not only Bottomnav.
-      /// This makes banner visible on Home, Message, Me, Live room, and all routes.
       builder: (context, child) {
         return Stack(
           children: [
             child ?? const SizedBox.shrink(),
-            GlobalLuckyBagBanner(onOpenLive: _openGlobalLuckyBagLiveRoom),
-            GlobalLuckyWinBanner(onOpenLive: _openGlobalLuckyGiftLiveRoom),
-            GlobalRocketLaunchBanner(onOpenLive: _openGlobalRocketLiveRoom),
-            GlobalBigGiftBanner(onOpenLive: _openGlobalBigGiftLiveRoom),
             const MinimizedVideoLiveWindow(),
+            Positioned.fill(
+              child: _GlobalBannerOverlay(
+                onOpenLuckyBag: _openGlobalLuckyBagLiveRoom,
+                onOpenLuckyWin: _openGlobalLuckyGiftLiveRoom,
+                onOpenRocket: _openGlobalRocketLiveRoom,
+                onOpenBigGift: _openGlobalBigGiftLiveRoom,
+              ),
+            ),
           ],
         );
       },
@@ -1070,5 +1081,122 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         fontFamily: 'Roboto',
       ),
     );
+  }
+}
+
+class _GlobalBannerOverlay extends StatefulWidget {
+  const _GlobalBannerOverlay({
+    required this.onOpenLuckyBag,
+    required this.onOpenLuckyWin,
+    required this.onOpenRocket,
+    required this.onOpenBigGift,
+  });
+
+  final void Function(int, Map<String, dynamic>) onOpenLuckyBag;
+  final void Function(int, Map<String, dynamic>) onOpenLuckyWin;
+  final void Function(int, Map<String, dynamic>) onOpenRocket;
+  final void Function(int, Map<String, dynamic>) onOpenBigGift;
+
+  @override
+  State<_GlobalBannerOverlay> createState() => _GlobalBannerOverlayState();
+}
+
+class _GlobalBannerOverlayState extends State<_GlobalBannerOverlay> {
+  final Set<String> _renderedIds = <String>{};
+  final Set<String> _firstFrameLogged = <String>{};
+
+  void _traceItems(
+    BuildContext context,
+    List<GlobalLiveBannerItem> items,
+  ) {
+    final currentIds = items.map((item) => item.id).toSet();
+    for (final removed in _renderedIds.difference(currentIds)) {
+      debugPrint(
+        '[BANNER_UI][REMOVED] event_id=$removed reason=queue_state_changed',
+      );
+    }
+    _renderedIds
+      ..clear()
+      ..addAll(currentIds);
+
+    final media = MediaQuery.of(context);
+    final screenWidth = media.size.width;
+    final screenHeight = media.size.height;
+    final safeTop = media.padding.top;
+    for (final item in items) {
+      final slot = items.indexOf(item);
+      final resolvedTop =
+          safeTop +
+          globalBannerTopOffset(context) +
+          globalBannerSlotOffset(context, slot);
+      final compact = screenWidth < 370;
+      final width = item.type == GlobalLiveBannerType.luckyWin
+          ? (screenWidth * (compact ? .92 : .86))
+                .clamp(280.0, 560.0)
+                .toDouble()
+          : item.type == GlobalLiveBannerType.bigGift
+          ? (screenWidth * (compact ? .90 : .86))
+                .clamp(280.0, 560.0)
+                .toDouble()
+          : screenWidth;
+      final height = item.type == GlobalLiveBannerType.luckyWin
+          ? globalLuckyBannerHeight(context)
+          : item.type == GlobalLiveBannerType.bigGift
+          ? globalLuckyBannerHeight(context)
+          : 146.0;
+      debugPrint(
+        '[BANNER_UI][BUILD] type=${item.type.name} visible=true '
+        'has_item=true route=${Get.currentRoute}',
+      );
+      debugPrint(
+        '[BANNER_UI][LAYOUT] top=$resolvedTop width=$width height=$height',
+      );
+      debugPrint(
+        '[BANNER_UI][POSITION] screen_h=$screenHeight safe_top=$safeTop '
+        'resolved_top=$resolvedTop banner_h=$height',
+      );
+      if (_firstFrameLogged.add(item.id)) {
+        debugPrint('[BANNER_UI][MOUNTED] event_id=${item.id}');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_renderedIds.contains(item.id)) return;
+          debugPrint('[BANNER_UI][FIRST_FRAME] event_id=${item.id}');
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final id in _renderedIds) {
+      debugPrint('[BANNER_UI][REMOVED] event_id=$id reason=overlay_disposed');
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final banners = globalLiveBannerQueue();
+      if (!banners.hasAuthenticatedSession ||
+          !banners.canPresentGlobalBanner()) {
+        _traceItems(context, const <GlobalLiveBannerItem>[]);
+        return const SizedBox.shrink();
+      }
+      final items = banners.visibleBanners.toList(growable: false);
+      _traceItems(context, items);
+      return IgnorePointer(
+        ignoring: items.isEmpty,
+        child: Stack(
+          fit: StackFit.expand,
+          clipBehavior: Clip.none,
+          children: [
+            GlobalLuckyBagBanner(onOpenLive: widget.onOpenLuckyBag),
+            GlobalLuckyWinBanner(onOpenLive: widget.onOpenLuckyWin),
+            GlobalRocketLaunchBanner(onOpenLive: widget.onOpenRocket),
+            GlobalBigGiftBanner(onOpenLive: widget.onOpenBigGift),
+          ],
+        ),
+      );
+    });
   }
 }

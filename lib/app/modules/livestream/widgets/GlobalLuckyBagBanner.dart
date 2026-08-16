@@ -4,12 +4,14 @@ import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svga_easyplayer/flutter_svga_easyplayer.dart';
 import 'package:get/get.dart';
 
 import '../../../../constants/image_helper.dart';
 import '../../../../constants/layout_constant.dart';
 import '../controllers/global_live_banner_queue_controller.dart';
 import '../controllers/livestream_controller.dart';
+import 'global_banner_layout.dart';
 
 
 class GlobalLuckyWinBanner extends StatelessWidget {
@@ -177,7 +179,10 @@ class GlobalLuckyWinBanner extends StatelessWidget {
         key: ValueKey<String>('lucky_win_position_${item.id}'),
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
-        top: MediaQuery.of(context).padding.top + 7 + (slot * 150),
+        top: MediaQuery.of(context).padding.top +
+            globalBannerTopOffset(context) +
+            globalBannerSlotOffset(context, slot) +
+            10.0,
         left: 0,
         right: 0,
         child: Material(
@@ -188,7 +193,7 @@ class GlobalLuckyWinBanner extends StatelessWidget {
             resizeDuration: const Duration(milliseconds: 220),
             onDismissed: (_) => finishItem(),
             child: SizedBox(
-              height: 146,
+              height: globalLuckyBannerHeight(context),
               child: _RightStayLeftLuckyBanner(
                 key: ValueKey<String>(item.id),
                 senderName: senderName,
@@ -262,6 +267,7 @@ class _RightStayLeftLuckyBannerState
   Timer? _countdownTimer;
   late int _secondsLeft;
   bool _completionSent = false;
+  bool _sizeLogged = false;
 
   @override
   void initState() {
@@ -353,11 +359,21 @@ class _RightStayLeftLuckyBannerState
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        if (!_sizeLogged) {
+          _sizeLogged = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            final box = this.context.findRenderObject();
+            if (box is RenderBox) {
+              debugPrint('[LUCKY_UI][SIZE] height=${box.size.height}');
+            }
+          });
+        }
         final double screenWidth = constraints.maxWidth;
         final bool compact = screenWidth < 370;
         final double bannerWidth = math.min(
-          math.max(screenWidth * (compact ? .965 : .92), 300),
-          620,
+          math.max(screenWidth * (compact ? .92 : .86), 280),
+          560,
         );
         final double holdX = (screenWidth - bannerWidth) / 2;
         final double startX = screenWidth + 22;
@@ -415,7 +431,7 @@ class _LuckyBannerCard extends StatelessWidget {
   });
 
   static const String _backgroundAsset =
-      'assets/audio_live/broadcast_gift_1781905442_6a35b82260a4d.webp';
+      'assets/audio_live/gift_float_default.svga';
 
   final bool compact;
   final String senderName;
@@ -427,20 +443,20 @@ class _LuckyBannerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double cardHeight = compact ? 124 : 140;
-    final double avatarSize = compact ? 43 : 49;
+    final double cardHeight = compact ? 106 : 118;
+    final double avatarSize = compact ? 39 : 44;
 
-    return Container(
+    return SizedBox(
       height: cardHeight,
-      decoration: const BoxDecoration(
-        image: DecorationImage(
-          image: AssetImage(_backgroundAsset),
-          fit: BoxFit.fill,
-          filterQuality: FilterQuality.high,
-        ),
-      ),
       child: Stack(
+        fit: StackFit.expand,
         children: <Widget>[
+          RepaintBoundary(
+            child: SVGAEasyPlayer(
+              assetsName: _backgroundAsset,
+              fit: BoxFit.fill,
+            ),
+          ),
           Padding(
             padding: EdgeInsets.only(
               left: compact ? 8 : 12,

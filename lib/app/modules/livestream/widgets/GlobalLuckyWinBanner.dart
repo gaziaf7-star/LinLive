@@ -12,6 +12,7 @@ import '../controllers/global_live_banner_queue_controller.dart';
 import '../controllers/livestream_controller.dart';
 import '../controllers/red_packet_controller.dart';
 import '../socket/websocket_controller.dart';
+import 'global_banner_layout.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 
@@ -345,8 +346,8 @@ class GlobalLuckyBagBanner extends StatelessWidget {
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
         top: MediaQuery.of(context).padding.top +
-            topPadding +
-            (slot * 150),
+            globalLuckyBannerTopOffset(context) +
+            globalBannerSlotOffset(context, slot),
         left: left,
         right: right,
         child: Material(
@@ -527,7 +528,7 @@ class _QueuedLuckyBagMotionState extends State<_QueuedLuckyBagMotion>
             behavior: HitTestBehavior.translucent,
             onTap: widget.onTap,
             child: SizedBox(
-              height: kHeight * 0.13,
+              height: globalLuckyVisibleBannerHeight(context),
               width: bannerWidth,
               child: Stack(
                 clipBehavior: Clip.none,

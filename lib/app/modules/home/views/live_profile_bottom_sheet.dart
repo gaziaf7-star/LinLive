@@ -85,8 +85,10 @@ extension LiveProfileBottomSheetView on HomeController {
                       !liveVipTypeForCard.startsWith('svip') &&
                       liveVipLevelNoForCard == 1);
 
-          final double vipProfileCardVerticalOffset = kHeight *
-              (isVipOneProfileCard ? 0.098 : 0.072);
+          // VIP/SVIP profile-card background এখন bottom-sheet container-এর
+          // সাথে fixed থাকবে। Image position container-এর বাইরে shift হবে না।
+          final Alignment vipProfileCardAlignment =
+          isVipOneProfileCard ? Alignment.topCenter : Alignment.center;
 
           final bool isOwnProfile =
               user['id']?.toString() ==
@@ -176,19 +178,24 @@ extension LiveProfileBottomSheetView on HomeController {
 
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(24),
+                    // VIP/SVIP frame top-e uthle jeno kata na jay.
                     clipBehavior: Clip.none,
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        // ✅ VIP profile-card image পুরো bottom sheet-এর
-                        // background থাকবে। top negative এবং bottom positive
-                        // একই offset রাখায় image-এর height অপরিবর্তিত থেকে
-                        // শুধু VIP 1 হলে একটু বেশি উপরে উঠবে; SVIP/অন্যগুলো আগের জায়গায় থাকবে।
+                        // ✅ VIP/SVIP profile-card এখন পুরো bottom-sheet
+                        // container-এর fixed background।
+                        // Content scroll করবে, background নড়বে না।
+                        // BoxFit.cover দিয়ে top/bottom gap ছাড়াই পুরো card cover হবে।
                         if (_isActiveVipMap(liveVipForCard) &&
                             profileCardImageUrlForSheet.isNotEmpty)
                           Positioned(
-                            top: -vipProfileCardVerticalOffset,
-                            bottom: vipProfileCardVerticalOffset,
+                            // Previous -50px theke aro 100px upore:
+                            // total 150px upore uthano holo.
+                            // clipBehavior: Clip.none thakbe, tai upper artwork
+                            // container-er baire geleo kata jabe na.
+                            top: -220,
+                            bottom: 0,
                             left: 0,
                             right: 0,
                             child: IgnorePointer(
@@ -198,14 +205,14 @@ extension LiveProfileBottomSheetView on HomeController {
                                     .endsWith('.svga')
                                     ? SVGAEasyPlayer(
                                   resUrl: profileCardImageUrlForSheet,
-                                  fit: BoxFit.fill,
+                                  fit: BoxFit.cover,
                                 )
                                     : CachedNetworkImage(
                                   imageUrl: profileCardImageUrlForSheet,
                                   width: double.infinity,
                                   height: double.infinity,
-                                  fit: BoxFit.fill,
-                                  alignment: Alignment.center,
+                                  fit: BoxFit.cover,
+                                  alignment: vipProfileCardAlignment,
                                   fadeInDuration: Duration.zero,
                                   fadeOutDuration: Duration.zero,
                                   placeholder: (_, __) =>

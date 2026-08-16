@@ -657,6 +657,7 @@ class User {
   AssetHistories? assetHistories;
   EntryHistories? entryHistories;
   VipHistories? vipHistories;
+  Map<String, dynamic>? vipPurchaseHistory;
 
   User({
     this.id,
@@ -715,6 +716,7 @@ class User {
     this.assetHistories,
     this.entryHistories,
     this.vipHistories,
+    this.vipPurchaseHistory,
   });
 
   User.fromJson(dynamic json) {
@@ -796,6 +798,11 @@ class User {
     vipHistories = json['vip_histories'] != null
         ? VipHistories.fromJson(json['vip_histories'])
         : null;
+
+    final rawVipPurchaseHistory = json['vip_purchase_history'];
+    vipPurchaseHistory = rawVipPurchaseHistory is Map
+        ? Map<String, dynamic>.from(rawVipPurchaseHistory)
+        : null;
   }
 
   Map<String, dynamic> toJson() {
@@ -856,6 +863,7 @@ class User {
       'asset_histories': assetHistories?.toJson(),
       'entry_histories': entryHistories?.toJson(),
       'vip_histories': vipHistories?.toJson(),
+      'vip_purchase_history': vipPurchaseHistory,
     };
   }
 }

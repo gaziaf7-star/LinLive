@@ -9,13 +9,75 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'baishun_game_controller.dart';
 
+double _calculateBaishunHalfScreenHeight(MediaQueryData mediaQuery) {
+  final Size screenSize = mediaQuery.size;
+
+  final double usableHeight = (screenSize.height -
+      mediaQuery.padding.top -
+      mediaQuery.padding.bottom)
+      .clamp(0.0, screenSize.height)
+      .toDouble();
+
+  if (screenSize.width <= 0 || usableHeight <= 0) {
+    return screenSize.height * 0.6;
+  }
+
+  final double desiredHeight = usableHeight * 0.56;
+  // ✅ Increased from 1.08 to 1.45 so the half-screen game panel can grow
+  // closer to its intended ~56% of usable height on more devices, instead
+  // of being squeezed down by a tight width-based ceiling. The explicit
+  // height>width floor further below still guarantees BAISHUN's contract
+  // regardless of this multiplier.
+  final double widthBasedMaximum = screenSize.width * 1.45;
+  final double screenBasedMaximum = usableHeight * 0.62;
+  final double screenBasedMinimum = usableHeight * 0.44;
+
+  double gameHeight = desiredHeight;
+
+  if (gameHeight > widthBasedMaximum) {
+    gameHeight = widthBasedMaximum;
+  }
+
+  if (gameHeight > screenBasedMaximum) {
+    gameHeight = screenBasedMaximum;
+  }
+
+  // Only apply the minimum when it does not break the width-based cap.
+  if (gameHeight < screenBasedMinimum &&
+      screenBasedMinimum <= widthBasedMaximum) {
+    gameHeight = screenBasedMinimum;
+  }
+
+  if (usableHeight < 240.0) {
+    return usableHeight;
+  }
+
+  gameHeight = gameHeight.clamp(240.0, usableHeight).toDouble();
+
+  // ✅ FIX: BAISHUN's gameMode=2 (bottom-sheet) contract requires the
+  // container's height to be strictly greater than its width — the game
+  // provider rejected our config as "Passed the wrong parameter" /
+  // "height needs to be greater than width". The clamps above are all
+  // screen-proportion based (percentages of usableHeight/screen width) and
+  // could still land on a height <= width on wider-aspect-ratio screens —
+  // e.g. tablets, or phones where the status/nav bars eat proportionally
+  // more into usable height relative to their width. That is exactly why
+  // the game rendered correctly on some devices and wrong/cut off on
+  // others: it depends on each device's specific screen proportions, not
+  // on anything the user did differently. Enforce the contract explicitly
+  // as a final step, using whatever headroom is left within usableHeight.
+  final double minRequiredHeight = screenSize.width + 24.0;
+  if (gameHeight <= screenSize.width) {
+    gameHeight = minRequiredHeight.clamp(240.0, usableHeight).toDouble();
+  }
+
+  return gameHeight;
+}
+
 Future<void> showBaishunGameHalfScreen({
   required BuildContext context,
   required BaishunGameSession session,
 }) async {
-  final double screenHeight = MediaQuery.sizeOf(context).height;
-  final double gameHeight = screenHeight * 0.52;
-
   await showModalBottomSheet<void>(
     context: context,
     useRootNavigator: true,
@@ -26,12 +88,20 @@ Future<void> showBaishunGameHalfScreen({
     backgroundColor: Colors.transparent,
     barrierColor: Colors.transparent,
     builder: (BuildContext sheetContext) {
-      return SizedBox(
-        width: double.infinity,
-        height: gameHeight,
-        child: BaishunGameWebViewPage(
-          session: session,
-          isBottomSheet: true,
+      final MediaQueryData mediaQuery = MediaQuery.of(sheetContext);
+      final double gameHeight =
+      _calculateBaishunHalfScreenHeight(mediaQuery);
+      final double bottomSafeArea = mediaQuery.padding.bottom;
+
+      return Padding(
+        padding: EdgeInsets.only(bottom: bottomSafeArea),
+        child: SizedBox(
+          width: double.infinity,
+          height: gameHeight,
+          child: BaishunGameWebViewPage(
+            session: session,
+            isBottomSheet: true,
+          ),
         ),
       );
     },
@@ -456,10 +526,10 @@ try {
               ),
             ),
           ),
-          child: SafeArea(
-            top: false,
-            child: gameContent,
-          ),
+          // Bottom system inset is already handled by the modal builder.
+          // Keeping the WebView free of another SafeArea prevents its real
+          // viewport height from changing again on different navigation modes.
+          child: gameContent,
         ),
       );
     } else {

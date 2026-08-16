@@ -8,7 +8,9 @@ import '../../../../apis/api_endpoints.dart';
 import '../../../../constants/image_helper.dart';
 import '../../../localization/app_localizer.dart';
 import '../endLive/endLive.dart';
+import '../socket/websocket_controller.dart';
 import '../utils/live_performance_config.dart';
+import '../utils/live_flow_logger.dart';
 import '../views/audio_live_view.dart';
 import '../views/multi_live_view.dart';
 import '../views/popular_live_view.dart';
@@ -27,7 +29,7 @@ class LivePermanentRoomController extends GetxController {
 
   bool _actionIsCurrent(int serial, int generation) =>
       serial == _permanentActionSerial &&
-      generation == livestreamController.roomSessionGeneration;
+          generation == livestreamController.roomSessionGeneration;
 
   Map<String, dynamic> _mapOf(dynamic value) {
     if (value is Map<String, dynamic>) return Map<String, dynamic>.from(value);
@@ -47,9 +49,9 @@ class LivePermanentRoomController extends GetxController {
   final lastPermanentRoomActionData = <String, dynamic>{}.obs;
 
   String resolvePermanentRoomChannel(
-    dynamic payload, {
-    int fallbackOwnerId = 0,
-  }) {
+      dynamic payload, {
+        int fallbackOwnerId = 0,
+      }) {
     final root = _mapOf(payload);
     final data = _mapOf(root['data']);
     final live = {
@@ -89,9 +91,9 @@ class LivePermanentRoomController extends GetxController {
   }
 
   Map<String, dynamic> _normalizePermanentRoomResponse(
-    dynamic responseData, {
-    Map<String, dynamic>? fallbackLiveData,
-  }) {
+      dynamic responseData, {
+        Map<String, dynamic>? fallbackLiveData,
+      }) {
     final root = _mapOf(responseData);
     final nestedData = _mapOf(root['data']);
     final responseLive = {
@@ -124,6 +126,7 @@ class LivePermanentRoomController extends GetxController {
     int? requestedRoomTheme,
     int? requestedRoomBackground,
   }) async {
+    final Stopwatch openingStopwatch = Stopwatch()..start();
     final live = _mapOf(responseMap['livestreamdata']);
     final int livestreamId = _intOf(live['id'] ?? live['livestream_id']);
     final String channelName = resolvePermanentRoomChannel(
@@ -178,9 +181,9 @@ class LivePermanentRoomController extends GetxController {
         );
         final bool isHostRow =
             callerId == userId ||
-            call['is_broadcaster'] == true ||
-            call['is_broadcaster'] == 1 ||
-            call['is_broadcaster']?.toString() == '1';
+                call['is_broadcaster'] == true ||
+                call['is_broadcaster'] == 1 ||
+                call['is_broadcaster']?.toString() == '1';
         if (!isHostRow) continue;
 
         responseHostMuted = mutedFromFields(
@@ -200,8 +203,8 @@ class LivePermanentRoomController extends GetxController {
 
     final bool localHostMuted =
         livestreamController.mute.value == true ||
-        livestreamController.websocketController.audioMutedUserMap[userId] ==
-            true;
+            livestreamController.websocketController.audioMutedUserMap[userId] ==
+                true;
 
     /// The server may mark an offline host row audio_on=0 simply because the
     /// host left the Agora channel. That is not always a manual mute. For a
@@ -252,12 +255,12 @@ class LivePermanentRoomController extends GetxController {
     responseMap['channel_name'] = channelName;
 
     final String backgroundRaw =
-        (live['room_background_image'] ??
-                live['background_image'] ??
-                live['stream_image'] ??
-                '')
-            .toString()
-            .trim();
+    (live['room_background_image'] ??
+        live['background_image'] ??
+        live['stream_image'] ??
+        '')
+        .toString()
+        .trim();
     final BuildContext? prefetchContext = Get.context;
     if (backgroundRaw.isNotEmpty &&
         backgroundRaw != 'null' &&
@@ -293,8 +296,8 @@ class LivePermanentRoomController extends GetxController {
 
     liveLog(
       '🎙️ Permanent room host mute restored => stream=$livestreamId '
-      'rejoin=$preserveExistingMute local=$localHostMuted '
-      'response=$responseHostMuted muted=$hostStartsMuted',
+          'rejoin=$preserveExistingMute local=$localHostMuted '
+          'response=$responseHostMuted muted=$hostStartsMuted',
     );
     livestreamController.createStreamData.value = responseMap;
     livestreamController.isHost.value = true;
@@ -304,6 +307,13 @@ class LivePermanentRoomController extends GetxController {
     livestreamController.activateRoomSession(
       streamId: livestreamId,
       generation: livestreamController.roomSessionGeneration,
+    );
+    livestreamController.websocketController.showHostEntryTransition(
+      livestreamId: livestreamId,
+      userId: userId,
+      eventId:
+      responseMap['event_id'] ??
+          'host_entry_${livestreamId}_${livestreamController.roomSessionGeneration}',
     );
 
     livestreamController.liveMusicController.resetMusicState();
@@ -349,13 +359,33 @@ class LivePermanentRoomController extends GetxController {
       startTime: DateTime.tryParse(createdAt ?? '') ?? DateTime.now(),
     );
 
-    final tokenReady = await livestreamController.agoraTokenController
+    final tokenStopwatch = Stopwatch()..start();
+    final bool tokenFromCreateResponse = livestreamController
+        .agoraTokenController
+        .adoptTokenResponseIfValid(
+      response: responseMap,
+      isBroadcaster: true,
+      userId: userId,
+      channelName: channelName,
+      streamId: livestreamId.toString(),
+    );
+    final bool tokenReady = tokenFromCreateResponse
+        ? true
+        : await livestreamController.agoraTokenController
         .tryToGenerateBroadcasterToken(
-          isBroadcaster: true,
-          userId: userId,
-          channelName: channelName,
-          streamId: livestreamId.toString(),
-        );
+      isBroadcaster: true,
+      userId: userId,
+      channelName: channelName,
+      streamId: livestreamId.toString(),
+    );
+    tokenStopwatch.stop();
+    if (kDebugMode) {
+      debugPrint(
+        '[LIVE_CREATE][BLOCKING_STEP] name=agora_token '
+            'duration_ms=${tokenStopwatch.elapsedMilliseconds} '
+            'source=${tokenFromCreateResponse ? 'create_response' : 'token_api'}',
+      );
+    }
 
     final token = livestreamController.agoraTokenController.getTokenString();
     if (!tokenReady || token.isEmpty) {
@@ -376,9 +406,9 @@ class LivePermanentRoomController extends GetxController {
     );
 
     final String streamType =
-        (requestedStreamType ?? live['stream_type'] ?? 'audio')
-            .toString()
-            .toLowerCase();
+    (requestedStreamType ?? live['stream_type'] ?? 'audio')
+        .toString()
+        .toLowerCase();
     final int safeSeatCount = requestedSeatCount ?? _intOf(live['seat_count']);
     final int safeLayout = requestedRoomLayout ?? _intOf(live['room_layout']);
     final int safeTheme = requestedRoomTheme ?? _intOf(live['room_theme']);
@@ -386,17 +416,19 @@ class LivePermanentRoomController extends GetxController {
         requestedRoomBackground ?? _intOf(live['room_background'] ?? -1);
 
     if (kDebugMode) {
-      debugPrint('create_navigation=${DateTime.now().microsecondsSinceEpoch}');
+      debugPrint(
+        '[LIVE_CREATE][NAVIGATION] room=$livestreamId '
+            'type=$streamType elapsed_ms=${openingStopwatch.elapsedMilliseconds} '
+            'token_source=${tokenFromCreateResponse ? 'create_response' : 'token_api'}',
+      );
     }
     if (streamType == 'audio') {
       livestreamController.clearMinimizedVideoLiveSession();
       // await AgoraService().prepareAudioOnlyMode(
       //   reason: 'open_audio_room',
       // );
-      await Future<void>.delayed(const Duration(milliseconds: 80));
-
       Get.to(
-        () => AudioLiveView(
+            () => AudioLiveView(
           channelName: channelName,
           isBroadcaster: true,
           token: token,
@@ -411,7 +443,7 @@ class LivePermanentRoomController extends GetxController {
       );
     } else if (streamType == 'multi') {
       Get.to(
-        () => MultiLiveView(
+            () => MultiLiveView(
           channelName: channelName,
           isBroadcaster: true,
           token: token,
@@ -423,7 +455,7 @@ class LivePermanentRoomController extends GetxController {
       );
     } else if (streamType == 'popular' || streamType == 'video') {
       Get.to(
-        () => PopularLiveView(
+            () => PopularLiveView(
           channelName: channelName,
           isBroadcaster: true,
           token: token,
@@ -472,7 +504,7 @@ class LivePermanentRoomController extends GetxController {
           headers: {
             'Accept': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
         ),
       );
@@ -503,12 +535,12 @@ class LivePermanentRoomController extends GetxController {
         .toString()
         .trim();
     final announcement =
-        (live['anousment'] ??
-                live['announcement'] ??
-                live['stream_title'] ??
-                '')
-            .toString()
-            .trim();
+    (live['anousment'] ??
+        live['announcement'] ??
+        live['stream_title'] ??
+        '')
+        .toString()
+        .trim();
 
     liveLog('♻️ Closed permanent room will be reopened through create API');
 
@@ -538,7 +570,7 @@ class LivePermanentRoomController extends GetxController {
     final int userId =
         livestreamController.authController.userProfile.value.user?.id
             ?.toInt() ??
-        0;
+            0;
     if (userId <= 0) return false;
 
     final int actionSerial = ++_permanentActionSerial;
@@ -553,7 +585,7 @@ class LivePermanentRoomController extends GetxController {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
         ),
       );
@@ -624,22 +656,48 @@ class LivePermanentRoomController extends GetxController {
     final int userId =
         livestreamController.authController.userProfile.value.user?.id
             ?.toInt() ??
-        0;
+            0;
     if (livestreamId <= 0 || userId <= 0) return false;
 
     try {
+      final endpoint = kHostLeavePermanentRoomUrl(livestreamId);
+      LiveFlowLogger.log('HOST_SOFT_LEAVE', <String, dynamic>{
+        'function': 'leavePermanentRoom',
+        'live_type': 'audio',
+        'room_id': livestreamId,
+        'livestream_id': livestreamId,
+        'user_id': userId,
+        'host_id': userId,
+        'is_host': true,
+        'current_route': Get.currentRoute,
+        'action': 'host_soft_leave',
+        'reason': 'leave_room',
+        'keep_permanent_room': true,
+        'method': 'POST',
+        'endpoint': endpoint,
+        'payload': <String, dynamic>{'user_id': userId},
+      });
       final response = await dio.post(
-        kHostLeavePermanentRoomUrl(livestreamId),
+        endpoint,
         data: {'user_id': userId},
         options: Options(
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
         ),
       );
+      LiveFlowLogger.log('API_RESPONSE', <String, dynamic>{
+        'function': 'leavePermanentRoom',
+        'live_type': 'audio',
+        'room_id': livestreamId,
+        'method': 'POST',
+        'endpoint': endpoint,
+        'status': response.statusCode,
+        'response_data': response.data,
+      });
       if (response.data is Map) {
         lastPermanentRoomActionData.value = Map<String, dynamic>.from(
           response.data as Map,
@@ -655,13 +713,14 @@ class LivePermanentRoomController extends GetxController {
   Future<bool> closePermanentRoom({
     required int livestreamId,
     bool navigateToEnd = true,
+    bool deferLocalCleanup = false,
   }) async {
     if (isPermanentRoomActionLoading.value) return false;
 
     final int userId =
         livestreamController.authController.userProfile.value.user?.id
             ?.toInt() ??
-        0;
+            0;
 
     if (livestreamId <= 0 || userId <= 0) {
       Get.snackbar(
@@ -678,18 +737,58 @@ class LivePermanentRoomController extends GetxController {
     isOwnerClosingPermanentRoom.value = true;
 
     try {
+      final endpoint = kOwnerClosePermanentRoomUrl(livestreamId);
+      // ✅ FIX: backend validation for this specific endpoint requires a
+      // field named 'owner_user_id' (confirmed by the 422 response:
+      // "The owner user id field is required."). The app was sending
+      // 'user_id' only, so every close attempt failed validation before
+      // ever reaching the actual close logic. 'user_id' is kept alongside
+      // it in case anything else on the backend still reads that key.
+      final payload = <String, dynamic>{
+        'owner_user_id': userId,
+        'user_id': userId,
+      };
+      LiveFlowLogger.log('OWNER_CLOSE_START', <String, dynamic>{
+        'function': 'closePermanentRoom',
+        'live_type': 'audio',
+        'room_id': livestreamId,
+        'livestream_id': livestreamId,
+        'user_id': userId,
+        'host_id': userId,
+        'is_host': true,
+        'current_route': Get.currentRoute,
+        'action': 'owner_close',
+        'reason': 'explicit_close',
+      });
+      LiveFlowLogger.log('OWNER_CLOSE_API', <String, dynamic>{
+        'function': 'closePermanentRoom',
+        'method': 'POST',
+        'endpoint': endpoint,
+        'live_type': 'audio',
+        'room_id': livestreamId,
+        'payload': payload,
+      });
       final response = await dio.post(
-        kOwnerClosePermanentRoomUrl(livestreamId),
-        data: {'owner_user_id': userId},
+        endpoint,
+        data: payload,
         options: Options(
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
         ),
       );
+      LiveFlowLogger.log('OWNER_CLOSE_RESPONSE', <String, dynamic>{
+        'function': 'closePermanentRoom',
+        'method': 'POST',
+        'endpoint': endpoint,
+        'live_type': 'audio',
+        'room_id': livestreamId,
+        'status': response.statusCode,
+        'response_data': response.data,
+      });
 
       if (response.statusCode != 200 && response.statusCode != 201) {
         final responseMap = _mapOf(response.data);
@@ -728,10 +827,10 @@ class LivePermanentRoomController extends GetxController {
         ...rawLiveData,
         'id': rawLiveData['id'] ?? rawLiveData['livestream_id'] ?? livestreamId,
         'livestream_id':
-            rawLiveData['livestream_id'] ?? rawLiveData['id'] ?? livestreamId,
+        rawLiveData['livestream_id'] ?? rawLiveData['id'] ?? livestreamId,
         'user': safeUser,
         'live_duration_seconds':
-            rawLiveData['live_duration_seconds'] ??
+        rawLiveData['live_duration_seconds'] ??
             rawEndData['live_duration_seconds'] ??
             livestreamController.elapsed.value,
       };
@@ -740,11 +839,11 @@ class LivePermanentRoomController extends GetxController {
         ...rawEndData,
         'livestream_id': rawEndData['livestream_id'] ?? livestreamId,
         'gift_amount':
-            rawEndData['gift_amount'] ??
+        rawEndData['gift_amount'] ??
             rawResult['gift_amount'] ??
             livestreamController.totalGiftCoins.value,
         'audience':
-            rawEndData['audience'] ??
+        rawEndData['audience'] ??
             rawResult['audience'] ??
             rawResult['viewer_count'] ??
             0,
@@ -762,23 +861,16 @@ class LivePermanentRoomController extends GetxController {
       lastPermanentRoomActionData.value = safeResult;
 
       if (_actionIsCurrent(actionSerial, actionGeneration)) {
-        livestreamController.stopPingUpdate();
-        livestreamController.stopLivePresenceHeartbeat();
-        livestreamController.stopLive();
-        livestreamController.isHost.value = false;
-        livestreamController.isBroadcaster.value = false;
-        livestreamController.websocketController.streamID.value = 0;
-        livestreamController.websocketController.activeAudioStreamId.value = 0;
+        if (!deferLocalCleanup) {
+          completeDeferredCloseCleanup(livestreamId);
+        }
 
         if (navigateToEnd) {
           /// The owner-close WebSocket event can arrive before this REST response.
           /// WebSocket now skips its Bottomnav redirect while the flag above is true.
           /// A small microtask keeps GetX navigation deterministic.
-          await Future<void>.delayed(const Duration(milliseconds: 80));
-          if (!_actionIsCurrent(actionSerial, actionGeneration)) return true;
-
           Get.offAll(
-            () => const Endlive(),
+                () => const Endlive(),
             arguments: safeResult,
             transition: Transition.cupertino,
           );
@@ -787,6 +879,14 @@ class LivePermanentRoomController extends GetxController {
 
       return true;
     } on DioException catch (e) {
+      LiveFlowLogger.log('OWNER_CLOSE_RESPONSE', <String, dynamic>{
+        'function': 'closePermanentRoom',
+        'live_type': 'audio',
+        'room_id': livestreamId,
+        'status': e.response?.statusCode,
+        'response_data': e.response?.data,
+        'reason': e.type.name,
+      });
       final responseMap = _mapOf(e.response?.data);
       final message = '${responseMap['message'] ?? 'Room close failed'}';
 
@@ -818,6 +918,36 @@ class LivePermanentRoomController extends GetxController {
           isOwnerClosingPermanentRoom.value = false;
         }
       });
+    }
+  }
+
+  void completeDeferredCloseCleanup(int livestreamId) {
+    livestreamController.stopPingUpdate();
+    livestreamController.stopLivePresenceHeartbeat();
+    livestreamController.stopLive();
+    livestreamController.isHost.value = false;
+    livestreamController.isBroadcaster.value = false;
+    livestreamController.websocketController.streamID.value = 0;
+    livestreamController.websocketController.activeAudioStreamId.value = 0;
+    livestreamController.websocketController.clearExplicitlyClosedRoomState(
+      livestreamId,
+    );
+    livestreamController.beginRoomTransition(targetStreamId: 0);
+    LiveFlowLogger.log('OWNER_CLOSE_LOCAL_STATE', <String, dynamic>{
+      'function': 'completeDeferredCloseCleanup',
+      'live_type': 'audio',
+      'old_room_id': livestreamId,
+      'active_room_after': livestreamController
+          .websocketController.activeAudioStreamId.value,
+      'cached_room_after':
+      livestreamController.websocketController.streamID.value,
+      'action': 'owner_close_cleanup',
+      'reason': 'explicit_close',
+    });
+    if (kDebugMode) {
+      debugPrint(
+        '[LIVE_SESSION   ][EXPLICIT_CLOSE] room=$livestreamId reason=owner_close',
+      );
     }
   }
 }

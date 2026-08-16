@@ -1167,13 +1167,14 @@ class AgoraService {
       }
 
       final bool isBroadcaster = role == ClientRoleType.clientRoleBroadcaster;
+      final bool cameraEnabled = publishCameraTrack ?? isBroadcaster;
 
       if (!force && _joinedChannelId == channelId && _joinedUid == uid) {
         await setClientRoleSafe(role);
         if (isBroadcaster) {
-          await enableLocalVideoSafe(publishCameraTrack ?? true);
+          await enableLocalVideoSafe(cameraEnabled);
           await muteLocalAudioSafe(!(publishMicrophoneTrack ?? true));
-          await muteLocalVideoSafe(!(publishCameraTrack ?? true));
+          await muteLocalVideoSafe(!cameraEnabled);
         } else {
           await enableLocalVideoSafe(false);
           await muteLocalAudioSafe(true);
@@ -1209,24 +1210,26 @@ class AgoraService {
 
         await currentEngine.enableAudio();
         if (!_isCurrentEngine(currentEngine, generation)) return;
-        await currentEngine.enableVideo();
+        if (cameraEnabled) {
+          await currentEngine.enableVideo();
+        } else {
+          await currentEngine.disableVideo();
+        }
         if (!_isCurrentEngine(currentEngine, generation)) return;
         await currentEngine.setClientRole(role: role);
         if (!_isCurrentEngine(currentEngine, generation)) return;
 
         if (isBroadcaster) {
-          await currentEngine.enableLocalVideo(publishCameraTrack ?? true);
+          await currentEngine.enableLocalVideo(cameraEnabled);
           if (!_isCurrentEngine(currentEngine, generation)) return;
-          await currentEngine.muteLocalVideoStream(
-            !(publishCameraTrack ?? true),
-          );
+          await currentEngine.muteLocalVideoStream(!cameraEnabled);
           if (!_isCurrentEngine(currentEngine, generation)) return;
           await currentEngine.muteLocalAudioStream(
             !(publishMicrophoneTrack ?? true),
           );
           if (!_isCurrentEngine(currentEngine, generation)) return;
-          _lastLocalVideoEnabled = publishCameraTrack ?? true;
-          _lastLocalVideoMuted = !(publishCameraTrack ?? true);
+          _lastLocalVideoEnabled = cameraEnabled;
+          _lastLocalVideoMuted = !cameraEnabled;
           _lastLocalAudioMuted = !(publishMicrophoneTrack ?? true);
         } else {
           await currentEngine.enableLocalVideo(false);
@@ -1247,7 +1250,7 @@ class AgoraService {
           options: ChannelMediaOptions(
             channelProfile: ChannelProfileType.channelProfileLiveBroadcasting,
             clientRoleType: role,
-            publishCameraTrack: publishCameraTrack ?? isBroadcaster,
+            publishCameraTrack: cameraEnabled,
             publishMicrophoneTrack: publishMicrophoneTrack ?? isBroadcaster,
             autoSubscribeAudio: autoSubscribeAudio,
             autoSubscribeVideo: autoSubscribeVideo,

@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get.dart';
@@ -23,6 +24,9 @@ import '../../auth/controllers/auth_controller.dart';
 import '../../bottomnav/views/bottomnav_view.dart';
 import '../../home/controllers/home_controller.dart';
 import '../utils/LiveTestingLogger.dart';
+import '../utils/live_realtime_debug_log.dart';
+import '../utils/red_packet_timing.dart';
+import '../utils/vip_privileges.dart';
 import '../controllers/livestream_controller.dart';
 import '../controllers/global_live_banner_queue_controller.dart';
 
@@ -44,6 +48,61 @@ part 'handlers/seat_event_handler.dart';
 part 'handlers/viewer_event_handler.dart';
 
 class WebsocketController extends GetxController {
+  int _rtRoom([Map<String, dynamic>? payload]) {
+    final Map<dynamic, dynamic> nested = payload?['data'] is Map
+        ? payload!['data'] as Map
+        : const <dynamic, dynamic>{};
+    final int incoming = _toInt(
+      payload?['livestream_id'] ??
+          payload?['stream_id'] ??
+          payload?['live_id'] ??
+          nested['livestream_id'] ??
+          nested['stream_id'],
+    );
+    if (incoming > 0) return incoming;
+    return streamID.value > 0 ? streamID.value : activeAudioStreamId.value;
+  }
+
+  int _rtServerViewerCount(Map<String, dynamic> payload) => _toInt(
+    payload['viewer_count'] ??
+        payload['viewers_count'] ??
+        payload['total_viewers'] ??
+        (payload['data'] is Map
+            ? payload['data']['viewer_count'] ??
+            payload['data']['viewers_count'] ??
+            payload['data']['total_viewers']
+            : null),
+  );
+
+  void _rtState([Map<String, dynamic>? payload]) {
+    LiveRealtimeDebugLog.state(
+      room: _rtRoom(payload),
+      viewers: authoritativeViewerCount.value,
+      callers: liveCallList,
+      capacity: activeSeatCapacity,
+      socket:
+      liveStreamEventChannel != null &&
+          liveStreamEventChannel?.closeCode == null
+          ? 'connected'
+          : 'disconnected',
+    );
+  }
+
+  void _rtSeats([Map<String, dynamic>? payload]) {
+    LiveRealtimeDebugLog.seats(
+      room: _rtRoom(payload),
+      callers: liveCallList,
+      capacity: activeSeatCapacity,
+    );
+  }
+
+  int get activeSeatCapacity {
+    final int roomValue = liveRoomSeatCount.value;
+    if (roomValue > 0) return roomValue;
+    final int controllerValue = livestreamController.seatCount.value;
+    return controllerValue > 0 ? controllerValue : 9;
+  }
+
   @override
   void onInit() {
     /// ✅ Backend now sends everything through one event:
@@ -98,9 +157,9 @@ class WebsocketController extends GetxController {
       !_socketLifecycleClosed && _socketGenerations[purpose] == generation;
 
   Future<void> _cancelSocketSubscription(
-    StreamSubscription<dynamic>? subscription,
-    String purpose,
-  ) async {
+      StreamSubscription<dynamic>? subscription,
+      String purpose,
+      ) async {
     if (subscription == null) return;
     try {
       await subscription.cancel();
@@ -112,9 +171,9 @@ class WebsocketController extends GetxController {
   }
 
   Future<void> _closeSocketChannel(
-    WebSocketChannel? socket,
-    String purpose,
-  ) async {
+      WebSocketChannel? socket,
+      String purpose,
+      ) async {
     if (socket == null) return;
     try {
       await socket.sink.close();
@@ -124,15 +183,98 @@ class WebsocketController extends GetxController {
   }
 
   /// General room state remains ordered on this queue.
-  Future<void> _unifiedEventQueue = Future<void>.value();
+  final Queue<dynamic> _unifiedEventQueue = Queue<dynamic>();
+  bool _unifiedEventQueueDraining = false;
 
   /// Normal gift frames use a separate ordered fast lane. A slow seat/profile/
   /// room-state handler must never hold a visible gift behind it for 5-6 seconds.
   /// Gift order is still FIFO inside this queue.
-  Future<void> _normalGiftRealtimeEventQueue = Future<void>.value();
+  final Queue<dynamic> _normalGiftRealtimeEventQueue = Queue<dynamic>();
+  bool _normalGiftRealtimeEventQueueDraining = false;
+
+  /// Rocket progress/launch state must not wait behind profile, viewer or seat
+  /// hydration on the general room queue. Ordering is retained within Rocket.
+  final Queue<dynamic> _rocketRealtimeEventQueue = Queue<dynamic>();
+  bool _rocketRealtimeEventQueueDraining = false;
 
   final streamID = 0.obs;
   final activeAudioStreamId = 0.obs;
+
+  /// Aggregate server presence count is independent from the paginated/enriched
+  /// profile rows currently loaded in [liveViewerList].
+  final authoritativeViewerCount = 0.obs;
+
+  /// Per-user Agora speaking state. Seat widgets subscribe only to their own
+  /// user key, avoiding a full liveCallList refresh for every voice transition.
+  final RxMap<int, bool> speakingUserMap = <int, bool>{}.obs;
+  final Map<int, RxBool> _speakingSignals = <int, RxBool>{};
+
+  RxBool speakingSignalForUser(int userId) =>
+      _speakingSignals.putIfAbsent(userId, () => false.obs);
+  final Map<int, bool> _remoteAudioMuteApplied = <int, bool>{};
+  final Map<int, int> _seatRevisionByUser = <int, int>{};
+
+  // ✅ FIX: seat_switched events without a server timestamp used to fall back
+  // to DateTime.now() as their "revision", which is not reliable ordering
+  // under reconnects/clock issues. A monotonic counter guarantees each
+  // untimestamped event this device processes gets a strictly increasing
+  // revision, independent of wall-clock time.
+  int _localSeatEventSeq = 0;
+  int _nextLocalSeatRevision() => ++_localSeatEventSeq;
+  final LinkedHashMap<String, int> _terminalCallSessions =
+  LinkedHashMap<String, int>();
+  static const int _maxTerminalCallSessions = 128;
+  int _selfMicPublishedUserId = 0;
+  bool? _selfMicPublishedMuted;
+
+  Future<void> applyRemoteAudioMuteIfChanged({
+    required int userId,
+    required bool muted,
+    required String reason,
+  }) async {
+    if (userId <= 0 || _remoteAudioMuteApplied[userId] == muted) return;
+    final engine = _agoraService.engine;
+    if (engine == null) return;
+    await engine.muteRemoteAudioStream(uid: userId, mute: muted);
+    _remoteAudioMuteApplied[userId] = muted;
+    LiveRealtimeDebugLog.event('AGORA_REMOTE_MUTE_APPLIED', <String, Object?>{
+      'room': _activeRealtimeRoomId(),
+      'user': userId,
+      'muted': muted,
+      'reason': reason,
+    });
+  }
+
+  int canonicalSeatForUser(int userId) {
+    if (userId <= 0) return 0;
+    for (final raw in liveCallList) {
+      if (raw is! Map) continue;
+      final call = Map<String, dynamic>.from(raw);
+      if (_callUserId(call) != userId) continue;
+      final status = (call['call_status'] ?? call['status'] ?? 'accepted')
+          .toString()
+          .toLowerCase();
+      if (status == 'accepted' ||
+          status == 'joined' ||
+          status == 'active' ||
+          status == 'live' ||
+          status == 'on_seat') {
+        return _toInt(call['seat_no'] ?? call['seat'] ?? call['seat_number']);
+      }
+    }
+    return 0;
+  }
+
+  void setSpeakingUser(int userId, bool speaking) {
+    if (userId <= 0 || speakingUserMap[userId] == speaking) return;
+    speakingSignalForUser(userId).value = speaking;
+    if (speaking) {
+      speakingUserMap[userId] = true;
+    } else {
+      speakingUserMap.remove(userId);
+    }
+  }
+
   int _roomTransitionGeneration = 0;
   bool _roomTransitionInProgress = false;
 
@@ -148,6 +290,7 @@ class WebsocketController extends GetxController {
     streamID.value = 0;
     activeAudioStreamId.value = 0;
     liveRoomUpdateStreamId.value = 0;
+    _switchRoomRealtimeSubscription(0);
   }
 
   void activateRoomTransition({
@@ -157,6 +300,22 @@ class WebsocketController extends GetxController {
     if (generation != _roomTransitionGeneration || streamId <= 0) return;
     _roomTransitionInProgress = false;
     streamID.value = streamId;
+    _switchRoomRealtimeSubscription(streamId);
+  }
+
+  /// ✅ FIX: mirrors LiveSessionController.abortRoomSession. beginRoomTransition
+  /// sets _roomTransitionInProgress = true, which makes _isCurrentStream()
+  /// return false for every stream until a matching activateRoomTransition
+  /// call arrives. If the join that started this transition aborts early
+  /// (validation guard, race-condition check, or an exception) before ever
+  /// activating, that flag was staying stuck forever — silently dropping
+  /// every viewer/seat/entry realtime event afterwards, including for a
+  /// fresh, otherwise-successful rejoin. Only clears the flag for the
+  /// generation that actually opened it, so it never clobbers a newer,
+  /// still-legitimate transition.
+  void abortRoomTransition({required int generation}) {
+    if (generation != _roomTransitionGeneration) return;
+    _roomTransitionInProgress = false;
   }
 
   final newViewersJoinded = false.obs;
@@ -184,12 +343,247 @@ class WebsocketController extends GetxController {
   // the complete comment/gift timeline once per tap. Keep incoming rows in
   // plain queues and publish one batched Rx update every short frame window.
   final Queue<Map<String, dynamic>> _pendingGiftMessageRows =
-      Queue<Map<String, dynamic>>();
+  Queue<Map<String, dynamic>>();
   final Queue<Map<String, dynamic>> _pendingGiftCommentRows =
-      Queue<Map<String, dynamic>>();
+  Queue<Map<String, dynamic>>();
 
   static const int _maxLiveCommentsForRoom = 120;
   static const int _maxGiftMessagesForRoom = 80;
+  // Logical presence transitions are deliberately separate from transport
+  // replay protection. A compatibility live_comment and viewer_joined frame
+  // may represent the same transition even when their event IDs differ.
+  final Map<String, bool> _viewerPresenceState = <String, bool>{};
+  final LinkedHashMap<String, int> _processedRealtimeFrames =
+  LinkedHashMap<String, int>();
+  static const int _maxProcessedRealtimeFrames = 512;
+  Timer? _roomSettingsCompatibilityTimer;
+  final Set<int> _roomSettingsCompatibilityInFlight = <int>{};
+
+  void _scheduleRoomSettingsCompatibilityRefresh(int livestreamId) {
+    if (livestreamId <= 0 || livestreamId != _activeRealtimeRoomId()) return;
+    _roomSettingsCompatibilityTimer?.cancel();
+    _roomSettingsCompatibilityTimer = Timer(
+      const Duration(milliseconds: 150),
+          () async {
+        if (_roomSettingsCompatibilityInFlight.contains(livestreamId) ||
+            livestreamId != _activeRealtimeRoomId()) {
+          return;
+        }
+        _roomSettingsCompatibilityInFlight.add(livestreamId);
+        try {
+          final response = await livestreamController
+              .fetchPresenceWithLiveState(livestreamId: livestreamId);
+          if (livestreamId != _activeRealtimeRoomId()) return;
+          final root = response is Map
+              ? Map<String, dynamic>.from(response!)
+              : <String, dynamic>{};
+          final data = root['data'] is Map
+              ? Map<String, dynamic>.from(root['data'])
+              : root;
+          final state = data['livestream_state'] is Map
+              ? Map<String, dynamic>.from(data['livestream_state'])
+              : data;
+          _handleUnifiedRoomSettingsUpdated(<String, dynamic>{
+            ...state,
+            'livestream_id': livestreamId,
+            'action_type': 'live_stream_updated',
+          }, source: 'compatibility_refresh_missing_delta');
+        } catch (error) {
+          liveLog(
+            'Room settings compatibility refresh failed safely => '
+                'stream:$livestreamId error:$error',
+          );
+        } finally {
+          _roomSettingsCompatibilityInFlight.remove(livestreamId);
+        }
+      },
+    );
+  }
+
+  String _normalizeRealtimeAction(dynamic raw) {
+    final value = raw?.toString().trim().toLowerCase() ?? '';
+    switch (value) {
+      case 'viewer_add':
+      case 'viewer_added':
+      case 'user_joined':
+      case 'join_live':
+      case 'live_joined':
+        return 'viewer_joined';
+      case 'viewer_remove':
+      case 'viewer_removed':
+      case 'user_left':
+      case 'user_leave':
+      case 'leave_live':
+        return 'viewer_left';
+      case 'live_stream_edit':
+      case 'room_settings_updated':
+        return 'live_stream_updated';
+      case 'comment_lock_updated':
+      case 'live_comment_locked':
+      case 'live_comment_unlocked':
+      case 'lock_coment_updated':
+      case 'live_comment_lock_updated':
+        return 'live_stream_updated';
+      case 'hidden_room_updated':
+      case 'room_hidden_updated':
+      case 'live_hidden_room_updated':
+        return 'live_stream_updated';
+      case 'screenshort_updated':
+      case 'screen_records_updated':
+      case 'live_screen_setting_updated':
+        return 'live_stream_updated';
+      default:
+        return value;
+    }
+  }
+
+  List<String> _normalizedRealtimeActions(
+      Map<String, dynamic> payload,
+      String eventName,
+      ) {
+    final actions = <String>[];
+    void add(dynamic value) {
+      final normalized = _normalizeRealtimeAction(value);
+      if (normalized.isNotEmpty && !actions.contains(normalized)) {
+        actions.add(normalized);
+      }
+    }
+
+    add(payload['action_type']);
+    add(payload['action']);
+    add(payload['event_type']);
+    add(payload['type']);
+    final rawActionTypes = payload['action_types'];
+    if (rawActionTypes is List) {
+      for (final action in rawActionTypes) add(action);
+    }
+    if (actions.isEmpty) add(_actionTypeFromEventName(eventName));
+    return actions;
+  }
+
+  String _primaryRealtimeAction(List<String> actions) {
+    if (actions.contains('viewer_joined')) return 'viewer_joined';
+    if (actions.contains('viewer_left')) return 'viewer_left';
+    if (actions.contains('live_stream_call')) return 'live_stream_call';
+    if (actions.contains('live_stream_updated')) return 'live_stream_updated';
+    return actions.isEmpty ? '' : actions.first;
+  }
+
+  String _replayFamily(String action) {
+    if (action == 'viewer_joined' || action == 'viewer_left') {
+      return 'viewer_presence';
+    }
+    if (action == 'live_stream_call' ||
+        action.contains('seat') ||
+        action.contains('caller')) {
+      return 'seat_caller';
+    }
+    if (action == 'room_settings_updated' ||
+        action == 'live_stream_updated' ||
+        action.contains('room_updated') ||
+        action.contains('comment_lock') ||
+        action.contains('screen_setting')) {
+      return 'room_update';
+    }
+    return '';
+  }
+
+  bool _acceptRealtimeFrame(Map<String, dynamic> payload, String actionType) {
+    final eventId = (payload['event_id'] ?? '').toString().trim();
+    final family = _replayFamily(actionType);
+    if (eventId.isEmpty || family.isEmpty) return true;
+    final key = '${_eventLivestreamId(payload)}:$family:$eventId';
+    if (_processedRealtimeFrames.containsKey(key)) {
+      LiveRealtimeDebugLog.event('TRANSPORT_DUPLICATE_IGNORED', <
+          String,
+          Object?
+      >{
+        'room': _eventLivestreamId(payload),
+        'action': actionType,
+        'event_id': eventId,
+        'user':
+        payload['user_id'] ?? payload['viewer_id'] ?? payload['caller_id'],
+      });
+      return false;
+    }
+    _processedRealtimeFrames[key] = DateTime.now().millisecondsSinceEpoch;
+    while (_processedRealtimeFrames.length > _maxProcessedRealtimeFrames) {
+      _processedRealtimeFrames.remove(_processedRealtimeFrames.keys.first);
+    }
+    return true;
+  }
+
+  int _activeRealtimeRoomId() {
+    if (activeAudioStreamId.value > 0) return activeAudioStreamId.value;
+    final sessionId =
+        livestreamController.liveSessionController.activeSessionStreamId;
+    if (sessionId > 0) return sessionId;
+    if (streamID.value > 0) return streamID.value;
+    return livestreamController.streamId.value;
+  }
+
+  bool _isGlobalRealtimeAction(String action) {
+    return action == 'live_stream_list' ||
+        action.startsWith('fruit_game_') ||
+        action == 'recharge_coin_updated' ||
+        action == 'account_blocked' ||
+        action == 'device_blocked';
+  }
+
+  bool _allowedWithoutActiveAudioRoom(String action) {
+    // These events still drive the Home live-list when no AudioLiveView is
+    // active. Once a room is active they are strictly room-scoped.
+    return action == 'live_stream_created' ||
+        action == 'permanent_room_rejoined';
+  }
+
+  bool _requiresRoomIdentity(String action) => !_isGlobalRealtimeAction(action);
+
+  bool acceptVisiblePresenceComment({
+    required dynamic streamId,
+    required dynamic userId,
+    required String kind,
+    dynamic eventId,
+  }) {
+    final int sid = _toInt(streamId);
+    final int uid = _toInt(userId);
+    if (sid <= 0 || uid <= 0) return true;
+    final String stableId = eventId?.toString().trim() ?? '';
+    final String lifecycleKey = '$sid:$uid';
+    final String normalizedKind = kind.toLowerCase().trim();
+    final bool joining =
+        normalizedKind == 'join' ||
+            normalizedKind == 'joined' ||
+            normalizedKind == 'viewer_join' ||
+            normalizedKind == 'viewer_joined';
+    final bool currentlyPresent = _viewerPresenceState[lifecycleKey] ?? false;
+
+    if (currentlyPresent == joining) {
+      liveLog(
+        'Duplicate ${joining ? 'join' : 'leave'} transition ignored '
+            '=> stream:$sid user:$uid '
+            'event_id:${stableId.isEmpty ? 'legacy' : stableId}',
+      );
+      LiveRealtimeDebugLog.event(
+        'PRESENCE_DUPLICATE_IGNORED',
+        <String, Object?>{
+          'action': joining ? 'join' : 'leave',
+          'event_id': stableId.isEmpty ? 'legacy' : stableId,
+          'user': uid,
+          'room': sid,
+        },
+      );
+      return false;
+    }
+    _viewerPresenceState[lifecycleKey] = joining;
+    LiveRealtimeDebugLog.event('PRESENCE_COMMENT_ACCEPTED', <String, Object?>{
+      'transition': joining ? 'join' : 'leave',
+      'room': sid,
+      'user': uid,
+      'event_id': stableId.isEmpty ? 'legacy' : stableId,
+    });
+    return true;
+  }
 
   void _trimListToMax(RxList list, int maxLength) {
     if (maxLength <= 0) return;
@@ -223,9 +617,9 @@ class WebsocketController extends GetxController {
   }
 
   void _queueGiftTimelineRow(
-    Map<String, dynamic> row, {
-    bool alsoAddToComments = false,
-  }) {
+      Map<String, dynamic> row, {
+        bool alsoAddToComments = false,
+      }) {
     _pendingGiftMessageRows.addLast(Map<String, dynamic>.from(row));
     if (alsoAddToComments) {
       _pendingGiftCommentRows.addLast(Map<String, dynamic>.from(row));
@@ -361,17 +755,17 @@ class WebsocketController extends GetxController {
   }
 
   void printSeatTrace(
-    String stage, {
-    int? streamId,
-    int? userId,
-    int? seatNo,
-    String? status,
-    String? reason,
-    int? beforeCount,
-    int? afterCount,
-    Object? error,
-    String? note,
-  }) {
+      String stage, {
+        int? streamId,
+        int? userId,
+        int? seatNo,
+        String? status,
+        String? reason,
+        int? beforeCount,
+        int? afterCount,
+        Object? error,
+        String? note,
+      }) {
     final List<String> parts = <String>['stage=$stage'];
     if (streamId != null) parts.add('stream=$streamId');
     if (userId != null) parts.add('user=$userId');
@@ -398,7 +792,7 @@ class WebsocketController extends GetxController {
     _liveTestingMonitorTimer?.cancel();
     _liveTestingMonitorTimer = Timer.periodic(
       const Duration(seconds: 30),
-      (_) => _printLiveTestingSnapshot(source: 'periodic_30s'),
+          (_) => _printLiveTestingSnapshot(source: 'periodic_30s'),
     );
 
     Future<void>.delayed(const Duration(seconds: 3), () {
@@ -439,7 +833,7 @@ class WebsocketController extends GetxController {
         },
         'websocket': {
           'open':
-              liveStreamEventChannel != null &&
+          liveStreamEventChannel != null &&
               liveStreamEventChannel!.closeCode == null,
           'close_code': liveStreamEventChannel?.closeCode,
           'socket_id': _rechargeSocketId,
@@ -456,7 +850,7 @@ class WebsocketController extends GetxController {
         },
         'presence': livestreamController.livePresenceDebugSnapshot,
         'legacy_websocket_heartbeat_timer_active':
-            heartbeatTimer?.isActive == true,
+        heartbeatTimer?.isActive == true,
         'last_activity_time': lastActivityTime.value.toIso8601String(),
         'last_activity_age_seconds': DateTime.now()
             .difference(lastActivityTime.value)
@@ -502,7 +896,7 @@ class WebsocketController extends GetxController {
   /// Caller-left / seat-remove events often arrive with partial user data.
   /// We use this cache so viewer list never becomes name/level/frame null.
   final Map<int, Map<String, dynamic>> _liveUserProfileCache =
-      <int, Map<String, dynamic>>{};
+  <int, Map<String, dynamic>>{};
 
   // Global red packet properties (for all live streams)
   final globalRedPacketVisible = false.obs;
@@ -535,6 +929,7 @@ class WebsocketController extends GetxController {
   final liveCallList = [].obs; // Stores accepted calls
   final pendingCall = [].obs; // Stores pending calls
   final commentsList = [].obs;
+  final Map<String, int> _localCommentEchoes = <String, int>{};
 
   /// ✅ Seat protection guard.
   /// Backend sometimes broadcasts caller_left with reason=heartbeat_timeout even
@@ -562,12 +957,20 @@ class WebsocketController extends GetxController {
   final Map<String, int> _optimisticGiftEchoCredits = <String, int>{};
   final Map<String, int> _optimisticClientEventUntilMs = <String, int>{};
   final Queue<Map<String, dynamic>> _giftAnimationQueue =
-      Queue<Map<String, dynamic>>();
+  Queue<Map<String, dynamic>>();
   bool _giftAnimationQueueMounting = false;
   Timer? _luckyCardHideTimer;
   bool _luckyCurrentFlightComplete = false;
   int _giftAnimationSerial = 0;
   Timer? _entryAnimationSafetyTimer;
+  // ✅ FIX: 10 was too small for a busy room's join burst; entries beyond the
+  // cap used to be dropped with no display at all. Queue items are cheap
+  // plain Map data (not widgets), so a larger buffer is safe. Paired with the
+  // backlog-shortening in _showNextQueuedEntryPresentation, this keeps the
+  // queue draining instead of growing unbounded.
+  static const int _maxEntryPresentationQueue = 30;
+  final Queue<Map<String, dynamic>> _entryPresentationQueue =
+  Queue<Map<String, dynamic>>();
   final Map<int, int> _recentEntryShownUntilMs = <int, int>{};
   final isBroadcasterOnline = true.obs;
   final isStreamEnded = false.obs;
@@ -609,6 +1012,10 @@ class WebsocketController extends GetxController {
     liveRoomAnnouncement.value = '';
     liveRoomStreamImage.value = '';
     liveRoomPassword.value = '';
+    if (newStreamId == 0) {
+      _seatRevisionByUser.clear();
+      _remoteAudioMuteApplied.clear();
+    }
   }
 
   void updateLiveRoomSettings({
@@ -638,7 +1045,10 @@ class WebsocketController extends GetxController {
       liveRoomUpdateStreamId.value = livestreamId;
     }
 
-    liveRoomSeatCount.value = seatCount;
+    if (seatCount > 0) {
+      liveRoomSeatCount.value = seatCount;
+      livestreamController.seatCount.value = seatCount;
+    }
     liveRoomLayout.value = roomLayout;
     liveRoomTheme.value = roomTheme;
     liveRoomBackground.value = roomBackground;
@@ -746,38 +1156,38 @@ class WebsocketController extends GetxController {
 
     final bool looksLikeStreamRoot =
         item.containsKey('livestream_id') ||
-        item.containsKey('stream_id') ||
-        item.containsKey('seat_count') ||
-        item.containsKey('room_layout') ||
-        item.containsKey('livestream_callers');
+            item.containsKey('stream_id') ||
+            item.containsKey('seat_count') ||
+            item.containsKey('room_layout') ||
+            item.containsKey('livestream_callers');
 
     final bool looksLikeUserObject =
         item.containsKey('name') ||
-        item.containsKey('profile_image') ||
-        item.containsKey('avatar') ||
-        item.containsKey('level') ||
-        item.containsKey('gender') ||
-        item.containsKey('email');
+            item.containsKey('profile_image') ||
+            item.containsKey('avatar') ||
+            item.containsKey('level') ||
+            item.containsKey('gender') ||
+            item.containsKey('email');
 
     final raw =
         item['user_id'] ??
-        item['host_id'] ??
-        item['broadcaster_id'] ??
-        item['caller_id'] ??
-        item['viewer_id'] ??
-        (user is Map ? user['id'] : null) ??
-        (profile is Map ? profile['id'] : null) ??
-        (broadcaster is Map ? broadcaster['id'] : null) ??
-        (host is Map ? host['id'] : null) ??
-        (looksLikeStreamRoot && !looksLikeUserObject ? null : item['id']);
+            item['host_id'] ??
+            item['broadcaster_id'] ??
+            item['caller_id'] ??
+            item['viewer_id'] ??
+            (user is Map ? user['id'] : null) ??
+            (profile is Map ? profile['id'] : null) ??
+            (broadcaster is Map ? broadcaster['id'] : null) ??
+            (host is Map ? host['id'] : null) ??
+            (looksLikeStreamRoot && !looksLikeUserObject ? null : item['id']);
 
     return int.tryParse(raw?.toString() ?? '0') ?? 0;
   }
 
   void _syncMuteStateFromUserLikeMap(
-    Map<String, dynamic> item, {
-    String source = 'snapshot',
-  }) {
+      Map<String, dynamic> item, {
+        String source = 'snapshot',
+      }) {
     final uid = _extractUserIdFromAny(item);
     if (uid <= 0) return;
 
@@ -797,17 +1207,17 @@ class WebsocketController extends GetxController {
           profile['audio_on'] ?? profile['is_audio_on'] ?? profile['mic_on'];
       nestedMuted =
           profile['is_muted'] ??
-          profile['muted'] ??
-          profile['is_muted_by_host'];
+              profile['muted'] ??
+              profile['is_muted_by_host'];
     } else if (broadcaster is Map) {
       nestedAudio =
           broadcaster['audio_on'] ??
-          broadcaster['is_audio_on'] ??
-          broadcaster['mic_on'];
+              broadcaster['is_audio_on'] ??
+              broadcaster['mic_on'];
       nestedMuted =
           broadcaster['is_muted'] ??
-          broadcaster['muted'] ??
-          broadcaster['is_muted_by_host'];
+              broadcaster['muted'] ??
+              broadcaster['is_muted_by_host'];
     } else if (host is Map) {
       nestedAudio = host['audio_on'] ?? host['is_audio_on'] ?? host['mic_on'];
       nestedMuted =
@@ -816,18 +1226,18 @@ class WebsocketController extends GetxController {
 
     final audioOn =
         item['audio_on'] ??
-        item['is_audio_on'] ??
-        item['mic_on'] ??
-        item['is_mic_on'] ??
-        nestedAudio;
+            item['is_audio_on'] ??
+            item['mic_on'] ??
+            item['is_mic_on'] ??
+            nestedAudio;
 
     final mutedRaw =
         item['is_muted'] ??
-        item['muted'] ??
-        item['is_muted_by_host'] ??
-        item['mute'] ??
-        item['mic_muted'] ??
-        nestedMuted;
+            item['muted'] ??
+            item['is_muted_by_host'] ??
+            item['mute'] ??
+            item['mic_muted'] ??
+            nestedMuted;
 
     if (audioOn == null && mutedRaw == null) return;
 
@@ -931,9 +1341,9 @@ class WebsocketController extends GetxController {
   }
 
   void syncRoomSnapshotForLateJoin(
-    Map<String, dynamic>? payload, {
-    String source = 'late_join_snapshot',
-  }) {
+      Map<String, dynamic>? payload, {
+        String source = 'late_join_snapshot',
+      }) {
     if (payload == null || payload.isEmpty) return;
 
     try {
@@ -962,10 +1372,10 @@ class WebsocketController extends GetxController {
       /// If backend sends explicit locked_seats, that list is the source of truth.
       final bool hasExplicitLockedSeatList =
           data['locked_seats'] is List ||
-          data['lockedSeats'] is List ||
-          data['locked_seat_numbers'] is List ||
-          data['lockedSeatNumbers'] is List ||
-          data['locks'] is List;
+              data['lockedSeats'] is List ||
+              data['locked_seat_numbers'] is List ||
+              data['lockedSeatNumbers'] is List ||
+              data['locks'] is List;
 
       if (_shouldIgnoreSeatLocksFromSource(source)) {
         liveLog(
@@ -998,9 +1408,9 @@ class WebsocketController extends GetxController {
       /// persistent roomGuardianMap so an admin who left/rejoined still keeps
       /// permissions until the host removes admin from backend.
       void syncGuardianFromAny(
-        Map<String, dynamic> item, {
-        Map<String, dynamic>? caller,
-      }) {
+          Map<String, dynamic> item, {
+            Map<String, dynamic>? caller,
+          }) {
         final Map<String, dynamic> user = item['user'] is Map
             ? Map<String, dynamic>.from(item['user'])
             : <String, dynamic>{};
@@ -1015,15 +1425,15 @@ class WebsocketController extends GetxController {
 
         final bool hasGuardianKey =
             item.containsKey('is_guardian') ||
-            item.containsKey('guardian') ||
-            item.containsKey('is_admin') ||
-            item.containsKey('room_admin') ||
-            item.containsKey('admin') ||
-            user.containsKey('is_guardian') ||
-            user.containsKey('guardian') ||
-            user.containsKey('is_admin') ||
-            user.containsKey('room_admin') ||
-            user.containsKey('admin');
+                item.containsKey('guardian') ||
+                item.containsKey('is_admin') ||
+                item.containsKey('room_admin') ||
+                item.containsKey('admin') ||
+                user.containsKey('is_guardian') ||
+                user.containsKey('guardian') ||
+                user.containsKey('is_admin') ||
+                user.containsKey('room_admin') ||
+                user.containsKey('admin');
         if (!hasGuardianKey) return;
 
         final bool isGuardian = _truthy(
@@ -1039,11 +1449,17 @@ class WebsocketController extends GetxController {
               user['admin'],
         );
 
-        livestreamController.applyGuardianLocalStatus(
-          userId: uid,
-          isGuardian: isGuardian,
-          caller: caller ?? item,
-        );
+        // A room/caller snapshot is allowed to confirm an admin, but its false
+        // or missing presence flag must never revoke a persistent room role.
+        // Revocation is handled only by the explicit guardian-removed socket
+        // action or by the authoritative guardian-list API refresh.
+        if (isGuardian) {
+          livestreamController.applyGuardianLocalStatus(
+            userId: uid,
+            isGuardian: true,
+            caller: caller ?? item,
+          );
+        }
       }
 
       for (final key in [
@@ -1066,10 +1482,22 @@ class WebsocketController extends GetxController {
       /// Seat callers mute + coin + lock state.
       final callers =
           data['livestream_callers'] ??
-          data['callers'] ??
-          data['seats'] ??
-          data['seat_users'];
+              data['callers'] ??
+              data['seats'] ??
+              data['seat_users'];
       if (callers is List) {
+        final int snapshotStreamId = _toInt(
+          data['livestream_id'] ?? data['stream_id'] ?? streamID.value,
+        );
+        if (snapshotStreamId > 0 && _isCurrentStream(snapshotStreamId)) {
+          // This may be the first payload containing already occupied seats.
+          // Patch it into the stable caller source before optional profile and
+          // mute enrichment; the merge never clears omitted occupants.
+          livestreamController.applyFetchedCallList(
+            streamId: snapshotStreamId,
+            calls: callers,
+          );
+        }
         for (final raw in callers) {
           if (raw is! Map) continue;
           final item = Map<String, dynamic>.from(raw);
@@ -1083,9 +1511,9 @@ class WebsocketController extends GetxController {
           );
           final rawLocked =
               item['is_locked'] ??
-              item['locked'] ??
-              item['seat_locked'] ??
-              item['lock_status'];
+                  item['locked'] ??
+                  item['seat_locked'] ??
+                  item['lock_status'];
 
           /// Do not let stale livestream_callers.is_locked=yes override explicit
           /// locked_seats from backend. This was making unlocked seats appear
@@ -1148,10 +1576,10 @@ class WebsocketController extends GetxController {
   /// allowUnlock=false keeps previously locked seats safe during viewer join/resume.
   /// Only explicit unlock event/API success should call with allowUnlock=true or updateSeatLockStatus(false).
   void syncSeatLocksFromAnyPayload(
-    Map<String, dynamic> payload, {
-    bool allowUnlock = false,
-    String source = 'payload',
-  }) {
+      Map<String, dynamic> payload, {
+        bool allowUnlock = false,
+        String source = 'payload',
+      }) {
     try {
       final Map<String, dynamic> data = payload['data'] is Map
           ? Map<String, dynamic>.from(payload['data'])
@@ -1174,17 +1602,17 @@ class WebsocketController extends GetxController {
           if (item is Map) {
             final seatNo =
                 item['seat_no'] ??
-                item['seatNo'] ??
-                item['seat'] ??
-                item['seat_number'] ??
-                item['no'] ??
-                item['number'];
+                    item['seatNo'] ??
+                    item['seat'] ??
+                    item['seat_number'] ??
+                    item['no'] ??
+                    item['number'];
             final rawLocked =
                 item['is_locked'] ??
-                item['locked'] ??
-                item['seat_locked'] ??
-                item['lock_status'] ??
-                item['status'];
+                    item['locked'] ??
+                    item['seat_locked'] ??
+                    item['lock_status'] ??
+                    item['status'];
             if (seatNo != null &&
                 (rawLocked == null || _seatTruthy(rawLocked))) {
               lockSeat(seatNo, src: src);
@@ -1208,10 +1636,10 @@ class WebsocketController extends GetxController {
 
       final bool hasExplicitLockedSeatList =
           data['locked_seats'] is List ||
-          data['lockedSeats'] is List ||
-          data['locked_seat_numbers'] is List ||
-          data['lockedSeatNumbers'] is List ||
-          data['locks'] is List;
+              data['lockedSeats'] is List ||
+              data['locked_seat_numbers'] is List ||
+              data['lockedSeatNumbers'] is List ||
+              data['locks'] is List;
 
       if (_shouldIgnoreSeatLocksFromSource(source)) {
         liveLog(
@@ -1233,13 +1661,13 @@ class WebsocketController extends GetxController {
         final bool allExplicitListsEmpty =
             (data['locked_seats'] is! List ||
                 (data['locked_seats'] as List).isEmpty) &&
-            (data['lockedSeats'] is! List ||
-                (data['lockedSeats'] as List).isEmpty) &&
-            (data['locked_seat_numbers'] is! List ||
-                (data['locked_seat_numbers'] as List).isEmpty) &&
-            (data['lockedSeatNumbers'] is! List ||
-                (data['lockedSeatNumbers'] as List).isEmpty) &&
-            (data['locks'] is! List || (data['locks'] as List).isEmpty);
+                (data['lockedSeats'] is! List ||
+                    (data['lockedSeats'] as List).isEmpty) &&
+                (data['locked_seat_numbers'] is! List ||
+                    (data['locked_seat_numbers'] as List).isEmpty) &&
+                (data['lockedSeatNumbers'] is! List ||
+                    (data['lockedSeatNumbers'] as List).isEmpty) &&
+                (data['locks'] is! List || (data['locks'] as List).isEmpty);
         if (allExplicitListsEmpty && lockedSeatMap.isNotEmpty) {
           lockedSeatMap.clear();
           lockedSeatMap.refresh();
@@ -1264,9 +1692,9 @@ class WebsocketController extends GetxController {
 
           final lockValue =
               item['is_locked'] ??
-              item['locked'] ??
-              item['seat_locked'] ??
-              item['lock_status'];
+                  item['locked'] ??
+                  item['seat_locked'] ??
+                  item['lock_status'];
 
           if (_seatTruthy(lockValue)) {
             updateSeatLockStatus(
@@ -1370,7 +1798,7 @@ class WebsocketController extends GetxController {
 
             // Remove any existing stream from the same user
             homeController.showingLiveStreamList.removeWhere(
-              (s) => s["user_id"] == userId,
+                  (s) => s["user_id"] == userId,
             );
 
             // Add the new stream
@@ -1385,7 +1813,7 @@ class WebsocketController extends GetxController {
           if (streamData != null) {
             final streamId = streamData["id"];
             homeController.showingLiveStreamList.removeWhere(
-              (s) => s["id"] == streamId,
+                  (s) => s["id"] == streamId,
             );
             homeController.sortLiveStreamList(); // Auto sort after removing
             homeController.showingLiveStreamList.refresh();
@@ -1487,7 +1915,7 @@ class WebsocketController extends GetxController {
   // Method to sync livestream_callers with current liveCallList
   void syncLivestreamCallers() {
     final streamIndex = homeController.showingLiveStreamList.indexWhere(
-      (stream) => stream['id'] == streamID.value,
+          (stream) => stream['id'] == streamID.value,
     );
 
     if (streamIndex != -1) {
@@ -1568,10 +1996,10 @@ class WebsocketController extends GetxController {
           final text = videoOnValue.toString().trim().toLowerCase();
           isVideoEnabled =
               text == '1' ||
-              text == 'true' ||
-              text == 'yes' ||
-              text == 'on' ||
-              text == 'enabled';
+                  text == 'true' ||
+                  text == 'yes' ||
+                  text == 'on' ||
+                  text == 'enabled';
         }
         liveLog(
           'User $userId video status: ${isVideoEnabled ? "enabled" : "disabled"} (value: $videoOnValue)',
@@ -1590,7 +2018,7 @@ class WebsocketController extends GetxController {
   bool getUserIsOnCall(int userId) {
     try {
       final user = liveCallList.firstWhere(
-        (viewer) => viewer['caller_id'].toString() == userId.toString(),
+            (viewer) => viewer['caller_id'].toString() == userId.toString(),
         orElse: () => null,
       );
 
@@ -1673,7 +2101,7 @@ class WebsocketController extends GetxController {
                 });
                 // Check if user already exists in the list
                 bool userExists = livestreamController.liveViewerList.any(
-                  (v) => v["id"] == viewerInfo["id"],
+                      (v) => v["id"] == viewerInfo["id"],
                 );
 
                 // Add user only if not already in the list
@@ -1682,7 +2110,7 @@ class WebsocketController extends GetxController {
                   showEntryAnimationForViewer(
                     entryData: Map<String, dynamic>.from(viewerInfo),
                     userId:
-                        viewerInfo['viewer_id'] ??
+                    viewerInfo['viewer_id'] ??
                         viewerInfo['user_id'] ??
                         viewerInfo['id'],
                   );
@@ -1697,7 +2125,7 @@ class WebsocketController extends GetxController {
                 // Always show entry animation regardless of whether user was added or already exists
               } else if (action == "viewer_remove") {
                 livestreamController.liveViewerList.removeWhere(
-                  (v) => v["id"] == viewerInfo["id"],
+                      (v) => v["id"] == viewerInfo["id"],
                 );
               }
             }
@@ -1886,11 +2314,11 @@ class WebsocketController extends GetxController {
                   isPkRunning.value = true;
                   //for video audio call
                   pendingCall.removeWhere(
-                    (call) => call['caller_id'] == callerId,
+                        (call) => call['caller_id'] == callerId,
                   );
                   // ✅ Prevent duplicate addition
                   if (!liveCallList.any(
-                    (call) => call['caller_id'] == callerId,
+                        (call) => call['caller_id'] == callerId,
                   )) {
                     liveCallList.add(callData);
                   }
@@ -1907,12 +2335,12 @@ class WebsocketController extends GetxController {
 
                   if (streamIndex != -1) {
                     final stream =
-                        homeController.showingLiveStreamList[streamIndex];
+                    homeController.showingLiveStreamList[streamIndex];
                     if (stream['livestream_callers'] != null) {
                       final existingCallerIndex =
-                          (stream['livestream_callers'] as List).indexWhere(
+                      (stream['livestream_callers'] as List).indexWhere(
                             (caller) => caller['caller_id'] == callerId,
-                          );
+                      );
 
                       if (existingCallerIndex == -1) {
                         (stream['livestream_callers'] as List).add(callData);
@@ -1925,11 +2353,11 @@ class WebsocketController extends GetxController {
                 } else {
                   //for video audio call
                   pendingCall.removeWhere(
-                    (call) => call['caller_id'] == callerId,
+                        (call) => call['caller_id'] == callerId,
                   );
                   // ✅ Prevent duplicate addition
                   if (!liveCallList.any(
-                    (call) => call['caller_id'] == callerId,
+                        (call) => call['caller_id'] == callerId,
                   )) {
                     liveCallList.add(callData);
                   }
@@ -1946,12 +2374,12 @@ class WebsocketController extends GetxController {
 
                   if (streamIndex != -1) {
                     final stream =
-                        homeController.showingLiveStreamList[streamIndex];
+                    homeController.showingLiveStreamList[streamIndex];
                     if (stream['livestream_callers'] != null) {
                       final existingCallerIndex =
-                          (stream['livestream_callers'] as List).indexWhere(
+                      (stream['livestream_callers'] as List).indexWhere(
                             (caller) => caller['caller_id'] == callerId,
-                          );
+                      );
 
                       if (existingCallerIndex == -1) {
                         (stream['livestream_callers'] as List).add(callData);
@@ -1970,9 +2398,9 @@ class WebsocketController extends GetxController {
                     _isCurrentAudioOnlyRoom(
                       livestreamId: callData['livestream_id'],
                     ) ||
-                    _truthy(callData['is_audio_seat_join']) ||
-                    (_truthy(callData['auto_accepted']) &&
-                        !_truthy(callData['requires_host_acceptance']));
+                        _truthy(callData['is_audio_seat_join']) ||
+                        (_truthy(callData['auto_accepted']) &&
+                            !_truthy(callData['requires_host_acceptance']));
 
                 if (legacyAudioRoom) {
                   pendingCall.removeWhere((raw) {
@@ -1982,7 +2410,7 @@ class WebsocketController extends GetxController {
                   pendingCall.refresh();
                   liveLog(
                     '🚫 LEGACY_AUDIO_PENDING_CALL_IGNORED => '
-                    'stream:${callData['livestream_id']} caller:$callerId',
+                        'stream:${callData['livestream_id']} caller:$callerId',
                   );
                 } else if (callData['call_type'] == "pk") {
                   _upsertPendingCall(Map<String, dynamic>.from(callData));
@@ -2000,10 +2428,10 @@ class WebsocketController extends GetxController {
                 // Stop audio/video for the removed caller
 
                 pendingCall.removeWhere(
-                  (call) => call['caller_id'] == callerId,
+                      (call) => call['caller_id'] == callerId,
                 );
                 liveCallList.removeWhere(
-                  (call) => call['caller_id'] == callerId,
+                      (call) => call['caller_id'] == callerId,
                 );
 
                 if (isPkRunning.value && callData['call_type'] == "pk") {
@@ -2022,10 +2450,10 @@ class WebsocketController extends GetxController {
                     .indexWhere((stream) => stream['id'] == streamID.value);
                 if (streamIndex != -1) {
                   final stream =
-                      homeController.showingLiveStreamList[streamIndex];
+                  homeController.showingLiveStreamList[streamIndex];
                   if (stream['livestream_callers'] != null) {
                     (stream['livestream_callers'] as List).removeWhere(
-                      (caller) => caller['caller_id'] == callerId,
+                          (caller) => caller['caller_id'] == callerId,
                     );
                     homeController
                         .sortLiveStreamList(); // Auto sort after caller removed
@@ -2074,10 +2502,10 @@ class WebsocketController extends GetxController {
 
   /// Show call request popup for broadcasters
   void _showCallRequestPopup(
-    Map<String, dynamic> callData, {
-    required RtcEngine? rtcEngine,
-    String? popupKey,
-  }) {
+      Map<String, dynamic> callData, {
+        required RtcEngine? rtcEngine,
+        String? popupKey,
+      }) {
     /// Old channel/new unified channel duita thekei popup ashte pare.
     /// Tai popup show-er age user data safe normalize.
     _normalizeUnifiedCallUser(callData, callData);
@@ -2090,18 +2518,18 @@ class WebsocketController extends GetxController {
 
     try {
       final LivestreamController liveController =
-          Get.find<LivestreamController>();
+      Get.find<LivestreamController>();
 
       final callerUser = callData['user'] is Map
           ? Map<String, dynamic>.from(callData['user'])
           : <String, dynamic>{};
       final callerName =
-          (callerUser['name'] ??
-                  callData['name'] ??
-                  callData['caller_name'] ??
-                  callData['username'] ??
-                  'User')
-              .toString();
+      (callerUser['name'] ??
+          callData['name'] ??
+          callData['caller_name'] ??
+          callData['username'] ??
+          'User')
+          .toString();
       final callerId =
           callData['caller_id'] ?? callData['user_id'] ?? callerUser['id'];
       final streamId =
@@ -2124,9 +2552,9 @@ class WebsocketController extends GetxController {
       /// the Incoming Call Request bottom sheet in an audio room.
       final bool audioPopupForbidden =
           _isCurrentAudioOnlyRoom(livestreamId: streamIdInt) ||
-          _truthy(callData['is_audio_seat_join']) ||
-          (_truthy(callData['auto_accepted']) &&
-              !_truthy(callData['requires_host_acceptance']));
+              _truthy(callData['is_audio_seat_join']) ||
+              (_truthy(callData['auto_accepted']) &&
+                  !_truthy(callData['requires_host_acceptance']));
 
       if (audioPopupForbidden) {
         if (popupKey != null) _activeCallPopupKeys.remove(popupKey);
@@ -2137,18 +2565,18 @@ class WebsocketController extends GetxController {
         pendingCall.refresh();
         liveLog(
           '🚫 AUDIO_CALL_REQUEST_POPUP_HARD_BLOCKED => '
-          'stream:$streamIdInt caller:$callerIdInt',
+              'stream:$streamIdInt caller:$callerIdInt',
         );
         return;
       }
 
       final effectivePopupKey =
           popupKey ??
-          _callPopupKey(
-            streamId: streamIdInt,
-            callerId: callerIdInt,
-            callType: callData['call_type'] ?? 'audio',
-          );
+              _callPopupKey(
+                streamId: streamIdInt,
+                callerId: callerIdInt,
+                callType: callData['call_type'] ?? 'audio',
+              );
       if (callerIdInt <= 0 ||
           streamIdInt <= 0 ||
           _activeCallPopupKeys.contains(effectivePopupKey) ||
@@ -2304,7 +2732,7 @@ class WebsocketController extends GetxController {
                 );
 
                 homeController.showingLiveStreamList.removeWhere(
-                  (stream) => stream['id'] == moderationData['livestream_id'],
+                      (stream) => stream['id'] == moderationData['livestream_id'],
                 );
 
                 homeController
@@ -2541,6 +2969,18 @@ class WebsocketController extends GetxController {
 
     commentsList.clear();
     giftMessagesList.clear();
+    processedGiftIds.clear();
+    processedImogiIds.clear();
+    _liveUserProfileCache.clear();
+    liveImogiAnimations.clear();
+    _giftAnimationQueue.clear();
+    _pendingGiftMessageRows.clear();
+    _pendingGiftCommentRows.clear();
+    _optimisticGiftAnimationUntilMs.clear();
+    _optimisticGiftEchoCredits.clear();
+    giftsData.clear();
+    liveUserGiftCoins.clear();
+    isGiftAnimationShowing.value = false;
     liveCallList.clear();
     pendingCall.clear();
     _heartbeatTimeoutSeatGuardUntilMs.clear();
@@ -2548,11 +2988,27 @@ class WebsocketController extends GetxController {
     newViewersJoinded.value = false;
     newJoinedUserData.clear();
     audioMutedUserMap.clear();
+    speakingUserMap.clear();
+    for (final signal in _speakingSignals.values) {
+      signal.value = false;
+    }
+    _speakingSignals.clear();
+    _remoteAudioMuteApplied.clear();
+    _terminalCallSessions.clear();
+    _selfMicPublishedUserId = 0;
+    _selfMicPublishedMuted = null;
     lockedSeatMap.clear();
     processedGiftIds.clear();
     processedImogiIds.clear();
+    _liveUserProfileCache.clear();
     liveImogiAnimations.clear();
     _giftAnimationHideTimer?.cancel();
+    _giftAnimationHideTimer = null;
+    _luckyCardHideTimer?.cancel();
+    _luckyCardHideTimer = null;
+    _entryAnimationSafetyTimer?.cancel();
+    _entryAnimationSafetyTimer = null;
+    _entryPresentationQueue.clear();
     _giftAnimationQueue.clear();
     _giftAnimationQueueMounting = false;
     giftsData.clear();
@@ -2562,6 +3018,9 @@ class WebsocketController extends GetxController {
     if (streamID.value == livestreamId) streamID.value = 0;
     if (activeAudioStreamId.value == livestreamId) {
       activeAudioStreamId.value = 0;
+    }
+    if (_subscribedRoomStreamId == livestreamId) {
+      _switchRoomRealtimeSubscription(0);
     }
   }
 
@@ -2584,7 +3043,7 @@ class WebsocketController extends GetxController {
       */
       liveLog(
         'ℹ️ Same audio stream preserved; no full seat reset '
-        '=> stream:$newStreamId requestedClear:$clearSeatsForSameStream',
+            '=> stream:$newStreamId requestedClear:$clearSeatsForSameStream',
       );
       return;
     }
@@ -2618,17 +3077,32 @@ class WebsocketController extends GetxController {
     /// Current room changed: title/announcement/profile image/password must be
     /// loaded only from the new room, not from the previously edited room.
     clearLiveRoomSettingsForStream(newStreamId: newStreamId);
+    _seatRevisionByUser.clear();
 
     newViewersJoinded.value = false;
     newJoinedUserData.value = {};
     newViewerAction.value = 'join';
+    _entryAnimationSafetyTimer?.cancel();
+    _entryAnimationSafetyTimer = null;
+    _entryPresentationQueue.clear();
+    _recentEntryShownUntilMs.clear();
 
     commentsList.clear();
     giftMessagesList.clear();
     processedGiftIds.clear();
     processedImogiIds.clear();
+    _liveUserProfileCache.clear();
     liveImogiAnimations.clear();
     audioMutedUserMap.clear();
+    speakingUserMap.clear();
+    for (final signal in _speakingSignals.values) {
+      signal.value = false;
+    }
+    _speakingSignals.clear();
+    _remoteAudioMuteApplied.clear();
+    _terminalCallSessions.clear();
+    _selfMicPublishedUserId = 0;
+    _selfMicPublishedMuted = null;
 
     /// Per-seat gift coins belong to one broadcast only.
     /// Clear before the new room renders so room A can never leak into room B.
@@ -2662,6 +3136,7 @@ class WebsocketController extends GetxController {
     _lastKnownSelfSeatNo = 0;
 
     lockedSeatMap.clear();
+    speakingUserMap.clear();
 
     liveMusicStatus.value = 'stopped';
     liveMusicName.value = '';
@@ -2675,6 +3150,7 @@ class WebsocketController extends GetxController {
     try {
       livestreamController.liveViewerList.clear();
     } catch (_) {}
+    authoritativeViewerCount.value = 0;
 
     _refreshCommentsListSmooth();
     _refreshGiftMessagesListSmooth();
@@ -2682,6 +3158,45 @@ class WebsocketController extends GetxController {
     pendingCall.refresh();
     lockedSeatMap.refresh();
     audioMutedUserMap.refresh();
+  }
+
+  /// Final local cleanup for an explicitly closed room. Unlike a soft host
+  /// leave, this invalidates replay/presence state so a later permanent-room
+  /// reuse starts as a fresh local session even if the backend reuses its ID.
+  void clearExplicitlyClosedRoomState(int livestreamId) {
+    if (livestreamId <= 0) return;
+    final prefix = '$livestreamId:';
+    _viewerPresenceState.removeWhere((key, _) => key.startsWith(prefix));
+    _processedRealtimeFrames.removeWhere((key, _) => key.startsWith(prefix));
+    commentsList.clear();
+    giftMessagesList.clear();
+    processedGiftIds.clear();
+    processedImogiIds.clear();
+    _liveUserProfileCache.clear();
+    liveImogiAnimations.clear();
+    _giftAnimationQueue.clear();
+    _pendingGiftMessageRows.clear();
+    _pendingGiftCommentRows.clear();
+    _optimisticGiftAnimationUntilMs.clear();
+    _optimisticGiftEchoCredits.clear();
+    giftsData.clear();
+    liveUserGiftCoins.clear();
+    isGiftAnimationShowing.value = false;
+    liveCallList.clear();
+    pendingCall.clear();
+    audioMutedUserMap.clear();
+    speakingUserMap.clear();
+    lockedSeatMap.clear();
+    livestreamController.liveViewerList.clear();
+    authoritativeViewerCount.value = 0;
+    clearLiveRoomSettingsForStream(newStreamId: 0);
+    if (streamID.value == livestreamId) streamID.value = 0;
+    if (activeAudioStreamId.value == livestreamId) {
+      activeAudioStreamId.value = 0;
+    }
+    if (_subscribedRoomStreamId == livestreamId) {
+      _switchRoomRealtimeSubscription(0);
+    }
   }
 
   /// clear user data after remove/out from the stream.
@@ -2709,11 +3224,41 @@ class WebsocketController extends GetxController {
 
     liveLog(
       '🧹 clearSpecificUserStreamData userId=$userIdText '
-      'rejectCallIfInCallList=$rejectCallIfInCallList '
-      'removeAcceptedCall=$removeAcceptedCall '
-      'closePopupIfOpen=$closePopupIfOpen '
-      'removeViewer=$removeViewer reason=$reason',
+          'rejectCallIfInCallList=$rejectCallIfInCallList '
+          'removeAcceptedCall=$removeAcceptedCall '
+          'closePopupIfOpen=$closePopupIfOpen '
+          'removeViewer=$removeViewer reason=$reason',
     );
+
+    // ✅ FIX (rejoin shows stale "left"/mute state): a full exit
+    // (removeViewer=true — used for both self-leave and being kicked) must
+    // also reset this user's own join/leave presence tracker
+    // (_viewerPresenceState). That tracker only ever flips to "left" when a
+    // viewer_left event is *received and processed*, but the person who
+    // just left is no longer subscribed to receive their own echo of that
+    // event — so it stayed stuck at "present=true" from their original
+    // join. On a later rejoin, acceptVisiblePresenceComment() then saw
+    // "already present" == "trying to join" and silently rejected the new
+    // "has joined" comment as a duplicate, leaving whatever was last shown
+    // (often a stale "left") on screen instead. This does not touch other
+    // users' seats/mute/comment data — only this one user's own presence
+    // flag for this room.
+    if (removeViewer && userIdInt > 0) {
+      final int presenceStreamId = activeAudioStreamId.value > 0
+          ? activeAudioStreamId.value
+          : streamID.value;
+      if (presenceStreamId > 0) {
+        _viewerPresenceState.remove('$presenceStreamId:$userIdInt');
+      }
+      // Absence here already reads as "not muted" everywhere this map is
+      // checked (`!= true` / `?? false`), so removing is the correct
+      // "fresh, unmuted" default for a rejoin — it will be overwritten
+      // again immediately with real server data if this user takes a seat.
+      if (audioMutedUserMap.containsKey(userIdInt)) {
+        audioMutedUserMap.remove(userIdInt);
+        audioMutedUserMap.refresh();
+      }
+    }
 
     bool sameCall(dynamic call) {
       if (call is! Map) return false;
@@ -2772,14 +3317,14 @@ class WebsocketController extends GetxController {
 
     final bool shouldDemoteCurrentUserMedia =
         removeAcceptedCall ||
-        reason.contains('kick') ||
-        reason.contains('reject') ||
-        reason.contains('leave_seat') ||
-        reason.contains('live_end') ||
-        reason.contains('live_ended') ||
-        reason.contains('room_exit') ||
-        reason.contains('full_exit') ||
-        reason.contains('close');
+            reason.contains('kick') ||
+            reason.contains('reject') ||
+            reason.contains('leave_seat') ||
+            reason.contains('live_end') ||
+            reason.contains('live_ended') ||
+            reason.contains('room_exit') ||
+            reason.contains('full_exit') ||
+            reason.contains('close');
 
     if (authController.userProfile.value.user?.id == userIdInt &&
         shouldDemoteCurrentUserMedia) {
@@ -2976,36 +3521,52 @@ class WebsocketController extends GetxController {
         v == 'unmuted';
   }
 
+  bool? _mutedFlagValue(dynamic value) {
+    if (value == null) return null;
+    final v = value.toString().toLowerCase().trim();
+    if (value == true ||
+        value == 1 ||
+        v == '1' ||
+        v == 'true' ||
+        v == 'yes' ||
+        v == 'mute' ||
+        v == 'muted') {
+      return true;
+    }
+    if (value == false ||
+        value == 0 ||
+        v == '0' ||
+        v == 'false' ||
+        v == 'no' ||
+        v == 'unmute' ||
+        v == 'unmuted') {
+      return false;
+    }
+    return null;
+  }
+
   int _normalizeAudioOn(Map<String, dynamic> data) {
-    final mutedRaw =
-        data['is_muted'] ??
-        data['muted'] ??
-        data['is_muted_by_host'] ??
-        data['mute_status'];
+    final bool? muted = _mutedFlagValue(
+      data['is_muted'] ?? data['muted'] ?? data['mute_status'],
+    );
+    final bool? mutedByHost = _mutedFlagValue(data['is_muted_by_host']);
     final audioRaw =
         data['audio_on'] ??
-        data['is_audio_on'] ??
-        data['mic_on'] ??
-        data['microphone_on'] ??
-        data['status'] ??
-        data['action'];
+            data['is_audio_on'] ??
+            data['mic_on'] ??
+            data['microphone_on'];
 
-    /// ✅ FIX:
-    /// audio_on/is_audio_on is authoritative when present. Some backend rows send
-    /// audio_on=1 with stale is_muted=1, which caused fake mute icons.
-    if (_audioOffValue(audioRaw)) return 0;
-    if (_audioOnValue(audioRaw)) return 1;
-
-    /// mutedRaw means: true/1/muted => mic off, false/0/unmuted => mic on.
-    /// Use it only when audio_on/is_audio_on is missing.
-    if (mutedRaw != null) {
-      if (mutedRaw == true || mutedRaw == 1 || _audioOffValue(mutedRaw)) {
-        return 0;
-      }
-      if (mutedRaw == false || mutedRaw == 0 || _audioOnValue(mutedRaw)) {
-        return 1;
-      }
+    // One canonical effective state: a host/user mute always wins over a
+    // contradictory audio_on=true field.
+    if (mutedByHost == true || muted == true || _audioOffValue(audioRaw)) {
+      return 0;
     }
+    if ((mutedByHost == false || mutedByHost == null) &&
+        (muted == false || muted == null) &&
+        _audioOnValue(audioRaw)) {
+      return 1;
+    }
+    if (mutedByHost == false || muted == false) return 1;
 
     /// If no audio state exists in event, keep old state instead of forcing unmute.
     return -1;
@@ -3020,20 +3581,18 @@ class WebsocketController extends GetxController {
       final userId =
           int.tryParse(
             (data['user_id'] ??
-                    data['caller_id'] ??
-                    data['id'] ??
-                    data['uid'] ??
-                    '')
+                data['caller_id'] ??
+                data['id'] ??
+                data['uid'] ??
+                '')
                 .toString(),
           ) ??
-          0;
+              0;
 
       if (userId == 0) {
         liveLog('⚠️ audio toggle user id missing: $moderationData');
         return;
       }
-
-      final int normalizedAudioOn = _normalizeAudioOn(data);
 
       final callIndex = liveCallList.indexWhere((call) {
         if (call is! Map) return false;
@@ -3049,6 +3608,10 @@ class WebsocketController extends GetxController {
         final old = liveCallList[callIndex] is Map
             ? Map<String, dynamic>.from(liveCallList[callIndex])
             : <String, dynamic>{};
+        final int normalizedAudioOn = _normalizeAudioOn(<String, dynamic>{
+          ...old,
+          ...data,
+        });
 
         final int oldAudioOn = _normalizeAudioOn(old) == -1
             ? (old['audio_on']?.toString() == '0' ? 0 : 1)
@@ -3061,7 +3624,15 @@ class WebsocketController extends GetxController {
         old['audio_on'] = audioOn;
         old['is_audio_on'] = audioOn;
         old['is_muted'] = audioOn == 1 ? 0 : 1;
-        old['is_muted_by_host'] = audioOn == 1 ? 0 : 1;
+        old['is_muted_by_host'] =
+        _mutedFlagValue(
+          data.containsKey('is_muted_by_host')
+              ? data['is_muted_by_host']
+              : old['is_muted_by_host'],
+        ) ==
+            true
+            ? 1
+            : 0;
 
         liveCallList[callIndex] = old;
         _refreshLiveCallListSmooth();
@@ -3099,9 +3670,13 @@ class WebsocketController extends GetxController {
           try {
             await engine.adjustRecordingSignalVolume(audioOn == 1 ? 100 : 0);
           } catch (_) {}
+          _selfMicPublishedUserId = currentUserId;
+          _selfMicPublishedMuted = audioOn == 0;
           liveLog('🎙️ Local mic ${audioOn == 1 ? "unmuted" : "muted"}');
         }
       } else {
+        final int normalizedAudioOn = _normalizeAudioOn(data);
+
         /// Late audience may receive audio state before seat list is hydrated.
         /// If the event has no explicit audio value, do not create a fake unmuted row.
         if (normalizedAudioOn == -1) {
@@ -3123,12 +3698,12 @@ class WebsocketController extends GetxController {
           'user': data['user'] is Map
               ? Map<String, dynamic>.from(data['user'])
               : {
-                  'id': userId,
-                  'user_id': userId,
-                  'name': data['name'] ?? data['user_name'] ?? 'User $userId',
-                  'profile_image': data['profile_image'] ?? '',
-                  'level': data['level'] ?? 0,
-                },
+            'id': userId,
+            'user_id': userId,
+            'name': data['name'] ?? data['user_name'] ?? 'User $userId',
+            'profile_image': data['profile_image'] ?? '',
+            'level': data['level'] ?? 0,
+          },
         });
         _refreshLiveCallListSmooth();
         liveLog(
@@ -3157,7 +3732,7 @@ class WebsocketController extends GetxController {
           moderationData['video_on'] ?? moderationData['is_video_on'];
       final bool hasExplicitVideoState =
           moderationData.containsKey('video_on') ||
-          moderationData.containsKey('is_video_on');
+              moderationData.containsKey('is_video_on');
       final bool isVideoOn = hasExplicitVideoState
           ? _truthy(videoOnRaw)
           : !getUserVideoStatus(userId);
@@ -3214,7 +3789,7 @@ class WebsocketController extends GetxController {
         }
         liveLog(
           '📹 Local Agora video ${isVideoOn ? "enabled" : "disabled"} '
-          '=> user:$userId',
+              '=> user:$userId',
         );
       }
 
@@ -3230,8 +3805,8 @@ class WebsocketController extends GetxController {
     try {
       final livestreamId =
           moderationData['livestream_id'] ??
-          moderationData['stream_id'] ??
-          moderationData['id'];
+              moderationData['stream_id'] ??
+              moderationData['id'];
       final message = moderationData['message'] ?? 'Live stream has ended';
       final int livestreamIdInt = _toInt(livestreamId);
 
@@ -3250,7 +3825,7 @@ class WebsocketController extends GetxController {
         _locallyLeftStreamIds.add(livestreamIdInt);
         liveLog(
           '✅ Local owner close socket acknowledged; '
-          'Bottomnav redirect skipped => stream:$livestreamIdInt',
+              'Bottomnav redirect skipped => stream:$livestreamIdInt',
         );
         return;
       }
@@ -3259,9 +3834,9 @@ class WebsocketController extends GetxController {
       // Do NOT depend on joined_users because backend sometimes sends host only.
       final bool isCorrectStream =
           _isLiveRoomCurrentlyOpen(livestreamIdInt) ||
-          streamID.value == livestreamIdInt ||
-          activeAudioStreamId.value == livestreamIdInt ||
-          livestreamController.streamId.value == livestreamIdInt;
+              streamID.value == livestreamIdInt ||
+              activeAudioStreamId.value == livestreamIdInt ||
+              livestreamController.streamId.value == livestreamIdInt;
 
       if (!isCorrectStream) {
         // Still remove from list, but do not route if the room is not open here.
@@ -3312,7 +3887,7 @@ class WebsocketController extends GetxController {
       Future.microtask(() {
         try {
           Get.offAll(
-            () => BottomnavView(),
+                () => BottomnavView(),
             transition: Transition.cupertino,
             duration: const Duration(milliseconds: 300),
           );
@@ -3372,6 +3947,45 @@ class WebsocketController extends GetxController {
   int _unifiedSocketGeneration = 0;
   int? _unifiedReconnectScheduledForGeneration;
   bool _unifiedDisconnectIntentional = false;
+  int _subscribedRoomStreamId = 0;
+
+  String _roomRealtimeChannelName(int streamId) => 'live-stream.$streamId';
+
+  void _switchRoomRealtimeSubscription(int streamId) {
+    if (_subscribedRoomStreamId == streamId) return;
+    final channel = liveStreamEventChannel;
+    if (channel == null || channel.closeCode != null) {
+      _subscribedRoomStreamId = streamId;
+      return;
+    }
+
+    final int previous = _subscribedRoomStreamId;
+    if (previous > 0) {
+      channel.sink.add(
+        json.encode(<String, dynamic>{
+          'event': 'pusher:unsubscribe',
+          'data': <String, dynamic>{
+            'channel': _roomRealtimeChannelName(previous),
+          },
+        }),
+      );
+    }
+    _subscribedRoomStreamId = streamId;
+    if (streamId <= 0) return;
+
+    channel.sink.add(
+      json.encode(<String, dynamic>{
+        'event': 'pusher:subscribe',
+        'data': <String, dynamic>{
+          'channel': _roomRealtimeChannelName(streamId),
+        },
+      }),
+    );
+    LiveRealtimeDebugLog.event('ROOM_CHANNEL_SUBSCRIBED', <String, Object?>{
+      'room': streamId,
+      'channel': _roomRealtimeChannelName(streamId),
+    });
+  }
 
   // ========================================================================
   // RECHARGE COIN REALTIME
@@ -3409,16 +4023,16 @@ class WebsocketController extends GetxController {
   final Set<String> _processedRechargeEventIds = <String>{};
   final Set<String> _claimedRechargeEventIds = <String>{};
   final List<Map<String, dynamic>> _rechargePopupQueue =
-      <Map<String, dynamic>>[];
+  <Map<String, dynamic>>[];
 
   /// Prevent duplicate call popup for same caller/stream/call type.
   /// Pending event duplicate ashle accept korar por abar popup show hobe na.
   final Set<String> _activeCallPopupKeys = <String>{};
   final Set<String> _handledCallPopupKeys = <String>{};
   final Map<String, Future<void>> _callProfileHydrationFutures =
-      <String, Future<void>>{};
+  <String, Future<void>>{};
   final Map<int, Future<void>> _callerMediaTransitionFutures =
-      <int, Future<void>>{};
+  <int, Future<void>>{};
   bool _localVideoPreviewActive = false;
   int _localPublishingCallerId = 0;
 
@@ -3570,16 +4184,16 @@ class WebsocketController extends GetxController {
   /// room. Missing call_type is normalized to audio because the pending event
   /// may omit it even though the accept API returns call_type=audio.
   bool _normalizeCallTypeForCurrentRoom(
-    Map<String, dynamic> callData,
-    Map<String, dynamic> payload, {
-    dynamic livestreamId,
-  }) {
+      Map<String, dynamic> callData,
+      Map<String, dynamic> payload, {
+        dynamic livestreamId,
+      }) {
     final nestedCallData = payload['call_data'];
     final rawType =
         callData['call_type'] ??
-        callData['type'] ??
-        payload['call_type'] ??
-        (nestedCallData is Map ? nestedCallData['call_type'] : null);
+            callData['type'] ??
+            payload['call_type'] ??
+            (nestedCallData is Map ? nestedCallData['call_type'] : null);
     final type = _normalizedCallType(rawType);
     final bool audioRoom = _isCurrentAudioOnlyRoom(livestreamId: livestreamId);
 
@@ -3609,7 +4223,7 @@ class WebsocketController extends GetxController {
 
       liveLog(
         '⛔ VIDEO_CALL_BLOCKED_IN_AUDIO_ROOM => '
-        'stream:$sid caller:$callerId type:$type',
+            'stream:$sid caller:$callerId type:$type',
       );
       return false;
     }
@@ -3706,7 +4320,10 @@ class WebsocketController extends GetxController {
 
     _cacheLiveUserProfile(user);
     final exists = _isUserInCurrentViewerList(uid);
-    if (exists) return;
+    if (!exists) {
+      liveLog('Caller payload did not create viewer presence => user:$uid');
+      return;
+    }
 
     final stream =
         callData['livestream_id'] ?? callData['stream_id'] ?? streamID.value;
@@ -3721,10 +4338,43 @@ class WebsocketController extends GetxController {
     liveLog('✅ Viewer row hydrated from call payload => user:$uid');
   }
 
+  /// ✅ FIX: seat/call accept events previously could only *hydrate* an
+  /// already-existing viewer row (see _ensureViewerRowFromCall above) —
+  /// viewer_joined/viewer_left were meant to exclusively own creating room
+  /// presence. But if a user's viewer_joined was missed, deduped, or never
+  /// sent for a direct seat invite, they stayed permanently invisible in the
+  /// viewer list even though they clearly occupy a seat — the seat count and
+  /// viewer-list count would then disagree. A CONFIRMED accepted seat is at
+  /// least as strong evidence of room presence as a bare viewer_joined
+  /// event, so this creates the row if missing. addOrUpdateViewerLocal
+  /// already excludes the room's host from their own viewer list/count, so
+  /// calling this for the host's own seat row is also safe and a no-op.
+  void _ensureViewerPresenceForAcceptedSeat(Map<String, dynamic> callData) {
+    final user = callData['user'];
+    final int uid = _toInt(
+      callData['caller_id'] ?? callData['user_id'] ?? (user is Map ? user['id'] : null),
+    );
+    if (uid <= 0 || user is! Map) return;
+    final userMap = Map<String, dynamic>.from(user);
+    if ((userMap['name']?.toString().trim() ?? '').isEmpty) return;
+
+    _cacheLiveUserProfile(userMap);
+    final stream =
+        callData['livestream_id'] ?? callData['stream_id'] ?? streamID.value;
+    livestreamController.addOrUpdateViewerLocal({
+      'id': uid,
+      'viewer_id': uid,
+      'user_id': uid,
+      'livestream_id': stream,
+      'user': _mergeWithCachedLiveUserProfile(userId: uid, rawUser: userMap),
+      'is_active': 1,
+    }, source: 'seat_accept_fallback');
+  }
+
   /// When host removes a user from seat, backend sends caller_left.
   /// That must remove only mic/seat row, not live room viewer identity.
-  /// Some backend payloads do not send a separate viewer_joined after this,
-  /// so hydrate the viewer row from caller_left.user/caller payload.
+  /// Enrich an existing viewer row only. Seat/caller events never create room
+  /// presence; viewer_joined/viewer_left exclusively own that lifecycle.
   void _ensureViewerRowAfterSeatLeft(Map<String, dynamic> payload) {
     try {
       final dynamic rawUser = payload['user'] is Map
@@ -3757,14 +4407,14 @@ class WebsocketController extends GetxController {
           .toLowerCase();
       final bool fullRoomExit =
           reason == 'room_exit' ||
-          reason == 'full_exit' ||
-          reason.contains('room_exit') ||
-          reason.contains('full_exit') ||
-          payload['remove_viewer'] == true ||
-          payload['viewer_removed'] == true ||
-          action == 'viewer_left' ||
-          action == 'viewer_remove' ||
-          action == 'viewer_removed';
+              reason == 'full_exit' ||
+              reason.contains('room_exit') ||
+              reason.contains('full_exit') ||
+              payload['remove_viewer'] == true ||
+              payload['viewer_removed'] == true ||
+              action == 'viewer_left' ||
+              action == 'viewer_remove' ||
+              action == 'viewer_removed';
 
       if (fullRoomExit || _hasRecentRoomExit(streamId: stream, userId: uid)) {
         liveLog(
@@ -3779,6 +4429,12 @@ class WebsocketController extends GetxController {
         rawUser: rawUser,
       );
       final exists = _isUserInCurrentViewerList(uid);
+      if (!exists) {
+        liveLog(
+          'Seat-left payload did not create viewer presence => user:$uid',
+        );
+        return;
+      }
 
       final viewerInfo = <String, dynamic>{
         'id': uid,
@@ -3821,14 +4477,14 @@ class WebsocketController extends GetxController {
       if (call is! Map) return false;
       final dynamic id =
           call['caller_id'] ??
-          call['user_id'] ??
-          (call['user'] is Map ? call['user']['id'] : null) ??
-          (call['caller_data'] is Map
-              ? call['caller_data']['caller_id']
-              : null) ??
-          (call['caller_data'] is Map && call['caller_data']['user'] is Map
-              ? call['caller_data']['user']['id']
-              : null);
+              call['user_id'] ??
+              (call['user'] is Map ? call['user']['id'] : null) ??
+              (call['caller_data'] is Map
+                  ? call['caller_data']['caller_id']
+                  : null) ??
+              (call['caller_data'] is Map && call['caller_data']['user'] is Map
+                  ? call['caller_data']['user']['id']
+                  : null);
       return id != null && id.toString() == cid.toString();
     }
 
@@ -3910,7 +4566,7 @@ class WebsocketController extends GetxController {
     final String expectedChannel = 'private-user-recharge.$userId';
     final bool alreadySubscribed =
         _rechargeSubscribedUserId == userId &&
-        _rechargePrivateChannelName == expectedChannel;
+            _rechargePrivateChannelName == expectedChannel;
     final bool subscriptionPending =
         _rechargePendingChannelName == expectedChannel;
 
@@ -3953,7 +4609,7 @@ class WebsocketController extends GetxController {
     final String channelName = 'private-user-recharge.$userId';
 
     if ((_rechargeSubscribedUserId == userId &&
-            _rechargePrivateChannelName == channelName) ||
+        _rechargePrivateChannelName == channelName) ||
         _rechargePendingChannelName == channelName) {
       return;
     }
@@ -3980,7 +4636,7 @@ class WebsocketController extends GetxController {
       if (response.statusCode != 200) {
         liveLog(
           '⚠️ Recharge private channel auth failed '
-          '=> status:${response.statusCode} data:${response.data}',
+              '=> status:${response.statusCode} data:${response.data}',
         );
         return;
       }
@@ -4020,7 +4676,7 @@ class WebsocketController extends GetxController {
     } on DioException catch (e) {
       liveLog(
         '❌ Recharge private channel auth error '
-        '=> ${e.response?.statusCode} ${e.response?.data ?? e.message}',
+            '=> ${e.response?.statusCode} ${e.response?.data ?? e.message}',
       );
     } catch (e, st) {
       liveLog('❌ Recharge private channel subscribe error => $e\n$st');
@@ -4041,7 +4697,7 @@ class WebsocketController extends GetxController {
     final String expectedChannel = 'private-user-account.$userId';
     final bool alreadySubscribed =
         _accountBlockSubscribedUserId == userId &&
-        _accountBlockPrivateChannelName == expectedChannel;
+            _accountBlockPrivateChannelName == expectedChannel;
     final bool subscriptionPending =
         _accountBlockPendingChannelName == expectedChannel;
 
@@ -4084,7 +4740,7 @@ class WebsocketController extends GetxController {
     final String channelName = 'private-user-account.$userId';
 
     if ((_accountBlockSubscribedUserId == userId &&
-            _accountBlockPrivateChannelName == channelName) ||
+        _accountBlockPrivateChannelName == channelName) ||
         _accountBlockPendingChannelName == channelName) {
       return;
     }
@@ -4111,7 +4767,7 @@ class WebsocketController extends GetxController {
       if (response.statusCode != 200) {
         liveLog(
           '⚠️ Account block private channel auth failed '
-          '=> status:${response.statusCode} data:${response.data}',
+              '=> status:${response.statusCode} data:${response.data}',
         );
         return;
       }
@@ -4155,7 +4811,7 @@ class WebsocketController extends GetxController {
     } on DioException catch (e) {
       liveLog(
         '❌ Account block private channel auth error '
-        '=> ${e.response?.statusCode} ${e.response?.data ?? e.message}',
+            '=> ${e.response?.statusCode} ${e.response?.data ?? e.message}',
       );
     } catch (e, st) {
       liveLog('❌ Account block private channel subscribe error => $e\n$st');
@@ -4182,7 +4838,7 @@ class WebsocketController extends GetxController {
 
     final bool alreadySubscribed =
         _deviceBlockSubscribedDeviceId == deviceId &&
-        _deviceBlockPrivateChannelName == channelName;
+            _deviceBlockPrivateChannelName == channelName;
     final bool subscriptionPending =
         _deviceBlockPendingChannelName == channelName;
 
@@ -4230,7 +4886,7 @@ class WebsocketController extends GetxController {
     }
 
     if ((_deviceBlockSubscribedDeviceId == deviceId &&
-            _deviceBlockPrivateChannelName == channelName) ||
+        _deviceBlockPrivateChannelName == channelName) ||
         _deviceBlockPendingChannelName == channelName) {
       return;
     }
@@ -4257,7 +4913,7 @@ class WebsocketController extends GetxController {
       if (response.statusCode != 200) {
         liveLog(
           '⚠️ Device block private channel auth failed '
-          '=> status:${response.statusCode} data:${response.data}',
+              '=> status:${response.statusCode} data:${response.data}',
         );
         return;
       }
@@ -4299,7 +4955,7 @@ class WebsocketController extends GetxController {
     } on DioException catch (e) {
       liveLog(
         '❌ Device block private channel auth error '
-        '=> ${e.response?.statusCode} ${e.response?.data ?? e.message}',
+            '=> ${e.response?.statusCode} ${e.response?.data ?? e.message}',
       );
     } catch (e, st) {
       liveLog('❌ Device block private channel subscribe error => $e\n$st');
@@ -4339,10 +4995,10 @@ class WebsocketController extends GetxController {
     );
 
     final String action =
-        (payload['action_type'] ?? payload['action'] ?? payload['type'] ?? '')
-            .toString()
-            .trim()
-            .toLowerCase();
+    (payload['action_type'] ?? payload['action'] ?? payload['type'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
 
     return normalizedEvent == _deviceBlockedEventName ||
         action == _deviceBlockedActionType;
@@ -4379,17 +5035,17 @@ class WebsocketController extends GetxController {
     );
 
     final String action =
-        (payload['action_type'] ?? payload['action'] ?? payload['type'] ?? '')
-            .toString()
-            .trim()
-            .toLowerCase();
+    (payload['action_type'] ?? payload['action'] ?? payload['type'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
 
     final dynamic forceRaw = payload['force_logout'];
     final bool forceLogout =
         forceRaw == true ||
-        forceRaw == 1 ||
-        forceRaw?.toString().toLowerCase() == 'true' ||
-        forceRaw?.toString() == '1';
+            forceRaw == 1 ||
+            forceRaw?.toString().toLowerCase() == 'true' ||
+            forceRaw?.toString() == '1';
 
     return normalizedEvent == _accountBlockedEventName ||
         action == _accountBlockedActionType ||
@@ -4469,10 +5125,10 @@ class WebsocketController extends GetxController {
     );
 
     final String action =
-        (payload['action_type'] ?? payload['action'] ?? payload['type'] ?? '')
-            .toString()
-            .trim()
-            .toLowerCase();
+    (payload['action_type'] ?? payload['action'] ?? payload['type'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
 
     return normalizedEvent == _rechargeEventName ||
         action == _rechargeActionType;
@@ -4506,7 +5162,7 @@ class WebsocketController extends GetxController {
     String eventId = payload['event_id']?.toString().trim() ?? '';
     if (eventId.isEmpty) {
       eventId =
-          '${eventUserId}_${payload['source']}_${payload['created_at']}_'
+      '${eventUserId}_${payload['source']}_${payload['created_at']}_'
           '${addedCoins}_$newCoins';
     }
 
@@ -4535,7 +5191,7 @@ class WebsocketController extends GetxController {
 
     liveLog(
       '🪙 Recharge coin received; waiting for Claim '
-      '=> +$addedCoins balance:$newCoins source:${payload['source']}',
+          '=> +$addedCoins balance:$newCoins source:${payload['source']}',
     );
 
     _drainRechargePopupQueue();
@@ -4595,7 +5251,7 @@ class WebsocketController extends GetxController {
 
     liveLog(
       '✅ Recharge coin activated after Claim '
-      '=> +$addedCoins balance:$safeBalance source:${event['source']}',
+          '=> +$addedCoins balance:$safeBalance source:${event['source']}',
     );
   }
 
@@ -4811,7 +5467,24 @@ class WebsocketController extends GetxController {
         return;
       }
 
+      final bool wasReconnect = _unifiedWsReconnectAttempt > 0 || force;
+      final int completedAttempt = _unifiedWsReconnectAttempt;
       _unifiedWsReconnectAttempt = 0;
+      LiveRealtimeDebugLog.event(
+        wasReconnect ? 'SOCKET_RECONNECTED' : 'SOCKET_CONNECTED',
+        <String, Object?>{
+          'room': _rtRoom(),
+          'channel': liveStreamEventChannelName,
+          'attempt': completedAttempt,
+        },
+      );
+      if (wasReconnect) {
+        LiveRealtimeDebugLog.event('RECONCILE', <String, Object?>{
+          'room': _rtRoom(),
+          'reason': 'socket_reconnected',
+        });
+        _rtState();
+      }
       liveLog('✅ Connected to unified LiveStreamEvent WebSocket');
       LiveTestingLogger.printBlock('LIVE TEST WS CONNECTED', {
         'time': DateTime.now().toIso8601String(),
@@ -4821,7 +5494,7 @@ class WebsocketController extends GetxController {
       });
 
       _unifiedSubscription = localChannel.stream.listen(
-        (message) {
+            (message) {
           if (generation != _unifiedSocketGeneration ||
               liveStreamEventChannel != localChannel ||
               _socketLifecycleClosed) {
@@ -4830,6 +5503,11 @@ class WebsocketController extends GetxController {
           _queueUnifiedSocketFrame(message);
         },
         onError: (error) {
+          LiveRealtimeDebugLog.event('SOCKET_DISCONNECTED', <String, Object?>{
+            'room': _rtRoom(),
+            'channel': liveStreamEventChannelName,
+            'reason': 'error',
+          });
           liveLog('❌ Unified LiveStreamEvent WS error: $error');
           LiveTestingLogger.printBlock('LIVE TEST WS ERROR', {
             'time': DateTime.now().toIso8601String(),
@@ -4844,6 +5522,11 @@ class WebsocketController extends GetxController {
           );
         },
         onDone: () {
+          LiveRealtimeDebugLog.event('SOCKET_DISCONNECTED', <String, Object?>{
+            'room': _rtRoom(),
+            'channel': liveStreamEventChannelName,
+            'reason': 'done',
+          });
           liveLog('⚠️ Unified LiveStreamEvent WS closed');
           LiveTestingLogger.printBlock('LIVE TEST WS CLOSED', {
             'time': DateTime.now().toIso8601String(),
@@ -4863,6 +5546,15 @@ class WebsocketController extends GetxController {
           "data": {"channel": liveStreamEventChannelName},
         }),
       );
+
+      // Re-subscribe the active room atomically on the replacement socket.
+      final int roomToRestore = _subscribedRoomStreamId > 0
+          ? _subscribedRoomStreamId
+          : _activeRealtimeRoomId();
+      _subscribedRoomStreamId = 0;
+      if (roomToRestore > 0) {
+        _switchRoomRealtimeSubscription(roomToRestore);
+      }
 
       liveLog('📡 Subscribed to "$liveStreamEventChannelName" channel');
     } catch (e, st) {
@@ -4885,58 +5577,127 @@ class WebsocketController extends GetxController {
   }
 
   bool _isNormalGiftFastLaneFrame(dynamic message) {
-    final String compact = message
-        .toString()
-        .toLowerCase()
-        // Pusher often wraps event data as an escaped JSON string. Remove the
-        // escape slashes so Lucky markers are detected before choosing a queue.
-        // This keeps the already-working Lucky gift/result order untouched.
-        .replaceAll('\\', '')
-        .replaceAll(RegExp(r'\s+'), '');
+    // Marker matching does not require allocating a second whitespace-stripped
+    // copy of every websocket frame. Escaped Pusher JSON still contains these
+    // marker words unchanged.
+    final String compact = message.toString().toLowerCase();
 
     final bool isGiftAction =
         compact.contains('gift_sent') ||
-        compact.contains('gift-sent') ||
-        compact.contains('giftsent') ||
-        compact.contains('pk_gift_received') ||
-        compact.contains('pk_gift_score_updated');
+            compact.contains('gift-sent') ||
+            compact.contains('giftsent') ||
+            compact.contains('pk_gift_received') ||
+            compact.contains('pk_gift_score_updated');
 
     if (!isGiftAction) return false;
 
     // Keep the already-working Lucky result/card path on the original queue.
     final bool isLucky =
         compact.contains('lucky_gift_result') ||
-        compact.contains('"action_type":"lucky') ||
-        compact.contains('"is_lucky_gift":true') ||
-        compact.contains('"is_lucky_gift":1') ||
-        compact.contains('"is_lucky":true') ||
-        compact.contains('"is_lucky":1') ||
-        compact.contains('"category":"lucky"') ||
-        compact.contains('"gift_category":"lucky"') ||
-        compact.contains('"lucky_ratio"') ||
-        compact.contains('"lucky_coin"') ||
-        compact.contains('"back_coin"');
+            compact.contains('"action_type":"lucky') ||
+            compact.contains('"is_lucky_gift":true') ||
+            compact.contains('"is_lucky_gift":1') ||
+            compact.contains('"is_lucky":true') ||
+            compact.contains('"is_lucky":1') ||
+            compact.contains('"category":"lucky"') ||
+            compact.contains('"gift_category":"lucky"') ||
+            compact.contains('"lucky_ratio"') ||
+            compact.contains('"lucky_coin"') ||
+            compact.contains('"back_coin"');
 
     return !isLucky;
   }
 
   void _queueUnifiedSocketFrame(dynamic message) {
+    if (_isRocketRealtimeFrame(message)) {
+      _rocketRealtimeEventQueue.addLast(message);
+      _drainRocketRealtimeQueue();
+      return;
+    }
     if (_isNormalGiftFastLaneFrame(message)) {
-      _normalGiftRealtimeEventQueue = _normalGiftRealtimeEventQueue
-          .then((_) => _handleUnifiedLiveStreamMessage(message))
-          .catchError((Object error, StackTrace stackTrace) {
-            liveLog(
-              '❌ Normal gift realtime fast-lane error: $error\n$stackTrace',
-            );
-          });
+      _normalGiftRealtimeEventQueue.addLast(message);
+      _drainNormalGiftRealtimeQueue();
       return;
     }
 
-    _unifiedEventQueue = _unifiedEventQueue
-        .then((_) => _handleUnifiedLiveStreamMessage(message))
-        .catchError((Object error, StackTrace stackTrace) {
-          liveLog('❌ Unified event queue error: $error\n$stackTrace');
-        });
+    _unifiedEventQueue.addLast(message);
+    _drainUnifiedEventQueue();
+  }
+
+  bool _isRocketRealtimeFrame(dynamic message) {
+    final String compact = message.toString().toLowerCase();
+    return compact.contains('rocket_progress_updated') ||
+        compact.contains('rocket_launched') ||
+        compact.contains('rocket_session_expired') ||
+        compact.contains('rocket_session_reset');
+  }
+
+  void _drainRocketRealtimeQueue() {
+    if (_rocketRealtimeEventQueueDraining || _socketLifecycleClosed) return;
+    _rocketRealtimeEventQueueDraining = true;
+    Future<void>(() async {
+      try {
+        while (_rocketRealtimeEventQueue.isNotEmpty &&
+            !_socketLifecycleClosed) {
+          final dynamic message = _rocketRealtimeEventQueue.removeFirst();
+          await _handleUnifiedLiveStreamMessage(message);
+          await Future<void>.delayed(Duration.zero);
+        }
+      } catch (error, stackTrace) {
+        liveLog('Rocket realtime queue error: $error\n$stackTrace');
+      } finally {
+        _rocketRealtimeEventQueueDraining = false;
+        if (_rocketRealtimeEventQueue.isNotEmpty && !_socketLifecycleClosed) {
+          _drainRocketRealtimeQueue();
+        }
+      }
+    });
+  }
+
+  void _drainNormalGiftRealtimeQueue() {
+    if (_normalGiftRealtimeEventQueueDraining || _socketLifecycleClosed) return;
+    _normalGiftRealtimeEventQueueDraining = true;
+    Future<void>(() async {
+      try {
+        while (_normalGiftRealtimeEventQueue.isNotEmpty &&
+            !_socketLifecycleClosed) {
+          final dynamic message = _normalGiftRealtimeEventQueue.removeFirst();
+          await _handleUnifiedLiveStreamMessage(message);
+          // Yield between business events so input, rendering and Agora
+          // platform callbacks cannot be starved by a large gift burst.
+          await Future<void>.delayed(Duration.zero);
+        }
+      } catch (error, stackTrace) {
+        liveLog('Normal gift realtime queue error: $error\n$stackTrace');
+      } finally {
+        _normalGiftRealtimeEventQueueDraining = false;
+        if (_normalGiftRealtimeEventQueue.isNotEmpty &&
+            !_socketLifecycleClosed) {
+          _drainNormalGiftRealtimeQueue();
+        }
+      }
+    });
+  }
+
+  void _drainUnifiedEventQueue() {
+    if (_unifiedEventQueueDraining || _socketLifecycleClosed) return;
+    _unifiedEventQueueDraining = true;
+    Future<void>(() async {
+      try {
+        while (_unifiedEventQueue.isNotEmpty && !_socketLifecycleClosed) {
+          final dynamic message = _unifiedEventQueue.removeFirst();
+          await _handleUnifiedLiveStreamMessage(message);
+          await Future<void>.delayed(Duration.zero);
+        }
+      } catch (error, stackTrace) {
+        liveLog('Unified event queue error: $error\n$stackTrace');
+      } finally {
+        _unifiedEventQueueDraining = false;
+        if (_unifiedEventQueue.isNotEmpty && !_socketLifecycleClosed) {
+          _drainUnifiedEventQueue();
+        }
+      }
+    });
   }
 
   void _scheduleUnifiedWsReconnect({
@@ -4960,6 +5721,12 @@ class WebsocketController extends GetxController {
     _unifiedReconnectScheduledForGeneration = generation;
 
     _unifiedWsReconnectAttempt++;
+    LiveRealtimeDebugLog.event('SOCKET_RECONNECTING', <String, Object?>{
+      'room': _rtRoom(),
+      'channel': liveStreamEventChannelName,
+      'attempt': _unifiedWsReconnectAttempt,
+      'reason': reason,
+    });
     final delaySeconds = (_unifiedWsReconnectAttempt * 3).clamp(3, 30);
 
     _unifiedReconnectTimer = Timer(Duration(seconds: delaySeconds), () {
@@ -4983,27 +5750,32 @@ class WebsocketController extends GetxController {
   }
 
   Future<void> _handleUnifiedLiveStreamMessage(dynamic message) async {
-    final int eventSequence = LiveTestingLogger.nextEventSequence();
-    final Stopwatch eventStopwatch = Stopwatch()..start();
+    final int eventSequence = kLiveDebug
+        ? LiveTestingLogger.nextEventSequence()
+        : 0;
+    final Stopwatch? eventStopwatch = kLiveDebug
+        ? (Stopwatch()..start())
+        : null;
     _testingWsFrameCount++;
     _lastTestingWsFrameAtMs = DateTime.now().millisecondsSinceEpoch;
     lastActivityTime.value = DateTime.now();
     isUserActive.value = true;
 
     try {
-      final String rawMessageText = message.toString();
-      final String rawMessageLower = rawMessageText.toLowerCase();
-
-      if (rawMessageLower.contains('gift') ||
-          rawMessageLower.contains('lucky') ||
-          rawMessageLower.contains('multiplier') ||
-          rawMessageLower.contains('win_amount') ||
-          rawMessageLower.contains('back_coin') ||
-          rawMessageLower.contains('gift_id')) {
-        _forceGiftPrint('GIFT WEBSOCKET RAW MESSAGE BEFORE JSON DECODE', {
-          'runtime_type': message.runtimeType.toString(),
-          'raw_message': rawMessageText,
-        });
+      if (kLiveDebug) {
+        final String rawMessageText = message.toString();
+        final String rawMessageLower = rawMessageText.toLowerCase();
+        if (rawMessageLower.contains('gift') ||
+            rawMessageLower.contains('lucky') ||
+            rawMessageLower.contains('multiplier') ||
+            rawMessageLower.contains('win_amount') ||
+            rawMessageLower.contains('back_coin') ||
+            rawMessageLower.contains('gift_id')) {
+          _forceGiftPrint('GIFT WEBSOCKET RAW MESSAGE BEFORE JSON DECODE', {
+            'runtime_type': message.runtimeType.toString(),
+            'raw_message': rawMessageText,
+          });
+        }
       }
 
       final decodedMessage = _safeJsonDecode(message);
@@ -5097,7 +5869,7 @@ class WebsocketController extends GetxController {
           _deviceBlockPrivateChannelName = channelName;
           _deviceBlockPendingChannelName = '';
           _deviceBlockSubscribedDeviceId =
-              Get.isRegistered<DeviceIdentityService>()
+          Get.isRegistered<DeviceIdentityService>()
               ? DeviceIdentityService.to.deviceDatabaseId
               : 0;
           liveLog('✅ Device block realtime subscribed => $channelName');
@@ -5111,22 +5883,22 @@ class WebsocketController extends GetxController {
           decodedMessage['data'],
         );
         final String channelName =
-            (decodedMessage['channel'] ?? errorData['channel'] ?? '')
-                .toString()
-                .trim();
+        (decodedMessage['channel'] ?? errorData['channel'] ?? '')
+            .toString()
+            .trim();
 
         final bool rechargeError =
             channelName.isEmpty ||
-            channelName == _rechargePendingChannelName ||
-            channelName.startsWith('private-user-recharge.');
+                channelName == _rechargePendingChannelName ||
+                channelName.startsWith('private-user-recharge.');
         final bool accountError =
             channelName.isEmpty ||
-            channelName == _accountBlockPendingChannelName ||
-            channelName.startsWith('private-user-account.');
+                channelName == _accountBlockPendingChannelName ||
+                channelName.startsWith('private-user-account.');
         final bool deviceError =
             channelName.isEmpty ||
-            channelName == _deviceBlockPendingChannelName ||
-            channelName.startsWith('private-user-device.');
+                channelName == _deviceBlockPendingChannelName ||
+                channelName.startsWith('private-user-device.');
 
         if (rechargeError) {
           _rechargePendingChannelName = '';
@@ -5134,7 +5906,7 @@ class WebsocketController extends GetxController {
           _rechargeSubscribedUserId = 0;
           liveLog(
             '⚠️ Recharge private subscription rejected '
-            '=> channel:$channelName data:$errorData',
+                '=> channel:$channelName data:$errorData',
           );
         }
 
@@ -5144,7 +5916,7 @@ class WebsocketController extends GetxController {
           _accountBlockSubscribedUserId = 0;
           liveLog(
             '⚠️ Account block private subscription rejected '
-            '=> channel:$channelName data:$errorData',
+                '=> channel:$channelName data:$errorData',
           );
         }
 
@@ -5154,7 +5926,7 @@ class WebsocketController extends GetxController {
           _deviceBlockSubscribedDeviceId = 0;
           liveLog(
             '⚠️ Device block private subscription rejected '
-            '=> channel:$channelName data:$errorData',
+                '=> channel:$channelName data:$errorData',
           );
         }
         return;
@@ -5164,21 +5936,23 @@ class WebsocketController extends GetxController {
         return;
       }
 
-      final payload = _extractUnifiedPayload(decodedMessage);
+      final payload = _normalizeNestedRealtimePayload(
+        _extractUnifiedPayload(decodedMessage),
+      );
 
-      // DEBUG V2: Capture raw frames even when action_type is missing or uses
-      // a backend-specific name. This guarantees Lucky data is not skipped.
-      final String rawGiftTraceText = decodedMessage.toString().toLowerCase();
-      if (rawGiftTraceText.contains('gift') ||
-          rawGiftTraceText.contains('lucky') ||
-          rawGiftTraceText.contains('multiplier') ||
-          rawGiftTraceText.contains('win_amount') ||
-          rawGiftTraceText.contains('back_coin')) {
-        _forceGiftPrint('🎁 ALL GIFT WEBSOCKET FRAME RAW BEFORE PARSE', {
-          'event_name': eventName,
-          'decoded_message': decodedMessage,
-          'extracted_payload': payload,
-        });
+      if (kLiveDebug) {
+        final String rawGiftTraceText = decodedMessage.toString().toLowerCase();
+        if (rawGiftTraceText.contains('gift') ||
+            rawGiftTraceText.contains('lucky') ||
+            rawGiftTraceText.contains('multiplier') ||
+            rawGiftTraceText.contains('win_amount') ||
+            rawGiftTraceText.contains('back_coin')) {
+          _forceGiftPrint('🎁 ALL GIFT WEBSOCKET FRAME RAW BEFORE PARSE', {
+            'event_name': eventName,
+            'decoded_message': decodedMessage,
+            'extracted_payload': payload,
+          });
+        }
       }
 
       if (payload.isEmpty) {
@@ -5206,21 +5980,11 @@ class WebsocketController extends GetxController {
         return;
       }
 
-      String actionType =
-          (payload['action_type'] ??
-                  payload['action_type'.toString()] ??
-                  payload['action'] ??
-                  payload['type'] ??
-                  '')
-              .toString()
-              .trim();
-
-      /// Some backend events come with event name only, without action_type in data.
-      /// Example: event="live-stream-updated" or "App\\Events\\LiveStreamUpdated".
-      /// In that case map eventName to our unified action_type.
-      if (actionType.isEmpty) {
-        actionType = _actionTypeFromEventName(eventName);
-      }
+      final List<String> normalizedActions = _normalizedRealtimeActions(
+        payload,
+        eventName,
+      );
+      String actionType = _primaryRealtimeAction(normalizedActions);
 
       if (actionType.isEmpty) {
         liveLog(
@@ -5231,108 +5995,172 @@ class WebsocketController extends GetxController {
 
       /// Put inferred action_type back into payload so handlers can debug/parse same way.
       payload['action_type'] ??= actionType;
+      payload['_normalized_action_types'] = normalizedActions;
 
-      actionType = actionType.toLowerCase().trim();
-      payload['action_type'] = actionType;
+      final int eventStreamId = _eventLivestreamId(payload);
+      final int activeRoomId = _activeRealtimeRoomId();
+      final bool roomScoped = _requiresRoomIdentity(actionType);
+      final bool noActiveRoom =
+          roomScoped &&
+              activeRoomId <= 0 &&
+              !_allowedWithoutActiveAudioRoom(actionType);
+      final bool missingRoomId = roomScoped && eventStreamId <= 0;
+      final bool foreignRoomEvent =
+          roomScoped &&
+              eventStreamId > 0 &&
+              activeRoomId > 0 &&
+              eventStreamId != activeRoomId;
 
-      liveLog('✅ LiveStreamEvent action_type: $actionType');
+      if (missingRoomId) {
+        LiveRealtimeDebugLog.event('ROOM_ID_MISSING', <String, Object?>{
+          'action': actionType,
+          'event_id': payload['event_id'],
+        });
+        return;
+      }
+      if (foreignRoomEvent) {
+        if (LiveRealtimeDebugLog.allowThrottled(
+          'foreign:$activeRoomId:$eventStreamId:$actionType',
+          const Duration(seconds: 2),
+        )) {
+          LiveRealtimeDebugLog.event('FOREIGN_ROOM_IGNORED', <String, Object?>{
+            'active_room': activeRoomId,
+            'event_room': eventStreamId,
+            'action': actionType,
+            'event_id': payload['event_id'],
+          });
+        }
+      } else if (!noActiveRoom && !_acceptRealtimeFrame(payload, actionType)) {
+        return;
+      }
 
-      final dynamic eventLastPingAt = LiveTestingLogger.findFirstByKeys(
-        payload,
-        const <String>['last_ping_at', 'last_ping', 'ping_at', 'last_seen_at'],
-      );
-      final bool isGiftLikeForTesting =
-          actionType.contains('gift') ||
-          actionType.contains('lucky') ||
-          payload.containsKey('gift') ||
-          payload.containsKey('gift_data') ||
-          payload.containsKey('lucky_result');
-      final Map<String, dynamic> testingNestedData = payload['data'] is Map
-          ? Map<String, dynamic>.from(payload['data'])
-          : <String, dynamic>{};
-      final Map<String, dynamic> testingGiftData = payload['gift'] is Map
-          ? Map<String, dynamic>.from(payload['gift'])
-          : <String, dynamic>{};
-      LiveTestingLogger.printBlock(
-        'LIVE TEST EVENT RECEIVED #$eventSequence [$actionType]',
-        {
-          'time': DateTime.now().toIso8601String(),
-          'event_name': eventName,
-          'action_type': actionType,
-          'stream_id':
-              payload['livestream_id'] ??
-              payload['stream_id'] ??
-              payload['live_id'] ??
-              testingNestedData['livestream_id'],
-          'user_id':
-              payload['user_id'] ??
-              payload['caller_id'] ??
+      if (kDebugMode && !foreignRoomEvent && !noActiveRoom) {
+        final Map<dynamic, dynamic> rtNested = payload['data'] is Map
+            ? payload['data'] as Map
+            : const <dynamic, dynamic>{};
+        LiveRealtimeDebugLog.event('RAW', <String, Object?>{
+          'action': actionType,
+          'room': _rtRoom(payload),
+          'event_id': payload['event_id'] ?? rtNested['event_id'],
+          'user':
+          payload['user_id'] ??
               payload['viewer_id'] ??
-              testingNestedData['user_id'],
-          'call_status':
-              payload['call_status'] ??
-              payload['status'] ??
-              testingNestedData['call_status'],
-          'last_ping_at': eventLastPingAt,
-          'last_ping_age_seconds': LiveTestingLogger.ageSeconds(
-            eventLastPingAt,
-          ),
-          'payload_keys': payload.keys.toList(),
-          'payload': isGiftLikeForTesting
-              ? {
-                  'summary_only_for_performance': true,
-                  'gift_id': payload['gift_id'] ?? testingGiftData['id'],
-                  'sender_id': payload['sender_id'] ?? payload['user_id'],
-                  'receiver_id':
-                      payload['receiver_id'] ?? payload['target_user_id'],
-                  'quantity': payload['quantity'] ?? payload['count'],
-                  'coin': payload['coin'] ?? payload['gift_coin'],
-                  'keys': payload.keys.toList(),
-                }
-              : payload,
-        },
-        maxChars: isGiftLikeForTesting ? 7000 : 16000,
-      );
-
-      final bool debugGiftLikeEvent =
-          actionType.contains('gift') ||
-          actionType.contains('lucky') ||
-          payload.containsKey('gift') ||
-          payload.containsKey('gift_data') ||
-          payload.containsKey('gift_info') ||
-          payload.containsKey('lucky_result') ||
-          payload.containsKey('lucky_results') ||
-          payload.containsKey('multiplier') ||
-          payload.containsKey('win_amount') ||
-          payload.containsKey('back_coin');
-
-      if (debugGiftLikeEvent) {
-        _forceGiftPrint('🎁 ALL GIFT UNIFIED EVENT PARSED', {
-          'event_name': eventName,
-          'action_type': actionType,
-          'decoded_message': decodedMessage,
-          'payload': payload,
-          'payload_keys': payload.keys.toList(),
-          'current_stream_id': streamID.value,
-          'active_audio_stream_id': activeAudioStreamId.value,
-          'livestream_controller_stream_id':
-              livestreamController.streamId.value,
+              payload['caller_id'] ??
+              rtNested['user_id'] ??
+              rtNested['viewer_id'] ??
+              rtNested['caller_id'],
+          'seat': payload['seat_no'] ?? rtNested['seat_no'],
+          'viewer_count': _rtServerViewerCount(payload),
         });
       }
 
-      if (actionType == 'lucky_gift_result' ||
-          actionType == 'lucky_gift_back_coin' ||
-          actionType.contains('lucky')) {
-        _forceGiftPrint('🍀 LUCKY UNIFIED WEBSOCKET EVENT FULL DATA', {
-          'event_name': eventName,
-          'action_type': actionType,
-          'decoded_message': decodedMessage,
-          'extracted_payload': payload,
-          'current_stream_id': streamID.value,
-          'active_audio_stream_id': activeAudioStreamId.value,
-          'livestream_controller_stream_id':
-              livestreamController.streamId.value,
-        });
+      if (!foreignRoomEvent && !noActiveRoom) {
+        liveLog('✅ LiveStreamEvent action_type: $actionType');
+      }
+
+      if (kLiveDebug && !foreignRoomEvent && !noActiveRoom) {
+        final dynamic eventLastPingAt = LiveTestingLogger.findFirstByKeys(
+          payload,
+          const <String>[
+            'last_ping_at',
+            'last_ping',
+            'ping_at',
+            'last_seen_at',
+          ],
+        );
+        final bool isGiftLikeForTesting =
+            actionType.contains('gift') ||
+                actionType.contains('lucky') ||
+                payload.containsKey('gift') ||
+                payload.containsKey('gift_data') ||
+                payload.containsKey('lucky_result');
+        final Map<String, dynamic> testingNestedData = payload['data'] is Map
+            ? Map<String, dynamic>.from(payload['data'])
+            : <String, dynamic>{};
+        final Map<String, dynamic> testingGiftData = payload['gift'] is Map
+            ? Map<String, dynamic>.from(payload['gift'])
+            : <String, dynamic>{};
+        LiveTestingLogger.printBlock(
+          'LIVE TEST EVENT RECEIVED #$eventSequence [$actionType]',
+          {
+            'time': DateTime.now().toIso8601String(),
+            'event_name': eventName,
+            'action_type': actionType,
+            'stream_id':
+            payload['livestream_id'] ??
+                payload['stream_id'] ??
+                payload['live_id'] ??
+                testingNestedData['livestream_id'],
+            'user_id':
+            payload['user_id'] ??
+                payload['caller_id'] ??
+                payload['viewer_id'] ??
+                testingNestedData['user_id'],
+            'call_status':
+            payload['call_status'] ??
+                payload['status'] ??
+                testingNestedData['call_status'],
+            'last_ping_at': eventLastPingAt,
+            'last_ping_age_seconds': LiveTestingLogger.ageSeconds(
+              eventLastPingAt,
+            ),
+            'payload_keys': payload.keys.toList(),
+            'payload': isGiftLikeForTesting
+                ? {
+              'summary_only_for_performance': true,
+              'gift_id': payload['gift_id'] ?? testingGiftData['id'],
+              'sender_id': payload['sender_id'] ?? payload['user_id'],
+              'receiver_id':
+              payload['receiver_id'] ?? payload['target_user_id'],
+              'quantity': payload['quantity'] ?? payload['count'],
+              'coin': payload['coin'] ?? payload['gift_coin'],
+              'keys': payload.keys.toList(),
+            }
+                : payload,
+          },
+          maxChars: isGiftLikeForTesting ? 7000 : 16000,
+        );
+
+        final bool debugGiftLikeEvent =
+            actionType.contains('gift') ||
+                actionType.contains('lucky') ||
+                payload.containsKey('gift') ||
+                payload.containsKey('gift_data') ||
+                payload.containsKey('gift_info') ||
+                payload.containsKey('lucky_result') ||
+                payload.containsKey('lucky_results') ||
+                payload.containsKey('multiplier') ||
+                payload.containsKey('win_amount') ||
+                payload.containsKey('back_coin');
+
+        if (debugGiftLikeEvent) {
+          _forceGiftPrint('🎁 ALL GIFT UNIFIED EVENT PARSED', {
+            'event_name': eventName,
+            'action_type': actionType,
+            'decoded_message': decodedMessage,
+            'payload': payload,
+            'payload_keys': payload.keys.toList(),
+            'current_stream_id': streamID.value,
+            'active_audio_stream_id': activeAudioStreamId.value,
+            'livestream_controller_stream_id':
+            livestreamController.streamId.value,
+          });
+        }
+
+        if (actionType == 'lucky_gift_result' ||
+            actionType == 'lucky_gift_back_coin' ||
+            actionType.contains('lucky')) {
+          _forceGiftPrint('🍀 LUCKY UNIFIED WEBSOCKET EVENT FULL DATA', {
+            'event_name': eventName,
+            'action_type': actionType,
+            'decoded_message': decodedMessage,
+            'extracted_payload': payload,
+            'current_stream_id': streamID.value,
+            'active_audio_stream_id': activeAudioStreamId.value,
+            'livestream_controller_stream_id':
+            livestreamController.streamId.value,
+          });
+        }
       }
 
       /// ✅ IMPORTANT: Global Lucky Bag must be handled BEFORE the cross-room guard.
@@ -5345,12 +6173,12 @@ class WebsocketController extends GetxController {
           );
           final bool isGlobalLuckyBag =
               preGuardPacket.isNotEmpty &&
-              _redPacketTruthy(preGuardPacket['is_global']);
+                  _redPacketTruthy(preGuardPacket['is_global']);
 
           liveLog(
             '🧧 Global Lucky Bag pre-guard => '
-            'global:$isGlobalLuckyBag id:${preGuardPacket['id']} '
-            'stream:${preGuardPacket['livestream_id']}',
+                'global:$isGlobalLuckyBag id:${preGuardPacket['id']} '
+                'stream:${preGuardPacket['livestream_id']}',
           );
 
           if (isGlobalLuckyBag) {
@@ -5367,15 +6195,15 @@ class WebsocketController extends GetxController {
       /// gift_sent.big_win_events, gift_sent.lucky_results or direct fields.
       final bool globalLuckyCandidate =
           actionType.contains('gift') ||
-          actionType.contains('lucky') ||
-          payload['lucky_result'] is Map ||
-          (payload['lucky_results'] is List &&
-              (payload['lucky_results'] as List).isNotEmpty) ||
-          (payload['big_win_events'] is List &&
-              (payload['big_win_events'] as List).isNotEmpty) ||
-          payload['multiplier'] != null ||
-          payload['win_amount'] != null ||
-          payload['back_coin'] != null;
+              actionType.contains('lucky') ||
+              payload['lucky_result'] is Map ||
+              (payload['lucky_results'] is List &&
+                  (payload['lucky_results'] as List).isNotEmpty) ||
+              (payload['big_win_events'] is List &&
+                  (payload['big_win_events'] as List).isNotEmpty) ||
+              payload['multiplier'] != null ||
+              payload['win_amount'] != null ||
+              payload['back_coin'] != null;
       if (globalLuckyCandidate) {
         try {
           livestreamController.showGlobalLuckyWinBannerFromPayload(payload);
@@ -5401,34 +6229,24 @@ class WebsocketController extends GetxController {
       /// Onno broadcaster-er event current audio room-e apply hobe na.
       /// Missing livestream_id thakle existing handler-specific fallback cholbe,
       /// but explicit wrong id thakle ekhanei drop.
-      final int eventStreamId = _eventLivestreamId(payload);
-      final bool allowGlobalAction =
-          actionType == 'live_stream_created' ||
-          actionType == 'permanent_room_rejoined' ||
-          actionType == 'live_stream_list';
-      if (eventStreamId > 0 &&
-          !allowGlobalAction &&
-          !_isCurrentStream(eventStreamId)) {
-        liveLog(
-          '⛔ LiveStreamEvent ignored: other stream event=$eventStreamId current=$streamID/${activeAudioStreamId.value}/${livestreamController.streamId.value} action=$actionType',
-        );
-        return;
-      }
+      if (foreignRoomEvent || noActiveRoom) return;
 
       await _dispatchLiveStreamAction(actionType, payload);
     } catch (e, st) {
       liveLog('❌ Error handling unified LiveStreamEvent: $e\n$st');
       LiveTestingLogger.printBlock('LIVE TEST EVENT ERROR #$eventSequence', {
-        'elapsed_ms': eventStopwatch.elapsedMilliseconds,
+        'elapsed_ms': eventStopwatch?.elapsedMilliseconds ?? -1,
         'error': e.toString(),
         'stack_trace': st.toString(),
         'raw_message': message.toString(),
       });
     } finally {
-      eventStopwatch.stop();
-      LiveTestingLogger.line(
-        '🧪 EVENT COMPLETE #$eventSequence => ${eventStopwatch.elapsedMilliseconds}ms',
-      );
+      eventStopwatch?.stop();
+      if (kLiveDebug) {
+        LiveTestingLogger.line(
+          '🧪 EVENT COMPLETE #$eventSequence => ${eventStopwatch?.elapsedMilliseconds ?? -1}ms',
+        );
+      }
     }
   }
 
@@ -5502,6 +6320,20 @@ class WebsocketController extends GetxController {
       return 'seat_switched';
     }
 
+    if (e.contains('seatupdated') ||
+        e.contains('seat_updated') ||
+        e.contains('seatjoined') ||
+        e.contains('seat_joined') ||
+        e.contains('live_seat_joined')) {
+      return 'seat_updated';
+    }
+
+    if (e.contains('vipsettingsupdated') ||
+        e.contains('vip_settings_updated') ||
+        e.contains('vip-settings-updated')) {
+      return 'vip_settings_updated';
+    }
+
     return '';
   }
 
@@ -5545,6 +6377,8 @@ class WebsocketController extends GetxController {
 
       if (dataMap['action_type'] != null ||
           dataMap['action'] != null ||
+          dataMap['event_type'] != null ||
+          dataMap['action_types'] != null ||
           dataMap['type'] != null) {
         return dataMap;
       }
@@ -5556,9 +6390,15 @@ class WebsocketController extends GetxController {
 
         if (inner['action_type'] != null ||
             inner['action'] != null ||
+            inner['event_type'] != null ||
+            inner['action_types'] != null ||
             inner['type'] != null) {
           liveLog('🧪 EXTRACT returned inner with action_type => $inner');
-          return inner;
+          return <String, dynamic>{
+            ...dataMap,
+            ...inner,
+            'data': inner['data'] is Map ? inner['data'] : inner,
+          };
         }
 
         if (inner['data'] is Map) {
@@ -5566,17 +6406,24 @@ class WebsocketController extends GetxController {
 
           if (deep['action_type'] != null ||
               deep['action'] != null ||
+              deep['event_type'] != null ||
+              deep['action_types'] != null ||
               deep['type'] != null) {
             liveLog('🧪 EXTRACT returned deep with action_type => $deep');
-            return deep;
+            return <String, dynamic>{
+              ...dataMap,
+              ...inner,
+              ...deep,
+              'data': deep,
+            };
           }
 
           liveLog('🧪 EXTRACT returned deep data without action_type => $deep');
-          return deep;
+          return <String, dynamic>{...dataMap, ...inner, ...deep, 'data': deep};
         }
 
         liveLog('🧪 EXTRACT returned inner without action_type => $inner');
-        return inner;
+        return <String, dynamic>{...dataMap, ...inner, 'data': inner};
       }
 
       liveLog('🧪 EXTRACT returned dataMap without action_type => $dataMap');
@@ -5586,6 +6433,8 @@ class WebsocketController extends GetxController {
     /// Rare case: action_type is directly on decodedMessage.
     if (decodedMessage['action_type'] != null ||
         decodedMessage['action'] != null ||
+        decodedMessage['event_type'] != null ||
+        decodedMessage['action_types'] != null ||
         decodedMessage['type'] != null) {
       final direct = Map<String, dynamic>.from(decodedMessage);
       liveLog('🧪 EXTRACT returned decodedMessage direct => $direct');
@@ -5594,6 +6443,37 @@ class WebsocketController extends GetxController {
 
     liveLog('⚠️ EXTRACT failed, no payload map found. rawData=$rawData');
     return {};
+  }
+
+  Map<String, dynamic> _normalizeNestedRealtimePayload(
+      Map<String, dynamic> payload,
+      ) {
+    final levelOne = payload['data'] is Map
+        ? Map<String, dynamic>.from(payload['data'])
+        : <String, dynamic>{};
+    final levelTwo = levelOne['data'] is Map
+        ? Map<String, dynamic>.from(levelOne['data'])
+        : <String, dynamic>{};
+    if (levelTwo.isEmpty) return payload;
+
+    final normalized = <String, dynamic>{
+      ...payload,
+      ...levelOne,
+      ...levelTwo,
+      'data': levelTwo,
+      '_realtime_raw_data': payload['data'],
+    };
+    for (final key in const <String>[
+      'action_type',
+      'action',
+      'event_type',
+      'action_types',
+      'type',
+      'event_id',
+    ]) {
+      normalized[key] = payload[key] ?? levelOne[key] ?? levelTwo[key];
+    }
+    return normalized;
   }
 
   dynamic _tryDecodeDeep(dynamic value) {
@@ -5652,22 +6532,37 @@ class WebsocketController extends GetxController {
 
     final hasFrameData =
         merged['asset_purchase_history'] is Map ||
-        merged['asset_purchase_history'] is List ||
-        merged['asset_purchase_histories'] is Map ||
-        merged['asset_purchase_histories'] is List ||
-        merged['profile_frame_history'] is Map ||
-        merged['profile_frame_history'] is List ||
-        merged['profile_frame'] != null ||
-        merged['profileFrame'] != null ||
-        merged['active_frame'] != null ||
-        merged['avatar_frame'] != null ||
-        merged['frame'] != null;
+            merged['asset_purchase_history'] is List ||
+            merged['asset_purchase_histories'] is Map ||
+            merged['asset_purchase_histories'] is List ||
+            merged['profile_frame_history'] is Map ||
+            merged['profile_frame_history'] is List ||
+            merged['profile_frame'] != null ||
+            merged['profileFrame'] != null ||
+            merged['active_frame'] != null ||
+            merged['avatar_frame'] != null ||
+            merged['frame'] != null;
 
     if (_hasUsefulProfileValue(merged['name']) ||
         _hasUsefulProfileValue(merged['profile_image']) ||
         _hasUsefulProfileValue(merged['level']) ||
         hasFrameData) {
+      // ✅ FIX (memory grows the longer/busier a session is): this cache
+      // previously had no size limit and was never cleared, not even on
+      // room switches — every distinct user whose profile passed through
+      // viewer-join, seat, comment, or gift events (7 call sites) added a
+      // permanent entry holding their full profile payload (name, avatar
+      // URL, level, VIP frame data). A long-running or popular room, where
+      // many different users come and go, accumulated this without bound
+      // for as long as the app stayed open. Re-inserting an already-cached
+      // user moves them to the end (most-recently-used); once the cache
+      // exceeds the cap, the oldest/least-recently-touched entry is evicted
+      // first — same pattern already used for processedGiftIds above.
+      _liveUserProfileCache.remove(uid);
       _liveUserProfileCache[uid] = merged;
+      while (_liveUserProfileCache.length > 300) {
+        _liveUserProfileCache.remove(_liveUserProfileCache.keys.first);
+      }
     }
   }
 
@@ -5708,10 +6603,11 @@ class WebsocketController extends GetxController {
   /// If we assignAll() that partial list, seated audience frame/name disappears.
   /// This method keeps previous complete `user` data and only updates real fields.
   void mergeLiveCallListPreservingProfiles(
-    List<Map<String, dynamic>> incoming, {
-    String source = 'unknown',
-    bool clearWhenExplicitEmpty = false,
-  }) {
+      List<Map<String, dynamic>> incoming, {
+        String source = 'unknown',
+        bool clearWhenExplicitEmpty = false,
+        bool authoritativeFullSnapshot = false,
+      }) {
     try {
       if (incoming.isEmpty) {
         if (clearWhenExplicitEmpty) {
@@ -5781,10 +6677,10 @@ class WebsocketController extends GetxController {
         final int resolvedUid = uid > 0
             ? uid
             : _toInt(
-                old?['caller_id'] ??
-                    old?['user_id'] ??
-                    (old?['user'] is Map ? old!['user']['id'] : null),
-              );
+          old?['caller_id'] ??
+              old?['user_id'] ??
+              (old?['user'] is Map ? old!['user']['id'] : null),
+        );
 
         final oldUser = old?['user'] is Map
             ? Map<String, dynamic>.from(old!['user'])
@@ -5809,21 +6705,21 @@ class WebsocketController extends GetxController {
         // Preserve seat/frame/audio fields if backend sends partial/null snapshot.
         merged['seat_no'] =
             incomingMap['seat_no'] ??
-            old?['seat_no'] ??
-            old?['seatNo'] ??
-            old?['seat'];
+                old?['seat_no'] ??
+                old?['seatNo'] ??
+                old?['seat'];
         merged['call_status'] =
             incomingMap['call_status'] ??
-            incomingMap['status'] ??
-            old?['call_status'] ??
-            old?['status'] ??
-            'accepted';
+                incomingMap['status'] ??
+                old?['call_status'] ??
+                old?['status'] ??
+                'accepted';
         merged['audio_on'] =
             incomingMap['audio_on'] ??
-            incomingMap['is_audio_on'] ??
-            old?['audio_on'] ??
-            old?['is_audio_on'] ??
-            1;
+                incomingMap['is_audio_on'] ??
+                old?['audio_on'] ??
+                old?['is_audio_on'] ??
+                1;
         merged['is_audio_on'] = merged['audio_on'];
         merged['video_on'] = incomingMap['video_on'] ?? old?['video_on'];
         merged['is_speaking'] =
@@ -5842,9 +6738,11 @@ class WebsocketController extends GetxController {
         mergedList.add(merged);
       }
 
-      // Keep old accepted rows briefly when snapshot is partial and omits someone.
+      // Keep omitted accepted rows only for a partial payload. A payload may
+      // remove callers only when its producer explicitly labels it as a full,
+      // authoritative snapshot.
       // This prevents flicker/disappear after minimize/foreground before full API catches up.
-      for (final raw in liveCallList) {
+      for (final raw in authoritativeFullSnapshot ? const [] : liveCallList) {
         if (raw is! Map) continue;
         final old = Map<String, dynamic>.from(raw);
         final oldUid = _toInt(
@@ -5868,7 +6766,7 @@ class WebsocketController extends GetxController {
 
       // Final dedupe: one active row per user and per seat.
       final Map<int, Map<String, dynamic>> byUser =
-          <int, Map<String, dynamic>>{};
+      <int, Map<String, dynamic>>{};
       final Map<int, int> seatOwner = <int, int>{};
       final List<Map<String, dynamic>> withoutUserId = <Map<String, dynamic>>[];
 
@@ -5921,7 +6819,9 @@ class WebsocketController extends GetxController {
         beforeCount: beforeCount,
         afterCount: liveCallList.length,
         reason: source,
-        note: 'incoming=${incoming.length}',
+        note:
+        'incoming=${incoming.length} '
+            'snapshot=${authoritativeFullSnapshot ? 'full' : 'partial'}',
       );
       refreshCpSeatConnectionsFromCurrentCallList(
         source: 'merge_call_list_$source',
@@ -5929,7 +6829,7 @@ class WebsocketController extends GetxController {
     } catch (e, st) {
       liveLog(
         '⚠️ mergeLiveCallListPreservingProfiles failed safely '
-        '=> $e\n$st source:$source',
+            '=> $e\n$st source:$source',
       );
 
       // Never replace the full active-seat list with a partial snapshot after
@@ -6268,9 +7168,9 @@ class WebsocketController extends GetxController {
   }
 
   bool _cpPayloadExplicitlyClearsConnection(
-    Map<String, dynamic> data, {
-    String source = 'unknown',
-  }) {
+      Map<String, dynamic> data, {
+        String source = 'unknown',
+      }) {
     final action = (data['action_type'] ?? data['action'] ?? source)
         .toString()
         .toLowerCase()
@@ -6298,18 +7198,18 @@ class WebsocketController extends GetxController {
 
     final bool mentionsCp =
         data.containsKey('has_cp_connection') ||
-        data.containsKey('is_cp_connected') ||
-        data.containsKey('cp_connected') ||
-        data.containsKey('cp_connection') ||
-        data.containsKey('cp_partner_id') ||
-        data.containsKey('cp_partner_seat_no');
+            data.containsKey('is_cp_connected') ||
+            data.containsKey('cp_connected') ||
+            data.containsKey('cp_connection') ||
+            data.containsKey('cp_partner_id') ||
+            data.containsKey('cp_partner_seat_no');
 
     if (!mentionsCp) return false;
 
     final bool saysConnected =
         _truthy(data['has_cp_connection']) ||
-        _truthy(data['is_cp_connected']) ||
-        _truthy(data['cp_connected']);
+            _truthy(data['is_cp_connected']) ||
+            _truthy(data['cp_connected']);
 
     if (saysConnected) return false;
 
@@ -6320,21 +7220,21 @@ class WebsocketController extends GetxController {
   }
 
   Map<String, dynamic>? _normalizeCpConnection(
-    dynamic raw, {
-    String source = 'unknown',
-  }) {
+      dynamic raw, {
+        String source = 'unknown',
+      }) {
     if (raw is! Map) return null;
 
     final map = Map<String, dynamic>.from(raw);
     final bool hasConnectionFlag =
         _truthy(map['has_cp_connection']) ||
-        _truthy(map['is_cp_connected']) ||
-        _truthy(map['cp_connected']) ||
-        map['cp_connection'] is Map ||
-        map['cp_connection_pair'] is Iterable ||
-        map['cp_connected_seats'] is Iterable ||
-        map['cp_partner_seat_no'] != null ||
-        map['partner_seat_no'] != null;
+            _truthy(map['is_cp_connected']) ||
+            _truthy(map['cp_connected']) ||
+            map['cp_connection'] is Map ||
+            map['cp_connection_pair'] is Iterable ||
+            map['cp_connected_seats'] is Iterable ||
+            map['cp_partner_seat_no'] != null ||
+            map['partner_seat_no'] != null;
 
     if (!hasConnectionFlag) return null;
 
@@ -6364,10 +7264,10 @@ class WebsocketController extends GetxController {
   }
 
   void _collectCpConnectionsFromDynamic(
-    dynamic value,
-    List<Map<String, dynamic>> output, {
-    String source = 'unknown',
-  }) {
+      dynamic value,
+      List<Map<String, dynamic>> output, {
+        String source = 'unknown',
+      }) {
     if (value == null) return;
 
     if (value is Iterable) {
@@ -6401,9 +7301,9 @@ class WebsocketController extends GetxController {
   }
 
   bool _sameCpConnectionList(
-    List<Map<String, dynamic>> oldList,
-    List<Map<String, dynamic>> newList,
-  ) {
+      List<Map<String, dynamic>> oldList,
+      List<Map<String, dynamic>> newList,
+      ) {
     if (oldList.length != newList.length) return false;
 
     String keyOf(Map<String, dynamic> item) {
@@ -6421,15 +7321,15 @@ class WebsocketController extends GetxController {
   }
 
   void _applyCpSeatConnections(
-    List<Map<String, dynamic>> connections, {
-    String source = 'unknown',
-    bool allowClear = false,
-  }) {
+      List<Map<String, dynamic>> connections, {
+        String source = 'unknown',
+        bool allowClear = false,
+      }) {
     final Map<String, Map<String, dynamic>> unique =
-        <String, Map<String, dynamic>>{};
+    <String, Map<String, dynamic>>{};
 
     final Map<String, Map<String, dynamic>> oldByPair =
-        <String, Map<String, dynamic>>{};
+    <String, Map<String, dynamic>>{};
     for (final old in cpSeatConnections) {
       final int oldA = _toInt(old['seat_one']);
       final int oldB = _toInt(old['seat_two']);
@@ -6485,7 +7385,7 @@ class WebsocketController extends GetxController {
 
     liveLog(
       '💞 CP adjacent seat connections synced => source:$source '
-      'pairs:${next.map((e) => "${e['seat_one']}-${e['seat_two']} image:${_cpCleanText(e['cp_base_image']).isNotEmpty}").toList()}',
+          'pairs:${next.map((e) => "${e['seat_one']}-${e['seat_two']} image:${_cpCleanText(e['cp_base_image']).isNotEmpty}").toList()}',
     );
   }
 
@@ -6508,9 +7408,9 @@ class WebsocketController extends GetxController {
   }
 
   void syncCpSeatConnectionsFromAnyPayload(
-    Map<String, dynamic> payload, {
-    String source = 'unknown',
-  }) {
+      Map<String, dynamic> payload, {
+        String source = 'unknown',
+      }) {
     try {
       final Map<String, dynamic> data = <String, dynamic>{...payload};
 
@@ -6527,9 +7427,9 @@ class WebsocketController extends GetxController {
 
       final dynamic livestreamId =
           data['livestream_id'] ??
-          data['stream_id'] ??
-          data['live_id'] ??
-          data['id'];
+              data['stream_id'] ??
+              data['live_id'] ??
+              data['id'];
       if (livestreamId != null &&
           _toInt(livestreamId) > 0 &&
           !_isCurrentStream(livestreamId)) {
@@ -6585,18 +7485,41 @@ class WebsocketController extends GetxController {
   }
 
   int _eventLivestreamId(Map<String, dynamic> payload) {
-    dynamic read(Map map, String key) => map[key];
+    int explicitId(Map map) => _toInt(
+      map['livestream_id'] ??
+          map['stream_id'] ??
+          map['live_id'] ??
+          map['room_id'] ??
+          map['audio_stream_id'],
+    );
 
-    final candidates = <dynamic>[
-      payload['livestream_id'],
-      payload['stream_id'],
-      payload['live_id'],
-      payload['room_id'],
-      payload['audio_stream_id'],
-    ];
+    final direct = explicitId(payload);
+    if (direct > 0) return direct;
 
-    for (final key in [
-      'data',
+    final data = payload['data'];
+    if (data is Map) {
+      final dataId = explicitId(data);
+      if (dataId > 0) return dataId;
+      final normalizedActions = payload['_normalized_action_types'];
+      final bool roomUpdateEnvelope =
+          normalizedActions is List &&
+              normalizedActions.contains('live_stream_updated');
+      if (roomUpdateEnvelope) {
+        final updateId = _toInt(data['id']);
+        if (updateId > 0) return updateId;
+      }
+      final deep = data['data'];
+      if (deep is Map) {
+        final deepId = explicitId(deep);
+        if (deepId > 0) return deepId;
+        if (roomUpdateEnvelope) {
+          final updateId = _toInt(deep['id']);
+          if (updateId > 0) return updateId;
+        }
+      }
+    }
+
+    for (final key in const <String>[
       'livestream',
       'livestreamdata',
       'live_stream',
@@ -6604,17 +7527,11 @@ class WebsocketController extends GetxController {
       'room',
     ]) {
       final nested = payload[key];
-      if (nested is Map) {
-        candidates.add(read(nested, 'livestream_id'));
-        candidates.add(read(nested, 'stream_id'));
-        candidates.add(read(nested, 'live_id'));
-        candidates.add(read(nested, 'id'));
-      }
-    }
-
-    for (final item in candidates) {
-      final id = _toInt(item);
-      if (id > 0) return id;
+      if (nested is! Map) continue;
+      final explicit = explicitId(nested);
+      if (explicit > 0) return explicit;
+      final structuredId = _toInt(nested['id']);
+      if (structuredId > 0) return structuredId;
     }
     return 0;
   }
@@ -6641,19 +7558,24 @@ class WebsocketController extends GetxController {
   /// ===================== SEAT SWITCH REALTIME =====================
   /// Used by both local API response and websocket action_type: seat_switched.
   Future<void> _dispatchLiveStreamAction(
-    String actionType,
-    Map<String, dynamic> payload,
-  ) async {
-    final Stopwatch dispatchStopwatch = Stopwatch()..start();
-    LiveTestingLogger.line(
-      '🧪 EVENT DISPATCH START => action=$actionType stream=${payload['livestream_id'] ?? payload['stream_id'] ?? payload['live_id']}',
-    );
+      String actionType,
+      Map<String, dynamic> payload,
+      ) async {
+    final Stopwatch? dispatchStopwatch = kLiveDebug
+        ? (Stopwatch()..start())
+        : null;
+    if (kLiveDebug) {
+      LiveTestingLogger.line(
+        '🧪 EVENT DISPATCH START => action=$actionType stream=${payload['livestream_id'] ?? payload['stream_id'] ?? payload['live_id']}',
+      );
+    }
     try {
-      if (actionType.contains('gift') ||
-          actionType.contains('lucky') ||
-          payload.containsKey('gift') ||
-          payload.containsKey('lucky_result') ||
-          payload.containsKey('lucky_results')) {
+      if (kLiveDebug &&
+          (actionType.contains('gift') ||
+              actionType.contains('lucky') ||
+              payload.containsKey('gift') ||
+              payload.containsKey('lucky_result') ||
+              payload.containsKey('lucky_results'))) {
         _forceGiftPrint('🎁 ALL GIFT DISPATCH INPUT', {
           'action_type': actionType,
           'payload': payload,
@@ -6725,11 +7647,21 @@ class WebsocketController extends GetxController {
         case 'rocket_session_expired':
         case 'rocket_session_reset':
           try {
+            final int rocketRoomId = _eventLivestreamId(payload);
+            final int activeRocketRoomId = _activeRealtimeRoomId();
+            debugPrint(
+              '[ROCKET_RT][RECEIVED] action=$actionType '
+                  'room=$rocketRoomId active_room=$activeRocketRoomId',
+            );
             final RocketController rocketController =
-                Get.isRegistered<RocketController>()
+            Get.isRegistered<RocketController>()
                 ? Get.find<RocketController>()
                 : Get.put(RocketController(), permanent: true);
-            rocketController.handleRealtime(actionType, payload);
+            rocketController.handleRealtime(
+              actionType,
+              payload,
+              activeLivestreamId: activeRocketRoomId,
+            );
           } catch (e) {
             liveLog('⚠️ Rocket realtime handle failed => $e');
           }
@@ -6758,13 +7690,13 @@ class WebsocketController extends GetxController {
           try {
             final bool isPkGift =
                 actionType.contains('pk_gift') ||
-                payload['is_pk'] == true ||
-                payload['is_pk'] == 1 ||
-                payload['is_pk']?.toString() == '1' ||
-                _toInt(payload['pk_id']) > 0 ||
-                (payload['pk_channel'] ?? payload['pk_channel_name'] ?? '')
-                    .toString()
-                    .isNotEmpty;
+                    payload['is_pk'] == true ||
+                    payload['is_pk'] == 1 ||
+                    payload['is_pk']?.toString() == '1' ||
+                    _toInt(payload['pk_id']) > 0 ||
+                    (payload['pk_channel'] ?? payload['pk_channel_name'] ?? '')
+                        .toString()
+                        .isNotEmpty;
             if (isPkGift) {
               livestreamController.handlePkScoreUpdated(payload);
             }
@@ -6773,10 +7705,12 @@ class WebsocketController extends GetxController {
 
         case 'lucky_gift_result':
         case 'lucky_gift_back_coin':
-          _forceGiftPrint('🍀 LUCKY ACTION DISPATCH INPUT', {
-            'action_type': actionType,
-            'payload': payload,
-          });
+          if (kLiveDebug) {
+            _forceGiftPrint('🍀 LUCKY ACTION DISPATCH INPUT', {
+              'action_type': actionType,
+              'payload': payload,
+            });
+          }
           _handleLuckyGiftResult(payload);
           try {
             livestreamController.syncLiveGiftCoinsFromPayload(
@@ -6794,6 +7728,9 @@ class WebsocketController extends GetxController {
         case 'live_stream_call':
         case 'multi_live_seat_joined':
         case 'multi_live_seat_left':
+        case 'seat_updated':
+        case 'seat_joined':
+        case 'live_seat_joined':
           await _handleUnifiedLiveCall(payload);
           break;
 
@@ -6819,6 +7756,14 @@ class WebsocketController extends GetxController {
             liveLog(
               '🛡️ Caller reconnecting; seat kept => user:$userId seat:$seatNo',
             );
+            LiveRealtimeDebugLog.event('CALL_RECONNECTING', <String, Object?>{
+              'room': _rtRoom(payload),
+              'user': userId,
+              'seat': seatNo,
+              'event_id': payload['event_id'],
+            });
+            _rtSeats(payload);
+            _rtState(payload);
             break;
           }
 
@@ -6868,7 +7813,17 @@ class WebsocketController extends GetxController {
         case 'live_comment_lock_updated':
         case 'live_hidden_room_updated':
         case 'live_screen_setting_updated':
-          _handleUnifiedRoomSettingsUpdated(payload, source: actionType);
+        case 'live_stream_updated':
+          _handleUnifiedRoomSettingsUpdated(
+            payload,
+            source: 'live_stream_updated',
+          );
+          try {
+            livestreamController.syncLiveGiftCoinsFromPayload(
+              payload,
+              source: 'live_stream_updated',
+            );
+          } catch (_) {}
           break;
 
         case 'clear_live_comments':
@@ -6877,14 +7832,8 @@ class WebsocketController extends GetxController {
           _handleUnifiedClearLiveComments(payload);
           break;
 
-        case 'live_stream_updated':
-          _handleUnifiedLiveStreamUpdated(payload);
-          try {
-            livestreamController.syncLiveGiftCoinsFromPayload(
-              payload,
-              source: 'live_stream_updated',
-            );
-          } catch (_) {}
+        case 'vip_settings_updated':
+          livestreamController.syncVipStateFromPayload(payload);
           break;
 
         case 'live_gift_state_updated':
@@ -6916,21 +7865,6 @@ class WebsocketController extends GetxController {
           _handleUnifiedRedPacketClosed(payload, source: actionType);
           break;
 
-        case 'greedy_winner_announced':
-        case 'greedy_game_timer':
-        case 'greedy_game_started':
-        case 'greedy_game_ended':
-        case 'greedy_bet_placed':
-        case 'fruit_game_winner':
-        case 'fruit_game_user_left':
-        case 'fruit_game_user_joined':
-        case 'fruit_game_timer':
-        case 'fruit_game_bet_total':
-
-          /// Game event system removed for audio live. Ignore old backend game events
-          /// so they cannot update UI/state or affect normal live room.
-          liveLog('🎮 Game action ignored in audio live => $actionType');
-          break;
 
         case 'pk_request_received':
         case 'pk_invite_received':
@@ -6974,16 +7908,38 @@ class WebsocketController extends GetxController {
           livestreamController.handlePkEnded(payload);
           break;
 
+      // ✅ FIX: this room no longer has an in-room fruit/mini-game system,
+      // but the backend still broadcasts these legacy game events to
+      // every room (including plain audio/video rooms that never had the
+      // feature). Without an explicit case, every one of these fell
+      // through to the default UNHANDLED branch below and got logged —
+      // harmless to data/battery on its own, but noisy, and worth routing
+      // to a dedicated log tag instead of the generic "unknown action"
+      // one so it's not confused with a genuinely new/unrecognized event
+      // type. Ignore them here; they must never update UI/state.
+        case 'fruit_game_winner':
+        case 'fruit_game_user_left':
+        case 'fruit_game_started':
+        case 'fruit_game_ended':
+        case 'fruit_game_round_update':
+        case 'fruit_game_bet_placed':
+          liveLog('🎮 Game action ignored in this room => $actionType');
+          break;
+
         default:
+          LiveRealtimeDebugLog.event('UNHANDLED', <String, Object?>{
+            'action': actionType,
+            'event_id': payload['event_id'],
+            'room': _rtRoom(payload),
+          });
           liveLog('ℹ️ Unknown LiveStreamEvent action_type: $actionType');
-          liveLog('Payload: $payload');
           break;
       }
     } catch (error, stackTrace) {
       LiveTestingLogger.printBlock(
         'LIVE TEST EVENT DISPATCH ERROR [$actionType]',
         {
-          'elapsed_ms': dispatchStopwatch.elapsedMilliseconds,
+          'elapsed_ms': dispatchStopwatch?.elapsedMilliseconds ?? -1,
           'error': error.toString(),
           'stack_trace': stackTrace.toString(),
           'payload': payload,
@@ -6991,10 +7947,12 @@ class WebsocketController extends GetxController {
       );
       rethrow;
     } finally {
-      dispatchStopwatch.stop();
-      LiveTestingLogger.line(
-        '🧪 EVENT DISPATCH END => action=$actionType elapsed=${dispatchStopwatch.elapsedMilliseconds}ms',
-      );
+      dispatchStopwatch?.stop();
+      if (kLiveDebug) {
+        LiveTestingLogger.line(
+          '🧪 EVENT DISPATCH END => action=$actionType elapsed=${dispatchStopwatch?.elapsedMilliseconds ?? -1}ms',
+        );
+      }
     }
   }
 
@@ -7007,6 +7965,7 @@ class WebsocketController extends GetxController {
       _nextSocketGeneration(purpose);
     }
     unawaited(_disposeOwnedWebSockets());
+    _roomSettingsCompatibilityTimer?.cancel();
     _liveCallRefreshTimer?.cancel();
     _commentsRefreshTimer?.cancel();
     _giftMessagesRefreshTimer?.cancel();
@@ -7022,6 +7981,9 @@ class WebsocketController extends GetxController {
     _rechargePopupRetryTimer = null;
     _rechargePopupQueue.clear();
     _processedRechargeEventIds.clear();
+    _unifiedEventQueue.clear();
+    _normalGiftRealtimeEventQueue.clear();
+    _rocketRealtimeEventQueue.clear();
     _giftAnimationQueue.clear();
     _giftAnimationQueueMounting = false;
     _optimisticGiftAnimationUntilMs.clear();
@@ -7035,6 +7997,8 @@ class WebsocketController extends GetxController {
     _realtimeLiveRefreshTimer?.cancel();
     _realtimeLiveRefreshTimer = null;
     _entryAnimationSafetyTimer?.cancel();
+    _entryPresentationQueue.clear();
+    _recentEntryShownUntilMs.clear();
     _giftAnimationHideTimer?.cancel();
     _luckyCardHideTimer?.cancel();
     _accountBlockPrivateChannelName = '';
@@ -7046,7 +8010,9 @@ class WebsocketController extends GetxController {
     _locallyLeftStreamIds.clear();
     _viewerJoinedAtMs.clear();
     _recentRoomExitUserUntilMs.clear();
+    _viewerPresenceState.clear();
     lockedSeatMap.clear();
+    speakingUserMap.clear();
     liveCallList.clear();
     pendingCall.clear();
     livestreamController.liveViewerList.clear();

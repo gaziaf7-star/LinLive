@@ -147,10 +147,22 @@ class GlowingTabBarBox extends StatefulWidget {
 }
 
 class _GlowingTabBarBoxState extends State<GlowingTabBarBox> {
-  static const Color _selectedColor1 = Color(0xff9113fa);
-  static const Color _selectedColor2 = Color(0xffe208fa);
+  static const Color _selectedYellow = Color(0xFFFFE500);
+  static const Color _selectedYellowDeep = Color(0xFFFFD800);
+  static const Color _textDark = Color(0xFF2C2C2C);
+  static const Color _mutedText = Color(0xFF62656B);
 
   HomeController get _homeController => Get.find<HomeController>();
+
+  @override
+  void initState() {
+    super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await _homeController.bootstrapSelectedLiveCountryFromProfile();
+    });
+  }
 
   String _flagFromCode(String code) {
     final clean = code.trim().toUpperCase();
@@ -174,11 +186,11 @@ class _GlowingTabBarBoxState extends State<GlowingTabBarBox> {
   }
 
   List<String> _tabs(String countryName) => [
+    countryName,
     'All'.appTr,
     'Video'.appTr,
     'Audio'.appTr,
     'PK'.appTr,
-    countryName,
   ];
 
   Widget _buildTab({
@@ -189,83 +201,87 @@ class _GlowingTabBarBoxState extends State<GlowingTabBarBox> {
     String? countryFlag,
   }) {
     final double screenWidth = MediaQuery.sizeOf(context).width;
-    final double tabHeight = (screenWidth * 0.074).clamp(27.0, 31.0);
+    final double tabHeight = (screenWidth * 0.090).clamp(34.0, 40.0).toDouble();
     final double horizontalPadding =
-    (screenWidth * 0.026).clamp(8.0, 12.0);
-    final double fontSize = (screenWidth * 0.031).clamp(11.2, 13.2);
-    final double iconSize = (screenWidth * 0.038).clamp(14.0, 17.0);
+    (screenWidth * 0.028).clamp(9.0, 12.0).toDouble();
+    final double fontSize =
+    (screenWidth * 0.036).clamp(13.0, 15.5).toDouble();
+    final double iconSize =
+    (screenWidth * 0.044).clamp(16.0, 19.0).toDouble();
 
     return AnimatedBuilder(
       animation: controller.animation ?? controller,
       builder: (context, _) {
-        final bool isSelected = controller.index == index;
+        final double animationValue =
+            controller.animation?.value ?? controller.index.toDouble();
+        final double selectedAmount =
+        (1.0 - (animationValue - index).abs()).clamp(0.0, 1.0);
+        final bool isSelected = selectedAmount > .50;
 
         return AnimatedContainer(
-          duration: const Duration(milliseconds: 210),
+          duration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
+          height: tabHeight,
           constraints: BoxConstraints(
-            minHeight: tabHeight,
-            maxWidth: index == 4
-                ? (screenWidth * .30).clamp(92.0, 122.0)
-                : double.infinity,
+            minWidth: index == 0
+                ? (screenWidth * .21).clamp(74.0, 102.0).toDouble()
+                : (screenWidth * .16).clamp(56.0, 82.0).toDouble(),
+            maxWidth: index == 0
+                ? (screenWidth * .29).clamp(95.0, 128.0).toDouble()
+                : (screenWidth * .22).clamp(72.0, 98.0).toDouble(),
           ),
           padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+          alignment: Alignment.center,
           decoration: BoxDecoration(
             gradient: isSelected
                 ? const LinearGradient(
-              colors: [_selectedColor1, _selectedColor2],
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
+              colors: [_selectedYellow, _selectedYellowDeep],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
             )
                 : null,
-            color: isSelected ? null : Colors.white.withOpacity(0.10),
+            color: isSelected ? null : Colors.white.withOpacity(.94),
             borderRadius: BorderRadius.circular(tabHeight / 2),
             border: Border.all(
               color: isSelected
-                  ? Colors.white.withOpacity(0.15)
-                  : Colors.white.withOpacity(0.08),
+                  ? const Color(0xFFFFD000).withOpacity(.55)
+                  : const Color(0xFFEDEEF1),
               width: .8,
             ),
+            // Completely flat tab: no black shadow.
+            boxShadow: const [],
           ),
-          alignment: Alignment.center,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (index == 0) ...[
+              if (index == 1) ...[
                 Icon(
                   Icons.local_fire_department_rounded,
                   size: iconSize,
                   color: isSelected
-                      ? Colors.white
-                      : Colors.white.withOpacity(.72),
+                      ? const Color(0xFFFF5A1F)
+                      : const Color(0xFFFF7043),
                 ),
-                const SizedBox(width: 3),
+                const SizedBox(width: 4),
               ],
-              if (index == 4 && countryFlag != null) ...[
+              if (index == 0 && countryFlag != null) ...[
                 Text(
                   countryFlag,
                   style: TextStyle(fontSize: iconSize - 1),
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 5),
               ],
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: index == 4
-                      ? (screenWidth * .20).clamp(58.0, 82.0)
-                      : (screenWidth * .22).clamp(62.0, 88.0),
-                ),
+              Flexible(
                 child: Text(
                   text,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.lato(
-                    color: isSelected
-                        ? Colors.white
-                        : Colors.white.withOpacity(.78),
+                    color: isSelected ? _textDark : _mutedText,
                     fontSize: fontSize,
-                    fontWeight:
-                    isSelected ? FontWeight.w800 : FontWeight.w600,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                     height: 1,
+                    letterSpacing: -.15,
                   ),
                 ),
               ),
@@ -302,13 +318,11 @@ class _GlowingTabBarBoxState extends State<GlowingTabBarBox> {
     );
 
     tabController.animateTo(
-      4,
-      duration: const Duration(milliseconds: 260),
+      0,
+      duration: const Duration(milliseconds: 240),
       curve: Curves.easeOutCubic,
     );
 
-    // Country tab already mounted thakleo new selection-er matching live
-    // automatically progressively load hobe.
     await _homeController.ensureSelectedCountryLivestreams(
       minimumResults: 1,
       maxAdditionalPages: 8,
@@ -321,11 +335,11 @@ class _GlowingTabBarBoxState extends State<GlowingTabBarBox> {
       double rowHeight,
       ) {
     final double screenWidth = MediaQuery.sizeOf(context).width;
-    final double size = (screenWidth * .078).clamp(29.0, 33.0);
+    final double size = (screenWidth * .086).clamp(34.0, 39.0).toDouble();
 
     return Padding(
       padding: EdgeInsets.only(
-        right: (screenWidth * .026).clamp(8.0, 12.0),
+        right: (screenWidth * .016).clamp(5.0, 8.0).toDouble(),
         left: 3,
       ),
       child: Material(
@@ -333,22 +347,24 @@ class _GlowingTabBarBoxState extends State<GlowingTabBarBox> {
         child: InkWell(
           borderRadius: BorderRadius.circular(size / 2),
           onTap: () => _openCountryFilter(context, controller),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
+          child: Container(
             width: size,
             height: size,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(.12),
-              borderRadius: BorderRadius.circular(size / 2),
+              color: Colors.white.withOpacity(.94),
+              shape: BoxShape.circle,
               border: Border.all(
-                color: Colors.white.withOpacity(.12),
+                color: const Color(0xFFEDEEF1),
+                width: .8,
               ),
+              // Completely flat filter button: no black shadow.
+              boxShadow: const [],
             ),
             child: Icon(
               Icons.tune_rounded,
-              size: size * .56,
-              color: Colors.white.withOpacity(.90),
+              size: size * .52,
+              color: _textDark,
             ),
           ),
         ),
@@ -358,11 +374,18 @@ class _GlowingTabBarBoxState extends State<GlowingTabBarBox> {
 
   @override
   Widget build(BuildContext context) {
+    // Synchronous fast-path: when auth profile is already restored, bind the
+    // first tab to that saved registration/onboarding country immediately.
+    _homeController.syncSelectedLiveCountryFromProfile();
+
     final TabController controller = DefaultTabController.of(context);
     final double screenWidth = MediaQuery.sizeOf(context).width;
-    final double outerLeft = (screenWidth * 0.030).clamp(8.0, 13.0);
-    final double tabGap = (screenWidth * 0.014).clamp(4.0, 6.0);
-    final double rowHeight = (screenWidth * 0.092).clamp(34.0, 39.0);
+    final double outerLeft =
+    (screenWidth * 0.014).clamp(4.0, 8.0).toDouble();
+    final double tabGap =
+    (screenWidth * 0.012).clamp(4.0, 6.0).toDouble();
+    final double rowHeight =
+    (screenWidth * 0.102).clamp(39.0, 45.0).toDouble();
 
     return Obx(() {
       final String selectedCountry =
@@ -386,8 +409,7 @@ class _GlowingTabBarBoxState extends State<GlowingTabBarBox> {
                 indicatorColor: Colors.transparent,
                 dividerColor: Colors.transparent,
                 splashFactory: NoSplash.splashFactory,
-                overlayColor:
-                MaterialStateProperty.all(Colors.transparent),
+                overlayColor: MaterialStateProperty.all(Colors.transparent),
                 indicatorPadding: EdgeInsets.zero,
                 padding: EdgeInsets.only(
                   left: outerLeft,
@@ -398,13 +420,13 @@ class _GlowingTabBarBoxState extends State<GlowingTabBarBox> {
                 tabs: List.generate(
                   tabs.length,
                       (index) => Tab(
-                    height: rowHeight - 4,
+                    height: rowHeight - 5,
                     child: _buildTab(
                       context: context,
                       text: tabs[index],
                       index: index,
                       controller: controller,
-                      countryFlag: index == 4 ? selectedFlag : null,
+                      countryFlag: index == 0 ? selectedFlag : null,
                     ),
                   ),
                 ),
@@ -603,7 +625,7 @@ class _HomeCountryFilterSheetState extends State<_HomeCountryFilterSheet> {
                 itemBuilder: (context, index) {
                   final region = _regions[index];
                   final selected = region == _selectedRegion;
-        
+
                   return InkWell(
                     borderRadius: BorderRadius.circular(18),
                     onTap: () {
@@ -679,7 +701,7 @@ class _HomeCountryFilterSheetState extends State<_HomeCountryFilterSheet> {
                     final bool selected =
                         country.name.trim().toLowerCase() ==
                             widget.selectedCountryName.trim().toLowerCase();
-        
+
                     return Material(
                       color: Colors.transparent,
                       child: InkWell(

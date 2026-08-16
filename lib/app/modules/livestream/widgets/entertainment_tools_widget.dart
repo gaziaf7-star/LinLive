@@ -1,16 +1,12 @@
-import 'dart:io';
-
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:meetlivepro/app/modules/livestream/widgets/reseableIconButton.dart';
 import 'package:meetlivepro/constants/constants.dart';
 import 'package:share_plus/share_plus.dart';
-
 
 import '../../../../apis/api_endpoints.dart';
 import '../../../../constants/color_constants.dart';
@@ -24,9 +20,8 @@ import 'GameBottomSheet.dart';
 import 'musicplayerBottomSheet.dart';
 import 'red_packet_send_widget.dart';
 import 'room_extension_dialog.dart';
+import 'live_room_setting_page.dart';
 import 'voice_mixer_bottom_sheet.dart';
-
-
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 
@@ -35,11 +30,12 @@ class EntertainmentToolsWidget extends StatefulWidget {
   final String streamType;
   final bool isBroadcaster;
 
-  const EntertainmentToolsWidget(
-      {super.key,
-        this.rtcEngine,
-        this.streamType = 'popular',
-        required this.isBroadcaster});
+  const EntertainmentToolsWidget({
+    super.key,
+    this.rtcEngine,
+    this.streamType = 'popular',
+    required this.isBroadcaster,
+  });
 
   @override
   State<EntertainmentToolsWidget> createState() =>
@@ -166,7 +162,9 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
     for (final source in sources) {
       if (source.isEmpty) continue;
       final sourceStreamId = _streamIdFromMap(source);
-      if (currentStreamId > 0 && sourceStreamId > 0 && sourceStreamId != currentStreamId) {
+      if (currentStreamId > 0 &&
+          sourceStreamId > 0 &&
+          sourceStreamId != currentStreamId) {
         continue;
       }
 
@@ -190,15 +188,23 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
         final uid = _safeInt(row['caller_id'] ?? row['user_id'] ?? user['id']);
         if (uid != myId) continue;
 
-        final status = (row['call_status'] ?? row['status'] ?? '').toString().toLowerCase();
-        final accepted = status.isEmpty ||
-            status == 'accepted' ||
-            status == 'joined' ||
-            status == 'active' ||
-            status == 'live';
+        final status = (row['call_status'] ?? row['status'] ?? '')
+            .toString()
+            .toLowerCase();
+        final accepted =
+            status.isEmpty ||
+                status == 'accepted' ||
+                status == 'joined' ||
+                status == 'active' ||
+                status == 'live';
         if (!accepted) continue;
 
-        return _truthy(row['is_guardian'] ?? row['guardian'] ?? user['is_guardian'] ?? user['guardian']);
+        return _truthy(
+          row['is_guardian'] ??
+              row['guardian'] ??
+              user['is_guardian'] ??
+              user['guardian'],
+        );
       }
     } catch (_) {}
 
@@ -237,8 +243,12 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
 
   bool _ensureCanUseHostTools(String actionName) {
     if (_canUseHostTools) return true;
-    debugPrint('⛔ Entertainment tool blocked => action=$actionName streamType=${widget.streamType}');
-    Fluttertoast.showToast(msg: ('Only host or this room admin can do this').appTr);
+    debugPrint(
+      '⛔ Entertainment tool blocked => action=$actionName streamType=${widget.streamType}',
+    );
+    Fluttertoast.showToast(
+      msg: ('Only host or this room admin can do this').appTr,
+    );
     return false;
   }
 
@@ -303,7 +313,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
   }
 
   bool _shouldShowVoiceChange() {
-    return _isAudioRoom() && _canUseHostTools;
+    return (_isAudioRoom() || _isPopularRoom()) && _canUseHostTools;
   }
 
   bool _shouldShowMusic() {
@@ -311,7 +321,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
   }
 
   bool _shouldShowYoutube() {
-    return _canUseHostTools && (_isPopularRoom() || _isAudioRoom());
+    return _isAudioRoom() && _canUseHostTools;
   }
 
   bool _shouldShowRoomExtension() {
@@ -324,400 +334,35 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
 
   void _openRoomSettingPage(LivestreamController livestreamController) async {
     if (!_ensureCanUseHostTools('room_setting')) return;
-    final WebsocketController websocketController = Get.find<WebsocketController>();
+    final WebsocketController websocketController =
+    Get.find<WebsocketController>();
     final AuthController authController = Get.find<AuthController>();
 
-    // Entertainment tools bottom sheet close kore tarpor full page open korbo.
-    // Na hole page-er pichone bottom sheet open thake, back dile weird close hoy.
+    // Open Setup immediately. Theme/background APIs are warmed inside the page
+    // after its first frame, so network latency never blocks navigation.
     if (Get.isBottomSheetOpen == true) {
       Get.back();
-      await Future.delayed(const Duration(milliseconds: 120));
+      await Future<void>.delayed(const Duration(milliseconds: 40));
     }
 
-    await livestreamController.showTheme();
-    await livestreamController.showBackground();
-
     Get.to(
-          () => _LiveRoomSettingPage(
+          () => LiveRoomSettingPage(
         livestreamController: livestreamController,
         websocketController: websocketController,
         authController: authController,
       ),
       transition: Transition.rightToLeft,
-      duration: const Duration(milliseconds: 260),
+      duration: const Duration(milliseconds: 180),
     );
   }
-
-  void _showRoomEditBottomSheet(LivestreamController livestreamController) async {
-    if (!_ensureCanUseHostTools('room_edit')) return;
-    final WebsocketController websocketController = Get.find();
-    final AuthController authController = Get.find();
-
-    await livestreamController.showTheme();
-    await livestreamController.showBackground();
-
-    final int currentStreamId = livestreamController.streamId.value;
-    final bool useWsRoomCache = currentStreamId > 0 &&
-        websocketController.liveRoomUpdateStreamId.value == currentStreamId;
-    final live = livestreamController.createStreamData['livestreamdata'] is Map
-        ? Map<String, dynamic>.from(
-      livestreamController.createStreamData['livestreamdata'],
-    )
-        : <String, dynamic>{};
-
-    int selectedSeatCount = useWsRoomCache &&
-        websocketController.liveRoomSeatCount.value > 0
-        ? websocketController.liveRoomSeatCount.value
-        : _asInt(live['seat_count'], livestreamController.seatCount.value);
-    int selectedLayout = useWsRoomCache
-        ? websocketController.liveRoomLayout.value
-        : _asInt(live['room_layout'], 0);
-    int selectedTheme = useWsRoomCache
-        ? websocketController.liveRoomTheme.value
-        : _asInt(live['room_theme'], 0);
-    int selectedBackground = useWsRoomCache
-        ? websocketController.liveRoomBackground.value
-        : _asInt(live['room_background'], -1);
-
-    final List<int> seatOptions = [9, 12, 15, 20];
-
-    int maxLayoutForSeats(int seats) {
-      if (seats == 9) return 3;
-      if (seats == 12) return 4;
-      return 0;
-    }
-
-    String imageUrl(dynamic raw) {
-      final value = raw?.toString().trim() ?? '';
-      if (value.isEmpty || value == 'null') return '';
-      if (value.startsWith('http://') || value.startsWith('https://')) {
-        return value;
-      }
-      return '$kDomainUrl/$value';
-    }
-
-    Future<void> applyChange() async {
-      selectedLayout = selectedLayout.clamp(
-        0,
-        maxLayoutForSeats(selectedSeatCount),
-      );
-
-      await livestreamController.editLiveStreamRoom(
-        livestreamId: livestreamController.streamId.value,
-        userId: authController.userProfile.value.user?.id?.toInt() ?? 0,
-        seatCount: selectedSeatCount,
-        roomLayout: selectedLayout,
-        roomTheme: selectedTheme,
-        roomBackground: selectedBackground,
-      );
-    }
-
-    Get.bottomSheet(
-      StatefulBuilder(
-        builder: (context, setModalState) {
-          final int layoutCount = maxLayoutForSeats(selectedSeatCount) + 1;
-
-          return DefaultTabController(
-            length: 4,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              height: kHeight * 0.62,
-              width: double.infinity,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-              ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  children: [
-                    SizedBox(height: kHeight * 0.010),
-
-                    /// Top drag indicator
-                    Container(
-                      height: 4,
-                      width: 42,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade300,
-                        borderRadius: BorderRadius.circular(50),
-                      ),
-                    ),
-
-                    SizedBox(height: kHeight * 0.012),
-
-                    /// Header
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: kWeight * 0.040),
-                      child: Row(
-                        children: [
-                          SizedBox(width: kWeight * 0.070),
-                          Expanded(
-                            child: Center(
-                              child: Text(
-                                ('Room Setting').appTr,
-                                style: GoogleFonts.poppins(
-                                  color: Colors.black,
-                                  fontSize: kHeight * 0.018,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () => Get.back(),
-                            child: Container(
-                              height: kHeight * 0.030,
-                              width: kHeight * 0.030,
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade100,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: Colors.grey.shade300),
-                              ),
-                              child: Icon(
-                                Icons.close,
-                                color: Colors.black87,
-                                size: kHeight * 0.018,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    SizedBox(height: kHeight * 0.010),
-
-                    Divider(height: 1, color: Colors.grey.shade200),
-
-                    /// Tabs
-                    Container(
-                      height: kHeight * 0.052,
-                      width: double.infinity,
-                      padding: EdgeInsets.only(
-                        left: kWeight * 0.026,
-                        right: kWeight * 0.010,
-                        top: kHeight * 0.008,
-                        bottom: kHeight * 0.006,
-                      ),
-                      child: TabBar(
-                        isScrollable: true,
-                        dividerColor: Colors.transparent,
-                        indicatorColor: Colors.transparent,
-                        labelPadding: EdgeInsets.only(right: kWeight * 0.014),
-                        tabAlignment: TabAlignment.start,
-                        labelColor: Colors.white,
-                        unselectedLabelColor: Colors.grey.shade500,
-                        labelStyle: GoogleFonts.poppins(
-                          fontSize: kHeight * 0.0125,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        unselectedLabelStyle: GoogleFonts.poppins(
-                          fontSize: kHeight * 0.0125,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        tabs: [
-                          _premiumTab(('Set').appTr, 0),
-                          _premiumTab(('Theme').appTr, 1),
-                          _premiumTab(('Layout').appTr, 2),
-                          _premiumTab(('Background').appTr, 3),
-                        ],
-                      ),
-                    ),
-
-                    Obx(() {
-                      return livestreamController.roomEditLoading.value
-                          ? LinearProgressIndicator(
-                        minHeight: 2,
-                        color: const Color(0xff8d52ef),
-                        backgroundColor: Colors.grey.shade100,
-                      )
-                          : const SizedBox(height: 2);
-                    }),
-
-                    SizedBox(height: kHeight * 0.012),
-
-                    Expanded(
-                      child: TabBarView(
-                        children: [
-                          /// ================= SET TAB =================
-                          Padding(
-                            padding: EdgeInsets.symmetric(horizontal: kWeight * 0.035),
-                            child: GridView.builder(
-                              physics: const BouncingScrollPhysics(),
-                              itemCount: seatOptions.length,
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                mainAxisSpacing: kHeight * 0.014,
-                                crossAxisSpacing: kWeight * 0.035,
-                                childAspectRatio: 3.25,
-                              ),
-                              itemBuilder: (context, index) {
-                                final seat = seatOptions[index];
-                                final bool active = selectedSeatCount == seat;
-
-                                return _premiumSeatCard(
-                                  title: ('$seat Seat').appTr,
-                                  active: active,
-                                  onTap: () async {
-                                    setModalState(() {
-                                      selectedSeatCount = seat;
-                                      selectedLayout = selectedLayout.clamp(
-                                        0,
-                                        maxLayoutForSeats(seat),
-                                      );
-                                    });
-                                    await applyChange();
-                                  },
-                                );
-                              },
-                            ),
-                          ),
-
-                          /// ================= THEME TAB =================
-                          Obx(() {
-                            final themes = livestreamController.themeList;
-
-                            if (themes.isEmpty) {
-                              return _premiumLoadingGrid(
-                                title: ('Theme loading...').appTr,
-                                icon: Icons.color_lens_rounded,
-                              );
-                            }
-
-                            return GridView.builder(
-                              physics: const BouncingScrollPhysics(),
-                              padding: EdgeInsets.symmetric(horizontal: kWeight * 0.035),
-                              itemCount: themes.length,
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                crossAxisSpacing: kWeight * 0.045,
-                                mainAxisSpacing: kHeight * 0.016,
-                                childAspectRatio: 1.45,
-                              ),
-                              itemBuilder: (context, index) {
-                                final item = themes[index];
-                                final id = _asInt(item is Map ? item['id'] : null, index);
-                                final img = item is Map ? imageUrl(item['image']) : '';
-                                final bool active = selectedTheme == id;
-
-                                return _premiumImageCard(
-                                  title: item is Map
-                                      ? (item['name'] ?? item['title'] ?? ('Theme ${index + 1}').appTr).toString()
-                                      : ('Theme ${index + 1}').appTr,
-                                  imageUrl: img,
-                                  active: active,
-                                  fallbackIcon: Icons.color_lens_rounded,
-                                  onTap: () async {
-                                    setModalState(() => selectedTheme = id);
-                                    await applyChange();
-                                  },
-                                );
-                              },
-                            );
-                          }),
-
-                          /// ================= LAYOUT TAB =================
-                          Padding(
-                            padding: EdgeInsets.symmetric(horizontal: kWeight * 0.035),
-                            child: GridView.builder(
-                              physics: const BouncingScrollPhysics(),
-                              itemCount: layoutCount,
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 3,
-                                crossAxisSpacing: kWeight * 0.035,
-                                mainAxisSpacing: kHeight * 0.018,
-                                childAspectRatio: 1.15,
-                              ),
-                              itemBuilder: (context, index) {
-                                final bool active = selectedLayout == index;
-
-                                return _premiumLayoutCard(
-                                  index: index,
-                                  seatCount: selectedSeatCount,
-                                  active: active,
-                                  onTap: () async {
-                                    setModalState(() => selectedLayout = index);
-                                    await applyChange();
-                                  },
-                                );
-                              },
-                            ),
-                          ),
-
-                          /// ================= BACKGROUND TAB =================
-                          Obx(() {
-                            final backgrounds = livestreamController.backgroundList;
-                            final items = [
-                              {'id': -1, 'title': ('No Background').appTr, 'image': null},
-                              ...backgrounds.whereType<Map>(),
-                            ];
-
-                            if (items.length == 1 && backgrounds.isEmpty) {
-                              return _premiumLoadingGrid(
-                                title: ('Background loading...').appTr,
-                                icon: Icons.image_rounded,
-                              );
-                            }
-
-                            return GridView.builder(
-                              physics: const BouncingScrollPhysics(),
-                              padding: EdgeInsets.symmetric(horizontal: kWeight * 0.035),
-                              itemCount: items.length,
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                crossAxisSpacing: kWeight * 0.045,
-                                mainAxisSpacing: kHeight * 0.016,
-                                childAspectRatio: 1.45,
-                              ),
-                              itemBuilder: (context, index) {
-                                final item = items[index];
-                                final id = _asInt(item['id'], -1);
-                                final img = imageUrl(item['image']);
-                                final bool active = selectedBackground == id;
-
-                                return _premiumImageCard(
-                                  title: index == 0
-                                      ? ('No Background').appTr: (item['name'] ?? item['title'] ?? ('Background $index').appTr).toString(),
-                                  imageUrl: img,
-                                  active: active,
-                                  fallbackIcon: index == 0
-                                      ? Icons.block_rounded
-                                      : Icons.image_rounded,
-                                  onTap: () async {
-                                    setModalState(() => selectedBackground = id);
-                                    await applyChange();
-                                  },
-                                );
-                              },
-                            );
-                          }),
-                        ],
-                      ),
-                    ),
-
-                    SizedBox(height: kHeight * 0.010),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-    );
-  }
-
-
-
-
-
 
   Widget _premiumTab(String title, int tabIndex) {
     return Tab(
       child: Builder(
         builder: (context) {
-          final TabController? controller = DefaultTabController.maybeOf(context);
+          final TabController? controller = DefaultTabController.maybeOf(
+            context,
+          );
           final bool selected = controller?.index == tabIndex;
 
           return AnimatedContainer(
@@ -729,7 +374,9 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
               color: selected ? const Color(0xff8d52ef) : Colors.grey.shade100,
               borderRadius: BorderRadius.circular(25),
               border: Border.all(
-                color: selected ? const Color(0xff8d52ef) : Colors.grey.shade300,
+                color: selected
+                    ? const Color(0xff8d52ef)
+                    : Colors.grey.shade300,
               ),
               boxShadow: selected
                   ? [
@@ -826,7 +473,9 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
                   color: Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(7),
                   border: Border.all(
-                    color: active ? const Color(0xff8d52ef) : Colors.grey.shade300,
+                    color: active
+                        ? const Color(0xff8d52ef)
+                        : Colors.grey.shade300,
                     width: active ? 2.2 : 1,
                   ),
                   boxShadow: [
@@ -849,8 +498,10 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
                           height: double.infinity,
                           width: double.infinity,
                           fit: BoxFit.cover,
-                          placeholder: (context, url) => _premiumImagePlaceholder(fallbackIcon),
-                          errorWidget: (context, url, error) => _premiumImagePlaceholder(fallbackIcon),
+                          placeholder: (context, url) =>
+                              _premiumImagePlaceholder(fallbackIcon),
+                          errorWidget: (context, url, error) =>
+                              _premiumImagePlaceholder(fallbackIcon),
                         )
                       else
                         _premiumImagePlaceholder(fallbackIcon),
@@ -923,11 +574,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
         ),
       ),
       child: Center(
-        child: Icon(
-          icon,
-          color: Colors.grey.shade400,
-          size: kHeight * 0.038,
-        ),
+        child: Icon(icon, color: Colors.grey.shade400, size: kHeight * 0.038),
       ),
     );
   }
@@ -1124,10 +771,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
     );
   }
 
-  Widget _premiumLoadingGrid({
-    required String title,
-    required IconData icon,
-  }) {
+  Widget _premiumLoadingGrid({required String title, required IconData icon}) {
     return GridView.builder(
       physics: const NeverScrollableScrollPhysics(),
       padding: EdgeInsets.symmetric(horizontal: kWeight * 0.035),
@@ -1172,8 +816,6 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
     );
   }
 
-
-
   void _showYoutubeControlDialog(LivestreamController livestreamController) {
     if (!_ensureCanUseHostTools('youtube')) return;
     final TextEditingController linkController = TextEditingController(
@@ -1182,17 +824,15 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
 
     Get.dialog(
       AlertDialog(
-        title:  Text(('YouTube Video').appTr),
+        title: Text(('YouTube Video').appTr),
         content: TextField(
           controller: linkController,
-          decoration:  InputDecoration(
-            hintText: ('Paste YouTube link').appTr,
-          ),
+          decoration: InputDecoration(hintText: ('Paste YouTube link').appTr),
         ),
         actions: [
           TextButton(
             onPressed: () => Get.back(),
-            child:  Text(('Cancel').appTr),
+            child: Text(('Cancel').appTr),
           ),
           TextButton(
             onPressed: () async {
@@ -1202,13 +842,12 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
               Get.back();
               await livestreamController.playOrChangeYoutube(url);
             },
-            child:  Text(('Play').appTr),
+            child: Text(('Play').appTr),
           ),
         ],
       ),
     );
   }
-
 
   Future<bool> _showCleanChatConfirmDialog() async {
     final result = await Get.dialog<bool>(
@@ -1272,7 +911,8 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
               ),
               SizedBox(height: kHeight * 0.008),
               Text(
-                ('All current room comments will be removed for everyone.').appTr,
+                ('All current room comments will be removed for everyone.')
+                    .appTr,
                 textAlign: TextAlign.center,
                 style: GoogleFonts.poppins(
                   color: Colors.black54,
@@ -1293,7 +933,9 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                         ),
-                        padding: EdgeInsets.symmetric(vertical: kHeight * 0.014),
+                        padding: EdgeInsets.symmetric(
+                          vertical: kHeight * 0.014,
+                        ),
                       ),
                       child: Text(
                         ('Cancel').appTr,
@@ -1312,7 +954,9 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                         ),
-                        padding: EdgeInsets.symmetric(vertical: kHeight * 0.014),
+                        padding: EdgeInsets.symmetric(
+                          vertical: kHeight * 0.014,
+                        ),
                       ),
                       child: Text(
                         ('Clean').appTr,
@@ -1361,14 +1005,10 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
           color: const Color(0xffff3f6b),
         ),
         const SizedBox(height: 7),
-        Text(
-          ('Clean').appTr,
-          style: _entertainmentToolTextStyle,
-        ),
+        Text(('Clean').appTr, style: _entertainmentToolTextStyle),
       ],
     );
   }
-
 
   Future<void> _closeEntertainmentSheetBeforeRoomAction() async {
     if (Get.isBottomSheetOpen == true) {
@@ -1423,11 +1063,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
                     ),
                   ],
                 ),
-                child: Icon(
-                  icon,
-                  color: confirmColor,
-                  size: kHeight * 0.030,
-                ),
+                child: Icon(icon, color: confirmColor, size: kHeight * 0.030),
               ),
               SizedBox(height: kHeight * 0.014),
               Text(
@@ -1468,9 +1104,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
                       ),
                       child: Text(
                         ('Cancel').appTr,
-                        style: GoogleFonts.poppins(
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: GoogleFonts.poppins(fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),
@@ -1491,9 +1125,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
                       ),
                       child: Text(
                         confirmText,
-                        style: GoogleFonts.poppins(
-                          fontWeight: FontWeight.w800,
-                        ),
+                        style: GoogleFonts.poppins(fontWeight: FontWeight.w800),
                       ),
                     ),
                   ),
@@ -1533,8 +1165,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
       );
     } catch (_) {}
 
-    final bool currentlyLocked =
-        livestreamController.liveRoomLocked.value;
+    final bool currentlyLocked = livestreamController.liveRoomLocked.value;
 
     await _closeEntertainmentSheetBeforeRoomAction();
 
@@ -1576,13 +1207,12 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
     final bool ok = await _showRoomControlConfirmDialog(
       title: next ? ('Lock Chat?').appTr : ('Unlock Chat?').appTr,
       message: next
-          ? ('Viewers and callers will not be able to send comments in this live room.').appTr
+          ? ('Viewers and callers will not be able to send comments in this live room.')
+          .appTr
           : ('Viewers and callers will be able to send comments again.').appTr,
       confirmText: next ? ('Lock').appTr : ('Unlock').appTr,
       confirmColor: next ? const Color(0xffF80230) : Colors.green,
-      icon: next
-          ? Icons.chat_bubble_rounded
-          : Icons.mark_chat_read_rounded,
+      icon: next ? Icons.chat_bubble_rounded : Icons.mark_chat_read_rounded,
     );
     if (!ok) return;
 
@@ -1607,9 +1237,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
           : ('This room will show again in the live list.').appTr,
       confirmText: next ? ('Hide').appTr : ('Show').appTr,
       confirmColor: next ? const Color(0xffF80230) : Colors.green,
-      icon: next
-          ? Icons.visibility_off_rounded
-          : Icons.visibility_rounded,
+      icon: next ? Icons.visibility_off_rounded : Icons.visibility_rounded,
     );
     if (!ok) return;
 
@@ -1622,8 +1250,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
     if (!_ensureCanUseHostTools('screen_record')) return;
     if (livestreamController.roomSettingsLoading.value) return;
 
-    final bool current =
-        livestreamController.liveScreenRecordBlocked.value;
+    final bool current = livestreamController.liveScreenRecordBlocked.value;
     final bool next = !current;
 
     await _closeEntertainmentSheetBeforeRoomAction();
@@ -1652,24 +1279,19 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
     if (!_ensureCanUseHostTools('screenshot')) return;
     if (livestreamController.roomSettingsLoading.value) return;
 
-    final bool current =
-        livestreamController.liveScreenshotBlocked.value;
+    final bool current = livestreamController.liveScreenshotBlocked.value;
     final bool next = !current;
 
     await _closeEntertainmentSheetBeforeRoomAction();
 
     final bool ok = await _showRoomControlConfirmDialog(
-      title: next
-          ? ('Block Screenshot?').appTr
-          : ('Allow Screenshot?').appTr,
+      title: next ? ('Block Screenshot?').appTr : ('Allow Screenshot?').appTr,
       message: next
           ? ('Users will not be able to take screenshots in this room.').appTr
           : ('Users will be able to take screenshots again.').appTr,
       confirmText: next ? ('Block').appTr : ('Allow').appTr,
       confirmColor: next ? const Color(0xffF80230) : Colors.green,
-      icon: next
-          ? Icons.screenshot_monitor_rounded
-          : Icons.screenshot_rounded,
+      icon: next ? Icons.screenshot_monitor_rounded : Icons.screenshot_rounded,
     );
     if (!ok) return;
 
@@ -1720,14 +1342,10 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
       }
 
       const String liveUrl = 'https://linlive.fr/';
-      await Share.share(
-        '🔴 I\'m live now! Watch here: $liveUrl',
-      );
+      await Share.share('🔴 I\'m live now! Watch here: $liveUrl');
     } catch (e) {
       debugPrint('Live share failed: $e');
-      Fluttertoast.showToast(
-        msg: ('Unable to share right now').appTr,
-      );
+      Fluttertoast.showToast(msg: ('Unable to share right now').appTr);
     }
   }
 
@@ -1743,10 +1361,7 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
           color: const Color(0xff3f8cff),
         ),
         const SizedBox(height: 7),
-        Text(
-          ('Share').appTr,
-          style: _entertainmentToolTextStyle,
-        ),
+        Text(('Share').appTr, style: _entertainmentToolTextStyle),
       ],
     );
   }
@@ -1773,386 +1388,394 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
           } catch (_) {}
         }
 
-        Get.bottomSheet(Container(
-          padding: EdgeInsets.symmetric(
-              vertical: kHeight * 0.02, horizontal: kWeight * 0.04),
-          decoration: BoxDecoration(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
-            color: Colors.white,
-          ),
-          height: kHeight * 0.48,
-          width: double.infinity,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  ('Entertainment tools').appTr,
-                  style: GoogleFonts.lato(
+        Get.bottomSheet(
+          Container(
+            padding: EdgeInsets.symmetric(
+              vertical: kHeight * 0.02,
+              horizontal: kWeight * 0.04,
+            ),
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(18),
+              ),
+              color: Colors.white,
+            ),
+            height: kHeight * 0.48,
+            width: double.infinity,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    ('Entertainment tools').appTr,
+                    style: GoogleFonts.lato(
                       fontSize: kHeight * 0.014,
                       color: Colors.black.withOpacity(0.90),
-                      fontWeight: FontWeight.w700),
-                ),
-                SizedBox(
-                  height: kHeight * 0.02,
-                ),
-                /// All tools stay serially aligned.
-                /// Hidden tools do not leave an empty slot; the next tool moves forward.
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final double horizontalGap = kWeight * 0.018;
-                    final double itemWidth =
-                        (constraints.maxWidth - (horizontalGap * 3)) / 4;
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  SizedBox(height: kHeight * 0.02),
 
-                    final List<Widget> tools = <Widget>[
-                      if (_shouldShowPocket())
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            message_bottom1(
-                              onPress: () async {
-                                if (Get.isBottomSheetOpen == true) {
-                                  Get.back();
-                                  await Future.delayed(
-                                    const Duration(milliseconds: 120),
-                                  );
-                                }
+                  /// All tools stay serially aligned.
+                  /// Hidden tools do not leave an empty slot; the next tool moves forward.
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final double horizontalGap = kWeight * 0.018;
+                      final double itemWidth =
+                          (constraints.maxWidth - (horizontalGap * 3)) / 4;
 
-                                Get.bottomSheet(
-                                  SafeArea(
-                                    top: false,
-                                    child: RedPacketSendWidget(
-                                      streamId:
-                                      livestreamController.streamId.value,
+                      final List<Widget> tools = <Widget>[
+                        if (_shouldShowPocket())
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              message_bottom1(
+                                onPress: () async {
+                                  if (Get.isBottomSheetOpen == true) {
+                                    Get.back();
+                                    await Future.delayed(
+                                      const Duration(milliseconds: 120),
+                                    );
+                                  }
+
+                                  Get.bottomSheet(
+                                    SafeArea(
+                                      top: false,
+                                      child: RedPacketSendWidget(
+                                        streamId:
+                                        livestreamController.streamId.value,
+                                      ),
                                     ),
-                                  ),
-                                  isScrollControlled: true,
-                                  backgroundColor: Colors.transparent,
-                                );
-                              },
-                              color2: const Color(0xfffed335),
-                              image: 'assets/flaticons/audioredpoket .png',
-                              color: const Color(0xffffec84),
-                            ),
-                            const SizedBox(height: 7),
-                            Text(
-                              ('Pocket').appTr,
-                              textAlign: TextAlign.center,
-                              style: _entertainmentToolTextStyle,
-                            ),
-                          ],
-                        ),
-
-                      if (_shouldShowCoinTrading())
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            message_bottom1(
-                              onPress: () {
-                                Get.to(
-                                  TradingView(),
-                                  transition: Transition.rightToLeft,
-                                );
-                              },
-                              color2: const Color(0xfffbcab0),
-                              image: 'assets/flaticons/profit.png',
-                              color: const Color(0xfff65d0a),
-                            ),
-                            const SizedBox(height: 7),
-                            Text(
-                              ('Coin trading').appTr,
-                              textAlign: TextAlign.center,
-                              style: _entertainmentToolTextStyle,
-                            ),
-                          ],
-                        ),
-                      if (_shouldShowYoutube())
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            message_bottom1(
-                              onPress: () {
-                                Get.back();
-                                Fluttertoast.showToast(
-                                  msg: "Comming soon",
-                                  toastLength: Toast.LENGTH_SHORT,
-                                  gravity: ToastGravity.BOTTOM,
-                                );
-                                // _showYoutubeControlDialog(
-                                //   livestreamController,
-                                // );
-                              },
-                              color2: const Color(0xffffd2d2),
-                              image: 'assets/flaticons/youtube.png',
-                              color: const Color(0xffff3434),
-                            ),
-                            const SizedBox(height: 7),
-                            Text(
-                              ('Youtube').appTr,
-                              textAlign: TextAlign.center,
-                              style: _entertainmentToolTextStyle,
-                            ),
-                          ],
-                        ),
-                      if (_shouldShowVoiceChange())
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            message_bottom1(
-                              onPress: () async {
-                                if (!_ensureCanUseHostTools('voice_change')) {
-                                  return;
-                                }
-
-                                // Capture the root navigator BEFORE closing the
-                                // Entertainment sheet. Its builder context is
-                                // disposed during the close animation and must
-                                // never be reused for another modal route.
-                                final NavigatorState rootNavigator =
-                                Navigator.of(
-                                  context,
-                                  rootNavigator: true,
-                                );
-
-                                if (Get.isBottomSheetOpen == true) {
-                                  Get.back();
-                                  await Future<void>.delayed(
-                                    const Duration(milliseconds: 220),
+                                    isScrollControlled: true,
+                                    backgroundColor: Colors.transparent,
                                   );
-                                }
+                                },
+                                color2: const Color(0xfffed335),
+                                image: 'assets/flaticons/audioredpoket .png',
+                                color: const Color(0xffffec84),
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                ('Pocket').appTr,
+                                textAlign: TextAlign.center,
+                                style: _entertainmentToolTextStyle,
+                              ),
+                            ],
+                          ),
 
-                                if (!mounted || !rootNavigator.mounted) return;
+                        if (_shouldShowCoinTrading())
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              message_bottom1(
+                                onPress: () {
+                                  Get.to(
+                                    TradingView(),
+                                    transition: Transition.rightToLeft,
+                                  );
+                                },
+                                color2: const Color(0xfffbcab0),
+                                image: 'assets/flaticons/profit.png',
+                                color: const Color(0xfff65d0a),
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                ('Coin trading').appTr,
+                                textAlign: TextAlign.center,
+                                style: _entertainmentToolTextStyle,
+                              ),
+                            ],
+                          ),
+                        if (_shouldShowYoutube())
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              message_bottom1(
+                                onPress: () {
+                                  Get.back();
+                                  Fluttertoast.showToast(
+                                    msg: "Comming soon",
+                                    toastLength: Toast.LENGTH_SHORT,
+                                    gravity: ToastGravity.BOTTOM,
+                                  );
+                                  // _showYoutubeControlDialog(
+                                  //   livestreamController,
+                                  // );
+                                },
+                                color2: const Color(0xffffd2d2),
+                                image: 'assets/flaticons/youtube.png',
+                                color: const Color(0xffff3434),
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                ('Youtube').appTr,
+                                textAlign: TextAlign.center,
+                                style: _entertainmentToolTextStyle,
+                              ),
+                            ],
+                          ),
+                        if (_shouldShowVoiceChange())
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              message_bottom1(
+                                onPress: () async {
+                                  if (!_ensureCanUseHostTools('voice_change')) {
+                                    return;
+                                  }
 
-                                await VoiceMixerBottomSheet.show(
-                                  rootNavigator.context,
-                                  rtcEngine: widget.rtcEngine,
-                                );
-                              },
-                              // The old voice.png asset was not visible on some
-                              // devices. A built-in icon always renders clearly.
-                              image: 'assets/audio_live/voice-search.png',
-                              // icon: Icons.record_voice_over_rounded,
-                              iconColor: const Color(0xff7B3FE4),
-                              color: const Color(0xffDCCBFF),
-                              color2: const Color(0xffF1EAFE),
-                            ),
-                            const SizedBox(height: 7),
-                            Text(
-                              ('Voice cng').appTr,
-                              textAlign: TextAlign.center,
-                              style: _entertainmentToolTextStyle,
-                            ),
-                          ],
-                        ),
+                                  // Capture the root navigator BEFORE closing the
+                                  // Entertainment sheet. Its builder context is
+                                  // disposed during the close animation and must
+                                  // never be reused for another modal route.
+                                  final NavigatorState rootNavigator =
+                                  Navigator.of(
+                                    context,
+                                    rootNavigator: true,
+                                  );
 
-                      if (_shouldShowMusic())
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            message_bottom1(
-                              onPress: () async {
-                                if (!_ensureCanUseHostTools('music')) return;
-                                Get.back();
-                                await Future.delayed(
-                                  const Duration(milliseconds: 140),
-                                );
-                                await LiveMusicPlayerSheet.show(
-                                  rtcEngine: widget.rtcEngine,
-                                );
-                              },
-                              color2: const Color(0xff9de7ff),
-                              image: 'assets/frame/sound.png',
-                              color: const Color(0xff21d4fd),
-                            ),
-                            const SizedBox(height: 7),
-                            Text(
-                              ('Music').appTr,
-                              textAlign: TextAlign.center,
-                              style: _entertainmentToolTextStyle,
-                            ),
-                          ],
-                        ),
+                                  if (Get.isBottomSheetOpen == true) {
+                                    Get.back();
+                                    await Future<void>.delayed(
+                                      const Duration(milliseconds: 220),
+                                    );
+                                  }
 
-                      if (_shouldShowRoomExtension())
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            message_bottom1(
-                              onPress: () {
-                                _openRoomSettingPage(
-                                  livestreamController,
-                                );
-                              },
-                              color2: const Color(0xff34d04b),
-                              image: 'assets/flaticons/theme.png',
-                              color: const Color(0xffa7ec68),
-                            ),
-                            const SizedBox(height: 7),
-                            Text(
-                              ('Room Setting').appTr,
-                              textAlign: TextAlign.center,
-                              style: _entertainmentToolTextStyle,
-                            ),
-                          ],
-                        ),
+                                  if (!mounted || !rootNavigator.mounted)
+                                    return;
 
-                      if (_isAudioRoom() && _hasMinimumCoinBalance)
-                        Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            message_bottom1(
-                              onPress: () async {
-                                if (Get.isBottomSheetOpen == true) {
+                                  await VoiceMixerBottomSheet.show(
+                                    rootNavigator.context,
+                                    rtcEngine: widget.rtcEngine,
+                                  );
+                                },
+                                // The old voice.png asset was not visible on some
+                                // devices. A built-in icon always renders clearly.
+                                image: 'assets/audio_live/voice-search.png',
+                                // icon: Icons.record_voice_over_rounded,
+                                iconColor: const Color(0xff7B3FE4),
+                                color: const Color(0xffDCCBFF),
+                                color2: const Color(0xffF1EAFE),
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                ('Voice cng').appTr,
+                                textAlign: TextAlign.center,
+                                style: _entertainmentToolTextStyle,
+                              ),
+                            ],
+                          ),
+
+                        if (_shouldShowMusic())
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              message_bottom1(
+                                onPress: () async {
+                                  if (!_ensureCanUseHostTools('music')) return;
                                   Get.back();
                                   await Future.delayed(
-                                    const Duration(milliseconds: 120),
+                                    const Duration(milliseconds: 140),
                                   );
-                                }
+                                  await LiveMusicPlayerSheet.show(
+                                    rtcEngine: widget.rtcEngine,
+                                  );
+                                },
+                                color2: const Color(0xff9de7ff),
+                                image: 'assets/frame/sound.png',
+                                color: const Color(0xff21d4fd),
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                ('Music').appTr,
+                                textAlign: TextAlign.center,
+                                style: _entertainmentToolTextStyle,
+                              ),
+                            ],
+                          ),
 
-                                Get.bottomSheet(
-                                  GameBottomSheet(
-                                    isGame: false,
-                                  ),
-                                  isScrollControlled: true,
-                                );
-                              },
-                              color2: const Color(0xffbfffff),
-                              image:
-                              'assets/audio_live/game-removebg-preview.png',
-                              color: const Color(0xffc9f6ff),
-                            ),
-                            const SizedBox(height: 7),
-                            Text(
-                              ('Game').appTr,
-                              textAlign: TextAlign.center,
-                              style: _entertainmentToolTextStyle,
-                            ),
-                          ],
-                        ),
+                        if (_shouldShowRoomExtension())
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              message_bottom1(
+                                onPress: () {
+                                  _openRoomSettingPage(livestreamController);
+                                },
+                                color2: const Color(0xff34d04b),
+                                image: 'assets/flaticons/theme.png',
+                                color: const Color(0xffa7ec68),
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                ('Room Setting').appTr,
+                                textAlign: TextAlign.center,
+                                style: _entertainmentToolTextStyle,
+                              ),
+                            ],
+                          ),
 
-                      // Current-room safety controls.
+                        if (_isAudioRoom() && _hasMinimumCoinBalance)
+                          Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              message_bottom1(
+                                onPress: () async {
+                                  if (Get.isBottomSheetOpen == true) {
+                                    Get.back();
+                                    await Future.delayed(
+                                      const Duration(milliseconds: 120),
+                                    );
+                                  }
 
-                      if (_isAudioRoom() && _canUseHostTools)
-                        Obx(
-                              () => _roomControlToolButton(
-                            title: ('Room Lock').appTr,
-                            icon: livestreamController.liveRoomLocked.value
-                                ? Icons.lock_rounded
-                                : Icons.lock_open_rounded,
-                            color: const Color(0xff8d52ef),
-                            active:
-                            livestreamController.liveRoomLocked.value,
-                            onTap: () => _toggleRoomLockFromMoreOptions(
-                              livestreamController,
+                                  Get.bottomSheet(
+                                    GameBottomSheet(isGame: false),
+                                    isScrollControlled: true,
+                                  );
+                                },
+                                color2: const Color(0xffbfffff),
+                                image:
+                                'assets/audio_live/game-removebg-preview.png',
+                                color: const Color(0xffc9f6ff),
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                ('Game').appTr,
+                                textAlign: TextAlign.center,
+                                style: _entertainmentToolTextStyle,
+                              ),
+                            ],
+                          ),
+
+                        // Current-room safety controls.
+                        if ((_isAudioRoom() || _isPopularRoom()) &&
+                            _canUseHostTools)
+                          Obx(
+                                () => _roomControlToolButton(
+                              title: ('Room Lock').appTr,
+                              icon: livestreamController.liveRoomLocked.value
+                                  ? Icons.lock_rounded
+                                  : Icons.lock_open_rounded,
+                              color: const Color(0xff8d52ef),
+                              active: livestreamController.liveRoomLocked.value,
+                              onTap: () => _toggleRoomLockFromMoreOptions(
+                                livestreamController,
+                              ),
                             ),
                           ),
-                        ),
 
-                      if (_isAudioRoom() && _canUseHostTools)
-                        Obx(
-                              () => _roomControlToolButton(
-                            title: ('Lock Chat').appTr,
-                            icon:
-                            livestreamController.liveCommentLocked.value
-                                ? Icons.chat_bubble_rounded
-                                : Icons.mark_chat_read_rounded,
-                            color: const Color(0xffF80230),
-                            active:
-                            livestreamController.liveCommentLocked.value,
-                            onTap: () => _toggleChatLockFromMoreOptions(
-                              livestreamController,
+                        if ((_isAudioRoom() || _isPopularRoom()) &&
+                            _canUseHostTools)
+                          Obx(
+                                () => _roomControlToolButton(
+                              title: ('Lock Chat').appTr,
+                              icon: livestreamController.liveCommentLocked.value
+                                  ? Icons.chat_bubble_rounded
+                                  : Icons.mark_chat_read_rounded,
+                              color: const Color(0xffF80230),
+                              active:
+                              livestreamController.liveCommentLocked.value,
+                              onTap: () => _toggleChatLockFromMoreOptions(
+                                livestreamController,
+                              ),
                             ),
                           ),
-                        ),
 
-                      if (_isAudioRoom() && _canUseHostTools)
-                        Obx(
-                              () => _roomControlToolButton(
-                            title: ('Hidden Room').appTr,
-                            icon: livestreamController.liveHiddenRoom.value
-                                ? Icons.visibility_off_rounded
-                                : Icons.visibility_rounded,
-                            color: const Color(0xffFF8A00),
-                            active:
-                            livestreamController.liveHiddenRoom.value,
-                            onTap: () => _toggleHiddenRoomFromMoreOptions(
-                              livestreamController,
+                        if (_isAudioRoom() && _canUseHostTools)
+                          Obx(
+                                () => _roomControlToolButton(
+                              title: ('Hidden Room').appTr,
+                              icon: livestreamController.liveHiddenRoom.value
+                                  ? Icons.visibility_off_rounded
+                                  : Icons.visibility_rounded,
+                              color: const Color(0xffFF8A00),
+                              active: livestreamController.liveHiddenRoom.value,
+                              onTap: () => _toggleHiddenRoomFromMoreOptions(
+                                livestreamController,
+                              ),
                             ),
                           ),
-                        ),
 
-                      if (_isAudioRoom() && _canUseHostTools)
-                        Obx(
-                              () => _roomControlToolButton(
-                            title: ('Screen Record').appTr,
-                            icon: livestreamController
-                                .liveScreenRecordBlocked.value
-                                ? Icons.fiber_manual_record_rounded
-                                : Icons.video_camera_back_rounded,
-                            color: const Color(0xffE83E8C),
-                            active: livestreamController
-                                .liveScreenRecordBlocked.value,
-                            onTap: () => _toggleScreenRecordFromMoreOptions(
-                              livestreamController,
+                        if ((_isAudioRoom() || _isPopularRoom()) &&
+                            _canUseHostTools)
+                          Obx(
+                                () => _roomControlToolButton(
+                              title: ('Screen Record').appTr,
+                              icon:
+                              livestreamController
+                                  .liveScreenRecordBlocked
+                                  .value
+                                  ? Icons.fiber_manual_record_rounded
+                                  : Icons.video_camera_back_rounded,
+                              color: const Color(0xffE83E8C),
+                              active: livestreamController
+                                  .liveScreenRecordBlocked
+                                  .value,
+                              onTap: () => _toggleScreenRecordFromMoreOptions(
+                                livestreamController,
+                              ),
                             ),
                           ),
-                        ),
 
-                      if (_isAudioRoom() && _canUseHostTools)
-                        Obx(
-                              () => _roomControlToolButton(
-                            title: ('Screenshot').appTr,
-                            icon: livestreamController
-                                .liveScreenshotBlocked.value
-                                ? Icons.screenshot_monitor_rounded
-                                : Icons.screenshot_rounded,
-                            color: const Color(0xff147DFF),
-                            active: livestreamController
-                                .liveScreenshotBlocked.value,
-                            onTap: () => _toggleScreenshotFromMoreOptions(
-                              livestreamController,
+                        if ((_isAudioRoom() || _isPopularRoom()) &&
+                            _canUseHostTools)
+                          Obx(
+                                () => _roomControlToolButton(
+                              title: ('Screenshot').appTr,
+                              icon:
+                              livestreamController
+                                  .liveScreenshotBlocked
+                                  .value
+                                  ? Icons.screenshot_monitor_rounded
+                                  : Icons.screenshot_rounded,
+                              color: const Color(0xff147DFF),
+                              active: livestreamController
+                                  .liveScreenshotBlocked
+                                  .value,
+                              onTap: () => _toggleScreenshotFromMoreOptions(
+                                livestreamController,
+                              ),
                             ),
                           ),
-                        ),
 
-                      if (_isAudioRoom() && _canUseHostTools)
-                        _cleanChatToolButton(
-                          livestreamController: livestreamController,
-                        ),
-
-                      if (_isAudioRoom())
-                        _shareLiveToolButton(
-                          livestreamController: livestreamController,
-                        ),
-                    ];
-
-                    return Wrap(
-                      alignment: WrapAlignment.start,
-                      spacing: horizontalGap,
-                      runSpacing: kHeight * 0.024,
-                      children: tools
-                          .map(
-                            (tool) => SizedBox(
-                          width: itemWidth,
-                          child: Align(
-                            alignment: Alignment.topCenter,
-                            child: tool,
+                        if ((_isAudioRoom() || _isPopularRoom()) &&
+                            _canUseHostTools)
+                          _cleanChatToolButton(
+                            livestreamController: livestreamController,
                           ),
-                        ),
-                      )
-                          .toList(),
-                    );
-                  },
-                ),
 
-                SizedBox(
-                  height: kHeight * 0.05,
-                ),
-                //---------------------card 2 --------------
-              ],
+                        if (_isAudioRoom())
+                          _shareLiveToolButton(
+                            livestreamController: livestreamController,
+                          ),
+                      ];
+
+                      return Wrap(
+                        alignment: WrapAlignment.start,
+                        spacing: horizontalGap,
+                        runSpacing: kHeight * 0.024,
+                        children: tools
+                            .map(
+                              (tool) => SizedBox(
+                            width: itemWidth,
+                            child: Align(
+                              alignment: Alignment.topCenter,
+                              child: tool,
+                            ),
+                          ),
+                        )
+                            .toList(),
+                      );
+                    },
+                  ),
+
+                  SizedBox(height: kHeight * 0.05),
+                  //---------------------card 2 --------------
+                ],
+              ),
             ),
           ),
-        ));
+        );
       },
       assetImage: 'assets/frame/menu.png',
       imageHeight: kHeight * 0.025,
@@ -2177,7 +1800,6 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
     );
   }
 }
-
 
 class _RoomPasswordDialog extends StatefulWidget {
   const _RoomPasswordDialog();
@@ -2206,9 +1828,7 @@ class _RoomPasswordDialogState extends State<_RoomPasswordDialog> {
   void _submit() {
     final String password = _passwordController.text.trim();
     if (!RegExp(r'^\d{6}$').hasMatch(password)) {
-      Fluttertoast.showToast(
-        msg: ('Please enter 6 digit password').appTr,
-      );
+      Fluttertoast.showToast(msg: ('Please enter 6 digit password').appTr);
       return;
     }
     _close(password);
@@ -2256,10 +1876,7 @@ class _RoomPasswordDialogState extends State<_RoomPasswordDialog> {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: const LinearGradient(
-                      colors: [
-                        Color(0xff8d52ef),
-                        Color(0xffff65c3),
-                      ],
+                      colors: [Color(0xff8d52ef), Color(0xffff65c3)],
                     ),
                     boxShadow: [
                       BoxShadow(
@@ -2286,7 +1903,8 @@ class _RoomPasswordDialogState extends State<_RoomPasswordDialog> {
                 ),
                 SizedBox(height: kHeight * 0.008),
                 Text(
-                  ('Enter 6 digit password. Viewers must use this password to join your locked room.').appTr,
+                  ('Enter 6 digit password. Viewers must use this password to join your locked room.')
+                      .appTr,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.poppins(
                     color: Colors.black54,
@@ -2391,789 +2009,6 @@ class _RoomPasswordDialogState extends State<_RoomPasswordDialog> {
           ),
         ),
       ),
-    );
-  }
-}
-
-
-class _LiveRoomSettingPage extends StatefulWidget {
-  final LivestreamController livestreamController;
-  final WebsocketController websocketController;
-  final AuthController authController;
-
-  const _LiveRoomSettingPage({
-    required this.livestreamController,
-    required this.websocketController,
-    required this.authController,
-  });
-
-  @override
-  State<_LiveRoomSettingPage> createState() => _LiveRoomSettingPageState();
-}
-
-class _LiveRoomSettingPageState extends State<_LiveRoomSettingPage> {
-  late int selectedSeatCount;
-  late int selectedLayout;
-  late int selectedTheme;
-  late int selectedBackground;
-
-  final TextEditingController roomNameController = TextEditingController();
-  final TextEditingController announcementController = TextEditingController();
-  final TextEditingController passwordController = TextEditingController();
-
-  File? pickedRoomImage;
-
-  final List<int> seatOptions = const [9, 12, 15, 20];
-
-  @override
-  void initState() {
-    super.initState();
-
-    final live = _currentLiveData();
-    final bool useWsRoomCache = _websocketRoomCacheBelongsToThisRoom;
-
-    selectedSeatCount = useWsRoomCache &&
-        widget.websocketController.liveRoomSeatCount.value > 0
-        ? widget.websocketController.liveRoomSeatCount.value
-        : _asInt(live['seat_count'], widget.livestreamController.seatCount.value);
-    selectedLayout = useWsRoomCache
-        ? widget.websocketController.liveRoomLayout.value
-        : _asInt(live['room_layout'], 0);
-    selectedTheme = useWsRoomCache
-        ? widget.websocketController.liveRoomTheme.value
-        : _asInt(live['room_theme'], 0);
-    selectedBackground = useWsRoomCache
-        ? widget.websocketController.liveRoomBackground.value
-        : _asInt(live['room_background'], -1);
-
-    roomNameController.text = _firstText([
-      useWsRoomCache ? widget.websocketController.liveRoomTitle.value : '',
-      live['stream_bte'],
-      live['title'],
-    ], fallback: 'Live Room');
-
-    announcementController.text = _firstText([
-      useWsRoomCache ? widget.websocketController.liveRoomAnnouncement.value : '',
-      live['announcement'],
-      live['anousment'],
-      live['stream_title'],
-    ]);
-
-    passwordController.text = _firstText([
-      useWsRoomCache ? widget.websocketController.liveRoomPassword.value : '',
-      live['room_password'],
-      live['stream_password'],
-      live['password'],
-    ]);
-  }
-
-  @override
-  void dispose() {
-    roomNameController.dispose();
-    announcementController.dispose();
-    passwordController.dispose();
-    super.dispose();
-  }
-
-  Map<String, dynamic> _currentLiveData() {
-    final data = widget.livestreamController.createStreamData;
-    Map<String, dynamic> live = <String, dynamic>{};
-    if (data['livestreamdata'] is Map) {
-      live = Map<String, dynamic>.from(data['livestreamdata']);
-    } else if (data['livestream'] is Map) {
-      live = Map<String, dynamic>.from(data['livestream']);
-    }
-
-    final currentStreamId = widget.livestreamController.streamId.value;
-    final liveId = int.tryParse(
-      (live['id'] ?? live['livestream_id'] ?? '0').toString(),
-    ) ??
-        0;
-
-    /// createStreamData can temporarily hold the previous room after user moves
-    /// between live rooms. Ignore it unless it belongs to the current room.
-    if (currentStreamId > 0 && liveId > 0 && liveId != currentStreamId) {
-      return <String, dynamic>{};
-    }
-
-    return live;
-  }
-
-  bool get _websocketRoomCacheBelongsToThisRoom {
-    final currentStreamId = widget.livestreamController.streamId.value;
-    return currentStreamId > 0 &&
-        widget.websocketController.liveRoomUpdateStreamId.value == currentStreamId;
-  }
-
-  String _firstText(List<dynamic> values, {String fallback = ''}) {
-    for (final raw in values) {
-      final text = raw?.toString().trim() ?? '';
-      if (text.isNotEmpty && text.toLowerCase() != 'null') return text;
-    }
-    return fallback;
-  }
-
-  int _asInt(dynamic value, int fallback) {
-    return int.tryParse(value?.toString() ?? '') ?? fallback;
-  }
-
-  int _maxLayoutForSeats(int seats) {
-    if (seats == 9) return 3;
-    if (seats == 12) return 4;
-    return 0;
-  }
-
-  String _imageUrl(dynamic raw) {
-    final value = raw?.toString().trim() ?? '';
-    if (value.isEmpty || value.toLowerCase() == 'null') return '';
-    if (value.startsWith('http://') || value.startsWith('https://')) return value;
-    return '$kDomainUrl/$value';
-  }
-
-  String get _currentStreamImageUrl {
-    if (pickedRoomImage != null) return pickedRoomImage!.path;
-    final live = _currentLiveData();
-    final bool useWsRoomCache = _websocketRoomCacheBelongsToThisRoom;
-    final streamImage = _firstText([
-      useWsRoomCache ? widget.websocketController.liveRoomStreamImage.value : '',
-      live['stream_image'],
-      live['image'],
-      live['cover_image'],
-      live['thumbnail'],
-    ]);
-    if (streamImage.isNotEmpty) return _imageUrl(streamImage);
-
-    final user = widget.authController.userProfile.value.user;
-    final profile = user?.profileImage?.toString().trim() ?? '';
-    return profile.isEmpty ? '' : _imageUrl(profile);
-  }
-
-  Future<void> _pickRoomImage(ImageSource source) async {
-    try {
-      final XFile? image = await ImagePicker().pickImage(
-        source: source,
-        imageQuality: 70,
-      );
-      if (image == null) return;
-      setState(() => pickedRoomImage = File(image.path));
-    } catch (e) {
-      Fluttertoast.showToast(msg: ('Image pick failed').appTr);
-    }
-  }
-
-  Future<void> _saveRoom({bool closeKeyboard = true}) async {
-    if (closeKeyboard) FocusScope.of(context).unfocus();
-
-    selectedLayout = selectedLayout.clamp(0, _maxLayoutForSeats(selectedSeatCount));
-
-    await widget.livestreamController.editLiveStreamRoom(
-      livestreamId: widget.livestreamController.streamId.value,
-      userId: widget.authController.userProfile.value.user?.id?.toInt() ?? 0,
-      seatCount: selectedSeatCount,
-      roomLayout: selectedLayout,
-      roomTheme: selectedTheme,
-      roomBackground: selectedBackground,
-      streamTitle: roomNameController.text.trim().isEmpty
-          ? 'Live Room'
-          : roomNameController.text.trim(),
-      streamAnnouncement: announcementController.text.trim(),
-      streamImageFile: pickedRoomImage,
-      roomPassword: passwordController.text.trim(),
-    );
-
-    if (mounted) setState(() => pickedRoomImage = null);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xfff7f4ff),
-      appBar: AppBar(
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: Colors.transparent,
-        foregroundColor: Colors.white,
-
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                kAppColor2,
-                kAppColor1
-              ],
-            ),
-          ),
-        ),
-
-        title: Text(
-          ('Room Setting').appTr,
-          style: GoogleFonts.poppins(
-            fontSize: kHeight * .018,
-            fontWeight: FontWeight.w700,
-            color: Colors.white,
-          ),
-        ),
-
-        actions: [
-          Obx(() {
-            final isLoading =
-                widget.livestreamController.roomEditLoading.value;
-
-            return TextButton(
-              onPressed: isLoading ? null : () => _saveRoom(),
-              child: isLoading
-                  ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-                  : Text(
-                ('Save').appTr,
-                style: GoogleFonts.poppins(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            );
-          }),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Obx(() {
-              return widget.livestreamController.roomEditLoading.value
-                  ? const LinearProgressIndicator(minHeight: 2)
-                  : const SizedBox(height: 2);
-            }),
-            Expanded(
-              child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
-                padding: EdgeInsets.symmetric(
-                  horizontal: kWeight * .04,
-                  vertical: kHeight * .018,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sectionTitle(('Basic Information').appTr),
-                    _textCard(
-                      title: ('Room Name').appTr,
-                      hint: 'Enter room name',
-                      icon: Icons.drive_file_rename_outline_rounded,
-                      controller: roomNameController,
-                    ),
-                    SizedBox(height: kHeight * .012),
-                    _textCard(
-                      title: ('Announcement').appTr,
-                      hint: 'Write announcement for live comments',
-                      icon: Icons.campaign_rounded,
-                      controller: announcementController,
-                      minLines: 2,
-                      maxLines: 4,
-                    ),
-                    SizedBox(height: kHeight * .012),
-                    _textCard(
-                      title: ('Room Password').appTr,
-                      hint: 'Optional password',
-                      icon: Icons.lock_rounded,
-                      controller: passwordController,
-                    ),
-                    SizedBox(height: kHeight * .020),
-
-                    _sectionTitle(('Room Image').appTr),
-                    _imageEditorCard(),
-                    SizedBox(height: kHeight * .020),
-
-                    _sectionTitle(('Seat Set').appTr),
-                    _seatGrid(),
-                    SizedBox(height: kHeight * .020),
-
-                    // _sectionTitle('Theme'),
-                    // _themeGrid(),
-                    SizedBox(height: kHeight * .020),
-
-                    _sectionTitle(('Layout').appTr),
-                    _layoutGrid(),
-                    SizedBox(height: kHeight * .020),
-
-                    _sectionTitle(('Background').appTr),
-                    _backgroundGrid(),
-                    SizedBox(height: kHeight * .030),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(kWeight * .04, 8, kWeight * .04, 12),
-          child: Obx(() {
-            final loading = widget.livestreamController.roomEditLoading.value;
-            return GestureDetector(
-              onTap: loading ? null : () => _saveRoom(),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                height: kHeight * .052,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  gradient: const LinearGradient(
-                    colors: [Color(0xff8d52ef), Color(0xffff65c3)],
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xff8d52ef).withOpacity(.22),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  loading ? ('Updating...').appTr: ('Update Room').appTr,
-                  style: GoogleFonts.poppins(
-                    color: Colors.white,
-                    fontSize: kHeight * .015,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            );
-          }),
-        ),
-      ),
-    );
-  }
-
-  Widget _sectionTitle(String text) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: kHeight * .010),
-      child: Text(
-        text,
-        style: GoogleFonts.poppins(
-          color: Colors.black87,
-          fontSize: kHeight * .016,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
-  }
-
-  Widget _textCard({
-    required String title,
-    required String hint,
-    required IconData icon,
-    required TextEditingController controller,
-    int minLines = 1,
-    int maxLines = 1,
-  }) {
-    return Container(
-      padding: EdgeInsets.all(kHeight * .014),
-      decoration: _cardDecoration(),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _roundIcon(icon),
-          SizedBox(width: kWeight * .030),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: _labelStyle()),
-                SizedBox(height: kHeight * .007),
-                TextField(
-                  controller: controller,
-                  minLines: minLines,
-                  maxLines: maxLines,
-                  style: GoogleFonts.poppins(fontSize: kHeight * .0135),
-                  decoration: InputDecoration(
-                    hintText: hint,
-                    hintStyle: GoogleFonts.poppins(
-                      color: Colors.grey.shade500,
-                      fontSize: kHeight * .0125,
-                    ),
-                    filled: true,
-                    fillColor: const Color(0xfff8f7fb),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: kWeight * .030,
-                      vertical: kHeight * .012,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: Colors.grey.shade200),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(color: Colors.grey.shade200),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(color: Color(0xff8d52ef)),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _imageEditorCard() {
-    final url = _currentStreamImageUrl;
-    final isLocal = url.startsWith('/');
-
-    return Container(
-      padding: EdgeInsets.all(kHeight * .014),
-      decoration: _cardDecoration(),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: Container(
-              height: kHeight * .095,
-              width: kHeight * .095,
-              color: const Color(0xffeee8ff),
-              child: isLocal
-                  ? Image.file(File(url), fit: BoxFit.cover)
-                  : (url.isEmpty
-                  ? Icon(Icons.person, color: Colors.grey.shade500)
-                  : CachedNetworkImage(
-                imageUrl: url,
-                fit: BoxFit.cover,
-                errorWidget: (context, url, error) => Icon(
-                  Icons.person,
-                  color: Colors.grey.shade500,
-                ),
-              )),
-            ),
-          ),
-          SizedBox(width: kWeight * .034),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(('Stream Image').appTr, style: _labelStyle()),
-                SizedBox(height: kHeight * .006),
-                Text(
-                  ('If no image is provided, the host profile image will be shown automatically.').appTr,
-                  style: GoogleFonts.poppins(
-                    color: Colors.grey.shade600,
-                    fontSize: kHeight * .0115,
-                  ),
-                ),
-                SizedBox(height: kHeight * .012),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _smallAction('Gallery', Icons.photo_library_rounded, () => _pickRoomImage(ImageSource.gallery)),
-                    _smallAction('Camera', Icons.photo_camera_rounded, () => _pickRoomImage(ImageSource.camera)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _seatGrid() {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: seatOptions.length,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: kWeight < 420 ? 2 : 4,
-        crossAxisSpacing: kWeight * .025,
-        mainAxisSpacing: kHeight * .012,
-        childAspectRatio: 2.55,
-      ),
-      itemBuilder: (context, index) {
-        final seat = seatOptions[index];
-        return _selectCard(
-          title: ('$seat Seat').appTr,
-          icon: Icons.event_seat_rounded,
-          active: selectedSeatCount == seat,
-          onTap: () {
-            setState(() {
-              selectedSeatCount = seat;
-              selectedLayout = selectedLayout.clamp(0, _maxLayoutForSeats(seat));
-            });
-          },
-        );
-      },
-    );
-  }
-
-
-  Widget _backgroundGrid() {
-    return Obx(() {
-      final backgrounds = widget.livestreamController.backgroundList.whereType<Map>().toList();
-      final items = [{'id': -1, 'title': ('No Background').appTr, 'image': null}, ...backgrounds];
-      return _imageGrid(
-        items: items,
-        selectedId: selectedBackground,
-        noneItem: -1,
-        onSelect: (id) => setState(() => selectedBackground = id),
-        fallbackIcon: Icons.image_rounded,
-      );
-    });
-  }
-
-  Widget _layoutGrid() {
-    final layoutCount = _maxLayoutForSeats(selectedSeatCount) + 1;
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: layoutCount,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: kWeight < 420 ? 3 : 5,
-        crossAxisSpacing: kWeight * .025,
-        mainAxisSpacing: kHeight * .012,
-        childAspectRatio: 1.12,
-      ),
-      itemBuilder: (context, index) {
-        return _selectCard(
-          title: ('Layout ${index + 1}').appTr,
-          icon: Icons.grid_view_rounded,
-          active: selectedLayout == index,
-          onTap: () => setState(() => selectedLayout = index),
-        );
-      },
-    );
-  }
-
-  Widget _imageGrid({
-    required List<Map> items,
-    required int selectedId,
-    required int? noneItem,
-    required ValueChanged<int> onSelect,
-    required IconData fallbackIcon,
-  }) {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: items.length,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: kWeight < 420 ? 2 : 4,
-        crossAxisSpacing: kWeight * .030,
-        mainAxisSpacing: kHeight * .014,
-        childAspectRatio: 1.35,
-      ),
-      itemBuilder: (context, index) {
-        final item = items[index];
-        final id = _asInt(item['id'], noneItem ?? index);
-        final title = index == 0 && noneItem != null
-            ? ('No Background').appTr: (item['name'] ?? item['title'] ?? 'Item ${index + 1}').toString();
-        final img = _imageUrl(item['image']);
-        final active = selectedId == id;
-
-        return GestureDetector(
-          onTap: () => onSelect(id),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: active ? const Color(0xff8d52ef) : Colors.transparent,
-                width: 2,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(.055),
-                  blurRadius: 14,
-                  offset: const Offset(0, 7),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (img.isNotEmpty)
-                    CachedNetworkImage(
-                      imageUrl: img,
-                      fit: BoxFit.cover,
-                      errorWidget: (context, url, error) => _imagePlaceholder(fallbackIcon),
-                    )
-                  else
-                    _imagePlaceholder(index == 0 && noneItem != null ? Icons.block_rounded : fallbackIcon),
-                  Container(
-                    alignment: Alignment.bottomLeft,
-                    padding: const EdgeInsets.all(9),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Colors.transparent, Colors.black.withOpacity(.58)],
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                      ),
-                    ),
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.poppins(
-                        color: Colors.white,
-                        fontSize: kHeight * .012,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  if (active)
-                    Positioned(
-                      right: 8,
-                      top: 8,
-                      child: _checkBadge(),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _selectCard({
-    required String title,
-    required IconData icon,
-    required bool active,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        padding: EdgeInsets.symmetric(horizontal: kWeight * .025),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: active ? const Color(0xff8d52ef) : Colors.transparent,
-            width: 2,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(.055),
-              blurRadius: 14,
-              offset: const Offset(0, 7),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: active ? const Color(0xff8d52ef) : Colors.grey.shade600, size: kHeight * .018),
-            SizedBox(width: kWeight * .018),
-            Flexible(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.poppins(
-                  color: active ? const Color(0xff8d52ef) : Colors.black87,
-                  fontWeight: FontWeight.w700,
-                  fontSize: kHeight * .0126,
-                ),
-              ),
-            ),
-            if (active) ...[
-              SizedBox(width: kWeight * .012),
-              Icon(Icons.check_circle_rounded, color: const Color(0xff8d52ef), size: kHeight * .017),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _roundIcon(IconData icon) {
-    return Container(
-      height: kHeight * .044,
-      width: kHeight * .044,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: const LinearGradient(colors: [Color(0xff8d52ef), Color(0xffff65c3)]),
-      ),
-      child: Icon(icon, color: Colors.white, size: kHeight * .021),
-    );
-  }
-
-  Widget _smallAction(String text, IconData icon, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: EdgeInsets.symmetric(horizontal: kWeight * .026, vertical: kHeight * .009),
-        decoration: BoxDecoration(
-          color: const Color(0xff8d52ef).withOpacity(.10),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xff8d52ef).withOpacity(.20)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: const Color(0xff8d52ef), size: kHeight * .015),
-            const SizedBox(width: 5),
-            Text(text, style: GoogleFonts.poppins(color: const Color(0xff8d52ef), fontWeight: FontWeight.w700, fontSize: kHeight * .0115)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _imagePlaceholder(IconData icon) {
-    return Container(
-      color: const Color(0xffeee8ff),
-      child: Icon(icon, color: const Color(0xff8d52ef), size: kHeight * .032),
-    );
-  }
-
-
-  Widget _checkBadge() {
-    return Container(
-      height: kHeight * .025,
-      width: kHeight * .025,
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(colors: [Color(0xff8d52ef), Color(0xffff65c3)]),
-      ),
-      child: Icon(Icons.check_rounded, color: Colors.white, size: kHeight * .014),
-    );
-  }
-
-  TextStyle _labelStyle() {
-    return GoogleFonts.poppins(
-      color: Colors.black87,
-      fontSize: kHeight * .0135,
-      fontWeight: FontWeight.w800,
-    );
-  }
-
-  BoxDecoration _cardDecoration() {
-    return BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(.055),
-          blurRadius: 16,
-          offset: const Offset(0, 8),
-        ),
-      ],
     );
   }
 }

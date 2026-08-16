@@ -1,6 +1,31 @@
 part of '../websocket_controller.dart';
 
 extension CommentEventHandler on WebsocketController {
+  String _commentEchoKey(int roomId, int userId, String comment) =>
+      '$roomId|$userId|$comment';
+
+  void addSentCommentLocally({
+    required int livestreamId,
+    required int userId,
+    required String comment,
+    required Map<String, dynamic> user,
+  }) {
+    final text = comment.trim();
+    if (livestreamId <= 0 || userId <= 0 || text.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _localCommentEchoes.removeWhere((_, sentAt) => now - sentAt > 15000);
+    _localCommentEchoes[_commentEchoKey(livestreamId, userId, text)] = now;
+    commentsList.add(<String, dynamic>{
+      'type': 'message',
+      'livestream_id': livestreamId,
+      'user': user,
+      'comment': text,
+      'timestamp': DateTime.now().toIso8601String(),
+      'is_local_echo': true,
+    });
+    _refreshCommentsListSmooth();
+  }
+
   void clearLiveCommentsLocal({int? livestreamId, String source = 'unknown'}) {
     try {
       if (livestreamId != null &&
@@ -101,16 +126,85 @@ extension CommentEventHandler on WebsocketController {
 
     final user = data['user'] ?? payload['user'];
 
+    final systemType = (payload['system_type'] ?? data['system_type'] ?? '')
+        .toString()
+        .toLowerCase();
+    final commentText =
+        (data['comment'] ?? data['message'] ?? payload['comment'] ?? '')
+            .toString();
+    final eventUser = user is Map ? Map<String, dynamic>.from(user) : <String, dynamic>{};
+    final eventUserId = _toInt(
+      eventUser['id'] ?? eventUser['user_id'] ?? data['user_id'] ?? payload['user_id'],
+    );
+    final roomId = _toInt(livestreamId);
+    final echoKey = _commentEchoKey(roomId, eventUserId, commentText.trim());
+    final echoAt = _localCommentEchoes.remove(echoKey);
+    if (echoAt != null &&
+        DateTime.now().millisecondsSinceEpoch - echoAt <= 15000) {
+      liveLog('Local comment websocket echo deduped => room:$roomId user:$eventUserId');
+      return;
+    }
+    final lowerComment = commentText.toLowerCase();
+    final bool isJoin =
+        systemType == 'viewer_join' ||
+        systemType == 'viewer_joined' ||
+        lowerComment.contains('has joined');
+    final bool isLeave =
+        systemType == 'viewer_left' ||
+        systemType == 'viewer_leave' ||
+        systemType == 'viewer_removed' ||
+        lowerComment.contains('left the');
+    final rawUser = data['user'] ?? payload['user'] ?? payload['viewer'];
+    final dynamic presenceUserId = rawUser is Map
+        ? rawUser['id'] ?? rawUser['user_id'] ?? rawUser['viewer_id']
+        : payload['user_id'] ?? payload['viewer_id'];
+    final String reason = (payload['reason'] ?? data['reason'] ?? '')
+        .toString()
+        .toLowerCase();
+    final bool verifiedLeave =
+        payload['verified_exit'] == true ||
+        payload['remove_viewer'] == true ||
+        payload['viewer_removed'] == true ||
+        reason.contains('kick') ||
+        reason.contains('ban') ||
+        reason.contains('room_exit') ||
+        reason.contains('live_end') ||
+        reason.contains('owner_close') ||
+        reason.contains('explicit_leave');
+
+    if (isLeave && !verifiedLeave) {
+      liveLog(
+        'False/weak leave comment ignored => stream:$livestreamId '
+        'user:$presenceUserId reason:$reason',
+      );
+      return;
+    }
+    if ((isJoin || isLeave) &&
+        !acceptVisiblePresenceComment(
+          streamId: livestreamId,
+          userId: presenceUserId,
+          kind: isJoin ? 'join' : 'leave',
+          eventId: payload['event_id'] ?? payload['message_id'] ?? data['id'],
+        )) {
+      liveLog(
+        'Duplicate ${isJoin ? 'join' : 'leave'} visible comment ignored '
+        '=> stream:$livestreamId user:$presenceUserId',
+      );
+      // Keep membership synchronization idempotent even when the visible
+      // system comment was already produced by viewer_joined/viewer_left.
+      _handleViewerSystemCommentFromLiveComment(<String, dynamic>{
+        'livestream_id': livestreamId,
+        'user': rawUser,
+        'comment': commentText,
+      }, payload);
+      return;
+    }
+
     final commentData = {
       'type': 'message',
       'livestream_id': livestreamId,
       'user': user,
-      'comment':
-          data['comment'] ??
-          data['message'] ??
-          payload['comment'] ??
-          payload['message'] ??
-          '',
+      'comment': commentText,
       'timestamp':
           data['timestamp'] ??
           payload['timestamp'] ??

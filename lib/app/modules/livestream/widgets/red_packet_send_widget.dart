@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:google_fonts/google_fonts.dart';
 
+import '../../../../constants/constants.dart';
 import '../controllers/livestream_controller.dart';
 import '../socket/websocket_controller.dart';
 
@@ -45,7 +47,7 @@ class _RedPacketSendWidgetState extends State<RedPacketSendWidget> {
   static const String topCoinAsset = 'assets/audio_live/coinRedpoket.png';
 
   // Small coin icon for balance and background watermark.
-  static const String coinIconAsset = 'assets/frame/coin.png';
+  static const String coinIconAsset = 'assets/icons/coin.png';
 
   @override
   void initState() {
@@ -509,13 +511,22 @@ class _RedPacketSendWidgetState extends State<RedPacketSendWidget> {
           },
         ),
         const SizedBox(width: 2),
-        Text(
-          _getCoinBalance(),
-          style: const TextStyle(
-            color: Color(0xFF7A4B00),
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-          ),
+        Flexible(
+          child: Obx(() {
+            final coins =
+                authController.userProfile.value.user?.coins ?? 0;
+
+            return Text(
+              _formatCoins(coins),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.poppins(
+                color: Colors.black,
+                fontSize:15,
+                fontWeight: FontWeight.w800,
+              ),
+            );
+          }),
         ),
         const SizedBox(width: 10),
         Text(

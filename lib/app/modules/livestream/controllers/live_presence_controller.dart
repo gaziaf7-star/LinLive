@@ -5,6 +5,7 @@ import 'package:get/get_state_manager/src/simple/get_controllers.dart';
 
 import '../../../../apis/api_endpoints.dart';
 import '../utils/LiveTestingLogger.dart';
+import '../utils/live_realtime_debug_log.dart';
 import '../utils/live_performance_config.dart';
 import 'livestream_controller.dart';
 
@@ -393,6 +394,20 @@ class LivePresenceController extends GetxController {
         liveLog(
           '✅ Presence heartbeat ok => stream=$_presenceStreamId '
           'role=$_presenceRole seat=$_presenceSeatNo',
+        );
+        final int serverViewers = LiveRealtimeDebugLog.intValue(
+          LiveTestingLogger.findFirstByKeys(response.data, const <String>[
+            'viewer_count',
+            'viewers_count',
+            'total_viewers',
+          ]),
+        );
+        LiveRealtimeDebugLog.heartbeat(
+          room: _presenceStreamId,
+          serverViewers: serverViewers,
+          localViewers: owner.liveViewerList.length,
+          callers: owner.websocketController.liveCallList,
+          capacity: owner.websocketController.activeSeatCapacity,
         );
       } else {
         _presenceFailureCount++;

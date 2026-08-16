@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
@@ -8,6 +9,7 @@ import '../../auth/views/welcome_view.dart';
 import '../../bottomnav/views/bottomnav_view.dart';
 import '../../messanger/views/messages/components/firestore_service.dart';
 import '../../registersteps/controllers/registersteps_controller.dart';
+import '../../../theme/app_theme_controller.dart';
 
 class SplashController extends GetxController {
   bool _startupStarted = false;
@@ -41,9 +43,33 @@ class SplashController extends GetxController {
       await _authController.initialize().timeout(
         const Duration(seconds: 8),
       );
+      if (kDebugMode && Get.isRegistered<AppThemeController>()) {
+        debugPrint(
+          '[APP_THEME_STARTUP] auth_ready='
+          '${Get.find<AppThemeController>().startupElapsedMilliseconds}ms',
+        );
+      }
 
-      authenticated =
-      await _authController.validateStoredSessionForStartup();
+      authenticated = await _authController.validateStoredSessionForStartup();
+
+      if (authenticated && Get.isRegistered<AppThemeController>()) {
+        final BuildContext? context = Get.context;
+        if (context != null) {
+          try {
+            await Get.find<AppThemeController>()
+                .prepareThemeForFirstFrame(context)
+                .timeout(const Duration(seconds: 5));
+          } on TimeoutException {
+            debugPrint(
+              '[APP_THEME_STARTUP] image gate timeout; using safe fallbacks',
+            );
+          } catch (error) {
+            debugPrint(
+              '[APP_THEME_STARTUP] image gate failed safely: $error',
+            );
+          }
+        }
+      }
     } on TimeoutException catch (error) {
       debugPrint('⚠️ Splash startup timeout => $error');
       authenticated = false;
@@ -82,6 +108,12 @@ class SplashController extends GetxController {
         }
 
         debugPrint('✅ Splash route => BottomnavView');
+        if (kDebugMode && Get.isRegistered<AppThemeController>()) {
+          debugPrint(
+            '[APP_THEME_STARTUP] bottomnav_navigation='
+            '${Get.find<AppThemeController>().startupElapsedMilliseconds}ms',
+          );
+        }
         Get.offAll(
               () => BottomnavView(),
           transition: Transition.fadeIn,

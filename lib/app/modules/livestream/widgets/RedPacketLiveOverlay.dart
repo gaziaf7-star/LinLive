@@ -9,9 +9,11 @@ import 'package:meetlivepro/constants/layout_constant.dart';
 
 import '../../../../constants/image_helper.dart';
 import '../controllers/livestream_controller.dart';
-import '../socket/websocket_controller.dart';
+
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
+
+import '../socket/websocket_controller.dart';
 class RedPacketLiveOverlay extends StatefulWidget {
   final int livestreamId;
 
@@ -49,9 +51,6 @@ class _RedPacketLiveOverlayState extends State<RedPacketLiveOverlay> {
       final routePacket = args is Map ? args['global_lucky_bag_packet'] : null;
       if (routePacket is Map) {
         final seeded = Map<String, dynamic>.from(routePacket);
-        seeded['snapshot_received_at_ms'] ??=
-            seeded['event_received_at_ms'] ??
-                DateTime.now().millisecondsSinceEpoch;
         if (_isForCurrentStream(seeded)) {
           final fastOpenAfter = _fastestOpenSecondsFromPackets([seeded]);
           seeded['open_after_seconds'] = fastOpenAfter;
@@ -132,61 +131,6 @@ class _RedPacketLiveOverlayState extends State<RedPacketLiveOverlay> {
     return DateTime.tryParse(text.replaceFirst(' ', 'T'));
   }
 
-  int _snapshotReceivedAtMs(Map<String, dynamic> packet) {
-    final int snapshotMs = _safeInt(
-      packet['snapshot_received_at_ms'] ??
-          packet['api_received_at_ms'] ??
-          packet['event_received_at_ms'],
-    );
-
-    if (snapshotMs > 0) return snapshotMs;
-    return DateTime.now().millisecondsSinceEpoch;
-  }
-
-  int _packetDurationSeconds(Map<String, dynamic> packet) {
-    final int directDuration = _safeInt(
-      packet['duration_seconds'] ??
-          packet['expire_seconds'] ??
-          packet['lifetime_seconds'],
-    );
-    if (directDuration > 0) return directDuration;
-
-    // created_at and expires_at can be timezone-less, but their difference is
-    // still safe and identical on every device.
-    final DateTime? createdAt = _parseDate(
-      packet['created_at'] ?? packet['sent_at'],
-    );
-    final DateTime? expiresAt = _parseDate(packet['expires_at']);
-
-    if (createdAt != null && expiresAt != null) {
-      final int seconds = expiresAt.difference(createdAt).inSeconds;
-      if (seconds > 0) return seconds;
-    }
-
-    final int expiresIn = _safeInt(packet['expires_in_seconds']);
-    if (expiresIn > 0) {
-      return expiresIn > 120 ? expiresIn : 120;
-    }
-
-    return 120;
-  }
-
-  int _snapshotElapsedSeconds(Map<String, dynamic> packet) {
-    final int expiresIn = _safeInt(packet['expires_in_seconds']);
-    if (expiresIn <= 0) return 0;
-
-    final int duration = _packetDurationSeconds(packet);
-    return (duration - expiresIn).clamp(0, duration).toInt();
-  }
-
-  int _elapsedSinceSnapshotSeconds(Map<String, dynamic> packet) {
-    final int elapsedMs =
-        DateTime.now().millisecondsSinceEpoch - _snapshotReceivedAtMs(packet);
-
-    if (elapsedMs <= 0) return 0;
-    return (elapsedMs / 1000).floor();
-  }
-
   int _openAfterSeconds(Map<String, dynamic> packet) {
     /// Backend can send both open_after_seconds=30 and unlock_after_seconds=3.
     /// Use the smallest positive value so the OPEN button matches backend unlock
@@ -204,63 +148,37 @@ class _RedPacketLiveOverlayState extends State<RedPacketLiveOverlay> {
   }
 
   int _createdAtMs(Map<String, dynamic> packet) {
-    final DateTime? fromPacket = _parseDate(
-      packet['created_at'] ?? packet['sent_at'],
-    );
+    final fromPacket = _parseDate(packet['created_at'] ?? packet['sent_at']);
     if (fromPacket != null) return fromPacket.millisecondsSinceEpoch;
 
-    final int eventMs = _safeInt(packet['event_received_at_ms']);
+    final eventMs = _safeInt(packet['event_received_at_ms']);
     if (eventMs > 0) return eventMs;
 
-    return _snapshotReceivedAtMs(packet);
+    return DateTime.now().millisecondsSinceEpoch;
   }
 
   int _expireAtMs(Map<String, dynamic> packet) {
-    final int expiresIn = _safeInt(packet['expires_in_seconds']);
-    if (expiresIn > 0) {
-      return _snapshotReceivedAtMs(packet) + (expiresIn * 1000);
-    }
-
-    final DateTime? expiresAt = _parseDate(packet['expires_at']);
+    final expiresAt = _parseDate(packet['expires_at']);
     if (expiresAt != null) return expiresAt.millisecondsSinceEpoch;
 
-    return _createdAtMs(packet) + (_packetDurationSeconds(packet) * 1000);
+    final expiresIn = _safeInt(packet['expires_in_seconds']);
+    if (expiresIn > 0) {
+      return DateTime.now().millisecondsSinceEpoch + (expiresIn * 1000);
+    }
+
+    final duration = _safeInt(packet['duration_seconds'] ?? packet['expire_seconds']);
+    final safeDuration = duration <= 0 ? 120 : duration;
+    return _createdAtMs(packet) + safeDuration * 1000;
   }
 
   int _openRemainingSeconds(Map<String, dynamic> packet) {
-    final int explicitRemaining = _safeInt(
-      packet['open_remaining_seconds'] ??
-          packet['remaining_open_seconds'] ??
-          packet['seconds_until_open'] ??
-          packet['unlock_in_seconds'],
-    );
-
-    if (explicitRemaining > 0) {
-      final int left =
-          explicitRemaining - _elapsedSinceSnapshotSeconds(packet);
-      return left < 0 ? 0 : left;
-    }
-
-    final int openAfter = _openAfterSeconds(packet);
-    final int elapsedBeforeSnapshot = _snapshotElapsedSeconds(packet);
-    final int openLeftAtSnapshot =
-    (openAfter - elapsedBeforeSnapshot).clamp(0, openAfter).toInt();
-    final int left =
-        openLeftAtSnapshot - _elapsedSinceSnapshotSeconds(packet);
-
+    final openAt = _createdAtMs(packet) + _openAfterSeconds(packet) * 1000;
+    final left = ((openAt - DateTime.now().millisecondsSinceEpoch) / 1000).ceil();
     return left < 0 ? 0 : left;
   }
 
   int _expireRemainingSeconds(Map<String, dynamic> packet) {
-    final int expiresIn = _safeInt(packet['expires_in_seconds']);
-    if (expiresIn > 0) {
-      final int left = expiresIn - _elapsedSinceSnapshotSeconds(packet);
-      return left < 0 ? 0 : left;
-    }
-
-    final int left =
-    ((_expireAtMs(packet) - DateTime.now().millisecondsSinceEpoch) / 1000)
-        .ceil();
+    final left = ((_expireAtMs(packet) - DateTime.now().millisecondsSinceEpoch) / 1000).ceil();
     return left < 0 ? 0 : left;
   }
 
@@ -273,22 +191,6 @@ class _RedPacketLiveOverlayState extends State<RedPacketLiveOverlay> {
       return false;
     }
     return _expireRemainingSeconds(packet) > 0;
-  }
-
-  bool _canCurrentUserCollect(Map<String, dynamic> packet) {
-    if (!_packetActive(packet)) return false;
-
-    final bool alreadyCollected =
-        _truthy(packet['collected_by_me']) ||
-            _safeInt(packet['my_collection_amount']) > 0;
-
-    if (alreadyCollected) return false;
-
-    if (packet.containsKey('can_collect')) {
-      return _truthy(packet['can_collect']);
-    }
-
-    return _safeInt(packet['remaining_quantity']) > 0;
   }
 
   Future<void> _loadActiveLuckyBagForRoom() async {
@@ -326,21 +228,11 @@ class _RedPacketLiveOverlayState extends State<RedPacketLiveOverlay> {
       ]);
       merged['open_after_seconds'] = fastOpenAfter;
       merged['unlock_after_seconds'] = fastOpenAfter;
-      final int apiReceivedAtMs = DateTime.now().millisecondsSinceEpoch;
-
       merged['event_received_at_ms'] = sameAsSeeded
-          ? (current['event_received_at_ms'] ??
-          merged['event_received_at_ms'] ??
-          apiReceivedAtMs)
-          : (merged['event_received_at_ms'] ?? apiReceivedAtMs);
+          ? (current['event_received_at_ms'] ?? merged['event_received_at_ms'] ?? DateTime.now().millisecondsSinceEpoch)
+          : (merged['event_received_at_ms'] ?? DateTime.now().millisecondsSinceEpoch);
 
-      // expires_in_seconds belongs to this fresh API response. Always anchor
-      // it to the moment the response reached this device.
-      merged['snapshot_received_at_ms'] = apiReceivedAtMs;
-      merged['api_received_at_ms'] = apiReceivedAtMs;
-
-      websocketController.currentRedPacket.value =
-      Map<String, dynamic>.from(merged);
+      websocketController.currentRedPacket.value = Map<String, dynamic>.from(merged);
       websocketController.redPacketVisible.value = true;
       websocketController.currentRedPacket.refresh();
 
@@ -352,15 +244,28 @@ class _RedPacketLiveOverlayState extends State<RedPacketLiveOverlay> {
 
   void _startCountdown(Map<String, dynamic> packet) {
     _timer?.cancel();
+    // ✅ FIX: previously just packet['id'].toString() — if the id ends up
+    // 0/missing for more than one red packet in a row (the underlying bug
+    // fixed in red_packet_event_handler.dart's _normalizeRedPacket),
+    // multiple different packets collided on the same "0" key here. Since
+    // _autoDialogShownIds (below) tracks which packet id already had its
+    // auto-open dialog shown, that collision made every packet AFTER the
+    // first one look like "already shown" and silently skip its own
+    // auto-open — only reachable afterward through a manual tap on the top
+    // card. Combining the id with a per-event timestamp keeps this key
+    // unique per actual packet even if the id itself is still wrong; once
+    // the id is fixed, this key naturally becomes id-based again in
+    // practice since the timestamp differs per send anyway.
+    final String rawId = (packet['id'] ?? packet['red_packet_id'] ?? packet['packet_id'] ?? '').toString();
+    final String eventStamp =
+        (packet['event_received_at_ms'] ??
+            packet['created_at'] ??
+            packet['open_after_seconds'])
+            ?.toString() ??
+            '';
+    _activePacketId = '${rawId}_$eventStamp';
 
-    packet['snapshot_received_at_ms'] ??=
-        packet['api_received_at_ms'] ??
-            packet['event_received_at_ms'] ??
-            DateTime.now().millisecondsSinceEpoch;
-
-    _activePacketId = (packet['id'] ?? '').toString();
-
-    if (packet.isEmpty || _activePacketId.isEmpty || !_isForCurrentStream(packet)) {
+    if (packet.isEmpty || rawId.isEmpty || !_isForCurrentStream(packet)) {
       if (mounted) setState(() => _remainingSeconds = 0);
       return;
     }
@@ -380,21 +285,10 @@ class _RedPacketLiveOverlayState extends State<RedPacketLiveOverlay> {
       final int openLeft = _openRemainingSeconds(packet);
       if (mounted) setState(() => _remainingSeconds = openLeft);
 
-      /// Dialog appears in the last 5 seconds BEFORE OPEN.
-      ///
-      /// Do not mark the packet as shown until the dialog actually opens.
-      /// When another GetX dialog is temporarily visible, the next timer tick
-      /// retries instead of permanently losing the OPEN dialog.
-      if (openLeft <= 5 &&
-          !_autoDialogShownIds.contains(_activePacketId)) {
-        final bool opened = _openLuckyBagDialog(
-          packet,
-          autoOpen: true,
-        );
-
-        if (opened) {
-          _autoDialogShownIds.add(_activePacketId);
-        }
+      /// ✅ Dialog appears in the last 5 seconds BEFORE OPEN, not before expiry.
+      if (openLeft <= 5 && !_autoDialogShownIds.contains(_activePacketId)) {
+        _autoDialogShownIds.add(_activePacketId);
+        _openLuckyBagDialog(packet, autoOpen: true);
       }
     }
 
@@ -402,23 +296,15 @@ class _RedPacketLiveOverlayState extends State<RedPacketLiveOverlay> {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => tick());
   }
 
-  bool _openLuckyBagDialog(
-      Map<String, dynamic> packet, {
-        bool autoOpen = false,
-      }) {
-    if (Get.isDialogOpen == true) {
-      return false;
-    }
-
+  void _openLuckyBagDialog(Map<String, dynamic> packet, {bool autoOpen = false}) {
+    if (Get.isDialogOpen == true && autoOpen) return;
     Get.dialog(
       RedPacketOpenDialog(
-        packet: Map<String, dynamic>.from(packet),
+        packet: packet,
         initialRemainingSeconds: _remainingSeconds,
       ),
       barrierDismissible: false,
     );
-
-    return true;
   }
 
   void _openDetails(Map<String, dynamic> packet) {
@@ -448,14 +334,9 @@ class _RedPacketLiveOverlayState extends State<RedPacketLiveOverlay> {
           seconds: _remainingSeconds,
           onTap: () {
             if (_remainingSeconds <= 0) {
-              if (_canCurrentUserCollect(packet)) {
-                _openLuckyBagDialog(packet);
-              } else {
-                _openDetails(packet);
-              }
+              _openDetails(packet);
               return;
             }
-
             _openLuckyBagDialog(packet);
           },
         ),
@@ -560,39 +441,94 @@ class _RedPacketOpenDialogState extends State<RedPacketOpenDialog> {
       'assets/frame/redpoket5secoundbackgroundimage .png';
 
   final LivestreamController liveController = Get.find<LivestreamController>();
+  final WebsocketController websocketController = Get.find<WebsocketController>();
   Timer? _timer;
   late int _remaining;
   bool _loading = false;
 
+  // ✅ WORKAROUND for a confirmed BACKEND bug: the red_packet_sent websocket
+  // broadcast sends id:0 (confirmed via full field dump — every other field
+  // is present and correct, only 'id' itself is the literal value 0, sent
+  // by the server). _loadActiveLuckyBagForRoom (in the parent overlay)
+  // separately fetches the same active packet from the REST list endpoint
+  // shortly after, which does carry the real id. This watches for that
+  // REST-loaded version to arrive and adopts its id if our own is still 0
+  // — a stopgap so Open works while the real fix (server should send the
+  // actual id in the websocket event) is pending.
+  int? _resolvedPacketId;
+  Worker? _idSyncWorker;
+
+  int get _effectivePacketId =>
+      _resolvedPacketId ??
+          _safeInt(
+            widget.packet['id'] ??
+                widget.packet['red_packet_id'] ??
+                widget.packet['packet_id'],
+          );
+
+  void _startIdSyncWorker() {
+    if (_effectivePacketId > 0) return; // already have a real id, nothing to fix
+    final int myLivestreamId = _safeInt(
+      widget.packet['livestream_id'] ?? widget.packet['stream_id'],
+    );
+    _idSyncWorker = ever(websocketController.currentRedPacket, (dynamic raw) {
+      if (!mounted || _effectivePacketId > 0) {
+        _idSyncWorker?.dispose();
+        return;
+      }
+      final incoming = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+      final int incomingLivestreamId = _safeInt(
+        incoming['livestream_id'] ?? incoming['stream_id'],
+      );
+      if (myLivestreamId > 0 && incomingLivestreamId != myLivestreamId) return;
+      final int incomingId = _safeInt(
+        incoming['id'] ?? incoming['red_packet_id'] ?? incoming['packet_id'],
+      );
+      if (incomingId > 0) {
+        debugPrint(
+          '🧧 [RED_PACKET] resolved real id from REST-loaded packet => id=$incomingId (was 0 from websocket event)',
+        );
+        setState(() => _resolvedPacketId = incomingId);
+        _idSyncWorker?.dispose();
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
-
-    final int serverRemaining = _dialogRemainingFromPacket();
-    _remaining = serverRemaining >= 0
-        ? serverRemaining
-        : (widget.initialRemainingSeconds < 0
-        ? 0
-        : widget.initialRemainingSeconds);
-
-    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      final int next = _dialogRemainingFromPacket();
-
-      if (!mounted) return;
-
-      if (_remaining != next) {
-        setState(() => _remaining = next);
-      }
-
-      if (next <= 0) {
+    _remaining = widget.initialRemainingSeconds < 0 ? 0 : widget.initialRemainingSeconds;
+    debugPrint(
+      '🧧 [RED_PACKET] dialog opened => packetId=${widget.packet['id'] ?? widget.packet['red_packet_id'] ?? widget.packet['packet_id']} '
+          'initialRemainingSeconds=${widget.initialRemainingSeconds} '
+          'resolved_remaining=$_remaining',
+    );
+    // ✅ DEBUG: dump every key in the packet map, one line per field, so the
+    // real field name the server uses for the packet's own id can be found
+    // directly from logcat — id/red_packet_id/packet_id have all come back
+    // empty so far, so whatever field actually holds it must be something
+    // else, and this will show it plainly instead of guessing more names.
+    debugPrint('🧧 [RED_PACKET] ==== full packet field dump (${widget.packet.length} keys) ====');
+    widget.packet.forEach((key, value) {
+      debugPrint('🧧 [RED_PACKET] field: $key = $value (${value?.runtimeType})');
+    });
+    debugPrint('🧧 [RED_PACKET] ==== end packet field dump ====');
+    _startIdSyncWorker();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_remaining <= 0) {
+        debugPrint('🧧 [RED_PACKET] countdown reached 0, timer stopped, OPEN should now be tappable');
         _timer?.cancel();
+        return;
       }
+      if (mounted) setState(() => _remaining--);
+      debugPrint('🧧 [RED_PACKET] countdown tick => remaining=$_remaining mounted=$mounted');
     });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _idSyncWorker?.dispose();
     super.dispose();
   }
 
@@ -601,66 +537,6 @@ class _RedPacketOpenDialogState extends State<RedPacketOpenDialog> {
     if (value is int) return value;
     if (value is double) return value.toInt();
     return int.tryParse(value.toString()) ?? 0;
-  }
-
-  int _dialogRemainingFromPacket() {
-    final int snapshotMs = _safeInt(
-      widget.packet['snapshot_received_at_ms'] ??
-          widget.packet['api_received_at_ms'] ??
-          widget.packet['event_received_at_ms'],
-    );
-
-    final int openAfter = _safeInt(
-      widget.packet['unlock_after_seconds'] ??
-          widget.packet['open_after_seconds'] ??
-          widget.packet['unlock_after'] ??
-          widget.packet['open_after'],
-    );
-
-    final int expiresIn =
-    _safeInt(widget.packet['expires_in_seconds']);
-
-    int duration = _safeInt(
-      widget.packet['duration_seconds'] ??
-          widget.packet['expire_seconds'],
-    );
-
-    if (duration <= 0) {
-      final String createdText =
-          widget.packet['created_at']?.toString().trim() ?? '';
-      final String expiresText =
-          widget.packet['expires_at']?.toString().trim() ?? '';
-
-      final DateTime? created = DateTime.tryParse(
-        createdText.replaceFirst(' ', 'T'),
-      );
-      final DateTime? expires = DateTime.tryParse(
-        expiresText.replaceFirst(' ', 'T'),
-      );
-
-      if (created != null && expires != null) {
-        duration = expires.difference(created).inSeconds;
-      }
-    }
-
-    if (duration <= 0) duration = 120;
-
-    final int elapsedBeforeSnapshot = expiresIn > 0
-        ? (duration - expiresIn).clamp(0, duration).toInt()
-        : 0;
-
-    final int leftAtSnapshot =
-    (openAfter - elapsedBeforeSnapshot).clamp(0, openAfter).toInt();
-
-    final int elapsedAfterSnapshot = snapshotMs > 0
-        ? ((DateTime.now().millisecondsSinceEpoch - snapshotMs) / 1000)
-        .floor()
-        .clamp(0, duration)
-        .toInt()
-        : 0;
-
-    final int calculated = leftAtSnapshot - elapsedAfterSnapshot;
-    return calculated < 0 ? 0 : calculated;
   }
 
   Map<String, dynamic> _map(dynamic value) {
@@ -715,20 +591,53 @@ class _RedPacketOpenDialogState extends State<RedPacketOpenDialog> {
   }
 
   Future<void> _open() async {
-    if (_loading || _remaining > 0) return;
-    final int packetId = _safeInt(widget.packet['id']);
-    if (packetId <= 0) return;
+    debugPrint(
+      '🧧 [RED_PACKET] OPEN tapped => loading=$_loading remaining=$_remaining '
+          'effectivePacketId=$_effectivePacketId (raw widget.packet[id]=${widget.packet['id']})',
+    );
+    if (_loading || _remaining > 0) {
+      debugPrint('🧧 [RED_PACKET] OPEN blocked by guard => loading=$_loading remaining=$_remaining');
+      return;
+    }
+    // ✅ CONFIRMED via full field dump: the server's red_packet_sent
+    // websocket broadcast itself sends id:0 — a backend bug, not a field-
+    // name mismatch (every other field, including red_packet_open_at_ms,
+    // expires_in_seconds etc., is present and correct; only 'id' is
+    // literally 0). _effectivePacketId includes the REST-resolved-id
+    // workaround (see _startIdSyncWorker) so Open still works once that
+    // arrives, without waiting on a backend fix.
+    final int packetId = _effectivePacketId;
+    if (packetId <= 0) {
+      debugPrint('🧧 [RED_PACKET] OPEN blocked => invalid packetId=$packetId, still waiting on real id from server/REST');
+      Fluttertoast.showToast(
+        msg: ('Still loading this Lucky Bag, please try again in a moment.').appTr,
+      );
+      return;
+    }
 
     // Loading spinner show korbo na. User OPEN text ei dekhbe, API silently run hobe.
     setState(() => _loading = true);
+    debugPrint('🧧 [RED_PACKET] calling collectRedPacketData(packetId=$packetId)...');
     final data = await liveController.collectRedPacketData(packetId);
+    debugPrint('🧧 [RED_PACKET] collectRedPacketData returned => data=$data');
     if (!mounted) return;
     setState(() => _loading = false);
 
-    if (data == null) return;
+    // ✅ FIX: previously this just returned silently on failure — the user
+    // tapped Open and nothing visibly happened at all, no error, no coin,
+    // no explanation. Now a failure is at least shown, and the dialog stays
+    // open so the user can retry instead of the packet appearing to vanish.
+    if (data == null) {
+      debugPrint('🧧 [RED_PACKET] OPEN failed => collectRedPacketData returned null, showing error toast');
+      Fluttertoast.showToast(
+        msg: ('Unable to open the red packet. Please try again.').appTr,
+      );
+      return;
+    }
 
     final amount = _collectAmount(data);
     final resultPacket = _resultPacket(data);
+    debugPrint('🧧 [RED_PACKET] OPEN success => amount=$amount resultPacket=$resultPacket');
 
     Get.back();
     Get.dialog(
@@ -1155,7 +1064,7 @@ class _RedPacketDetailsSheetState extends State<RedPacketDetailsSheet> {
 
   Future<void> _loadLatest() async {
     final int livestreamId = _safeInt(packet['livestream_id'] ?? packet['stream_id'] ?? liveController.streamId.value);
-    final int packetId = _safeInt(packet['id']);
+    final int packetId = _safeInt(packet['id'] ?? packet['red_packet_id'] ?? packet['packet_id']);
     if (livestreamId <= 0 || packetId <= 0) return;
 
     setState(() => loading = true);
@@ -1167,7 +1076,7 @@ class _RedPacketDetailsSheetState extends State<RedPacketDetailsSheet> {
     if (!mounted) return;
 
     final found = packets.firstWhere(
-          (e) => _safeInt(e['id']) == packetId,
+          (e) => _safeInt(e['id'] ?? e['red_packet_id'] ?? e['packet_id']) == packetId,
       orElse: () => packet,
     );
 
@@ -1475,3 +1384,4 @@ class GlobalRedPacketBanner extends StatelessWidget {
     });
   }
 }
+

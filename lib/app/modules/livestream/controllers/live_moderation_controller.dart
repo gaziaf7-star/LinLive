@@ -171,12 +171,23 @@ class LiveModerationController extends GetxController {
     return false;
   }
 
+  bool _denyVipProtectedAction(int userId, {required String action}) {
+    final privileges = livestreamController.vipPrivilegesForUser(userId);
+    final protected = action == 'block'
+        ? privileges.antiBlock
+        : privileges.antiKickBan;
+    if (!protected) return false;
+    Fluttertoast.showToast(msg: ('Protected by VIP privilege').appTr);
+    return true;
+  }
+
   Future<Map<String, dynamic>?> addToRoomBlacklist(
     int livestreamId,
     int userId, {
     String reason = 'room_blacklist',
   }) async {
     if (!ensureCanModerateCurrentLive('room_blacklist')) return null;
+    if (_denyVipProtectedAction(userId, action: 'kick_ban')) return null;
     try {
       final response = await livestreamController.dio.post(
         '$kMainUrl/livestream/$livestreamId/room-blacklist',
@@ -196,6 +207,7 @@ class LiveModerationController extends GetxController {
 
   Future<bool> kickOutUser(int userId) async {
     if (!ensureCanModerateCurrentLive('kick_user')) return false;
+    if (_denyVipProtectedAction(userId, action: 'kick_ban')) return false;
     final sid = livestreamController.streamId.value;
     try {
       final response = await livestreamController.dio.post(
@@ -239,7 +251,10 @@ class LiveModerationController extends GetxController {
   }
 
   int _guardianUserId(dynamic raw) {
-    if (raw is! Map) return 0;
+    // Some guardian-list responses contain bare numeric/string user IDs.
+    // Normalize those here so the persistent backend list remains authoritative
+    // regardless of whether it returns `123`, `"123"`, or a user object.
+    if (raw is! Map) return _toInt(raw);
     final item = Map<String, dynamic>.from(raw);
     final user = _asMap(item['user']);
     final caller = _asMap(item['caller']);
@@ -463,7 +478,19 @@ class LiveModerationController extends GetxController {
       );
       if (response.statusCode != 200 && response.statusCode != 201) return;
       if (!livestreamController.acceptsRoomMutation(streamId)) return;
-      guardianListData.assignAll(_guardianListFromResponse(response.data));
+      final uniqueGuardians = <int, dynamic>{};
+      for (final item in _guardianListFromResponse(response.data)) {
+        final id = _guardianUserId(item);
+        if (id <= 0) continue;
+        // Prefer a rich object over a bare ID when duplicate IDs are returned.
+        final existing = uniqueGuardians[id];
+        if (existing == null || (existing is! Map && item is Map)) {
+          uniqueGuardians[id] = item is Map
+              ? Map<String, dynamic>.from(item)
+              : <String, dynamic>{'user_id': id, 'is_guardian': 1};
+        }
+      }
+      guardianListData.assignAll(uniqueGuardians.values);
       _syncGuardianMapFromList();
       _syncMyGuardianFromList();
     } catch (e) {
@@ -517,13 +544,8 @@ class LiveModerationController extends GetxController {
       final id = _guardianUserId(item);
       if (id > 0) next[id] = true;
     }
-    for (final raw in livestreamController.websocketController.liveCallList) {
-      if (raw is! Map) continue;
-      final id = _toInt(
-        raw['caller_id'] ?? raw['user_id'] ?? raw['user']?['id'],
-      );
-      if (id > 0 && next[id] != true) next[id] = false;
-    }
+    // Deliberately do not add false entries from the temporary caller/seat
+    // list. Presence and room-admin membership have independent lifecycles.
     roomGuardianMap.assignAll(next);
   }
 

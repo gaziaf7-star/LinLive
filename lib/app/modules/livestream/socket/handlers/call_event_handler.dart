@@ -5,12 +5,13 @@ extension CallEventHandler on WebsocketController {
     try {
       final Map<String, dynamic> data = payload['data'] is Map
           ? {
-              ...Map<String, dynamic>.from(payload),
-              ...Map<String, dynamic>.from(payload['data']),
-            }
+        ...Map<String, dynamic>.from(payload),
+        ...Map<String, dynamic>.from(payload['data']),
+      }
           : Map<String, dynamic>.from(payload);
 
       _cacheLiveUserProfileFromPayload(data);
+      livestreamController.syncVipStateFromPayload(data);
 
       final livestreamId =
           data['livestream_id'] ?? data['stream_id'] ?? data['id'];
@@ -23,10 +24,10 @@ extension CallEventHandler on WebsocketController {
 
       final userId =
           data['caller_id'] ??
-          data['user_id'] ??
-          data['viewer_id'] ??
-          (data['user'] is Map ? data['user']['id'] : null) ??
-          (data['caller'] is Map ? data['caller']['id'] : null);
+              data['user_id'] ??
+              data['viewer_id'] ??
+              (data['user'] is Map ? data['user']['id'] : null) ??
+              (data['caller'] is Map ? data['caller']['id'] : null);
 
       if (userId == null) {
         printSeatTrace(
@@ -50,7 +51,7 @@ extension CallEventHandler on WebsocketController {
       final int uidInt = _toInt(userId);
       final int currentUserId = _currentUserIdInt();
       final int seatNo =
-          _toInt(data['seat_no'] ?? data['seat'] ?? data['seat_number']) > 0
+      _toInt(data['seat_no'] ?? data['seat'] ?? data['seat_number']) > 0
           ? _toInt(data['seat_no'] ?? data['seat'] ?? data['seat_number'])
           : _selfSeatNoFromLiveCallList();
       final bool callerStillAccepted = _isUserAcceptedSeatLocally(userId);
@@ -71,8 +72,7 @@ extension CallEventHandler on WebsocketController {
       /// caller card/seat. The old code checked only the row, so a reordered
       /// timeout event could hide the card while both users still saw/heard
       /// each other through Agora.
-      if (_isWeakCallerTimeoutReason(reason) &&
-          (callerStillAccepted || videoMediaStillActive)) {
+      if (_isWeakCallerTimeoutReason(reason)) {
         if (currentUserId > 0 && uidInt == currentUserId) {
           _markSelfHeartbeatSeatGuard(userId: currentUserId, seatNo: seatNo);
 
@@ -132,6 +132,9 @@ extension CallEventHandler on WebsocketController {
       }
 
       final int beforeCallRemoveCount = liveCallList.length;
+      final int rtOccupiedBefore = kDebugMode
+          ? LiveRealtimeDebugLog.seatEntries(liveCallList).length
+          : 0;
       liveCallList.removeWhere((call) {
         if (call is! Map) return false;
         final callerId = call['caller_id'];
@@ -141,6 +144,12 @@ extension CallEventHandler on WebsocketController {
             userIdField.toString() == uid ||
             nestedUserId.toString() == uid;
       });
+      if (kDebugMode) {
+        debugPrint(
+          'SEAT_RELEASE room=${_toInt(livestreamId)} '
+              'seat=$seatNo user=$uidInt',
+        );
+      }
       _refreshLiveCallListSmooth();
       refreshCpSeatConnectionsFromCurrentCallList(source: 'caller_left');
 
@@ -197,7 +206,7 @@ extension CallEventHandler on WebsocketController {
       // karon user live room-e viewer hisebe thakte pare. viewer_left event ashle viewer remove hobe.
       livestreamController.update();
       printSeatTrace(
-        'caller_left_applied',
+        'SEAT_RELEASE',
         streamId: _toInt(livestreamId),
         userId: uidInt,
         seatNo: seatNo,
@@ -207,15 +216,35 @@ extension CallEventHandler on WebsocketController {
         afterCount: liveCallList.length,
         note: 'viewerCount=${livestreamController.liveViewerList.length}',
       );
+      LiveRealtimeDebugLog.event('CALL_END', <String, Object?>{
+        'room': _toInt(livestreamId),
+        'user': uidInt,
+        'seat': seatNo,
+        'status': 'left',
+        'event_id': data['event_id'],
+        'reason': reason,
+      });
+      LiveRealtimeDebugLog.event('SEAT_LEFT', <String, Object?>{
+        'room': _toInt(livestreamId),
+        'seat': seatNo,
+        'user': uidInt,
+        'reason': reason,
+        'occupied_before': rtOccupiedBefore,
+        'occupied_after': kDebugMode
+            ? LiveRealtimeDebugLog.seatEntries(liveCallList).length
+            : 0,
+      });
+      _rtSeats(data);
+      _rtState(data);
     } catch (e, st) {
       liveLog('❌ _handleUnifiedCallerLeft error => $e\n$st');
     }
   }
 
   void _normalizeUnifiedCallUser(
-    Map<String, dynamic> payload,
-    Map<String, dynamic> callData,
-  ) {
+      Map<String, dynamic> payload,
+      Map<String, dynamic> callData,
+      ) {
     final user = _extractCallerUserFromPayload(payload, callData);
 
     if (user != null) {
@@ -234,9 +263,9 @@ extension CallEventHandler on WebsocketController {
       /// na dekhiye caller id show korbe.
       final fallbackId =
           callData['caller_id'] ??
-          callData['user_id'] ??
-          payload['caller_id'] ??
-          payload['user_id'];
+              callData['user_id'] ??
+              payload['caller_id'] ??
+              payload['user_id'];
 
       callData['user'] = {
         'id': fallbackId,
@@ -263,10 +292,10 @@ extension CallEventHandler on WebsocketController {
   }
 
   Future<void> _hydrateCallDataFromServer(
-    Map<String, dynamic> callData,
-    dynamic livestreamId,
-    dynamic callerId,
-  ) async {
+      Map<String, dynamic> callData,
+      dynamic livestreamId,
+      dynamic callerId,
+      ) async {
     try {
       if (_hasRealCallerUser(callData)) return;
       if (livestreamId == null || callerId == null) return;
@@ -340,10 +369,10 @@ extension CallEventHandler on WebsocketController {
   }
 
   void _hydrateCallDataOnce(
-    Map<String, dynamic> callData,
-    dynamic livestreamId,
-    int callerId,
-  ) {
+      Map<String, dynamic> callData,
+      dynamic livestreamId,
+      int callerId,
+      ) {
     if (_hasRealCallerUser(callData)) return;
     final key = '${livestreamId ?? streamID.value}:$callerId';
     if (_callProfileHydrationFutures.containsKey(key)) return;
@@ -361,7 +390,7 @@ extension CallEventHandler on WebsocketController {
       if (_hasRecentRoomExit(streamId: sid, userId: callerId)) {
         liveLog(
           '🚫 CALL_HYDRATE_PENDING_BLOCKED_AFTER_EXIT => '
-          'stream:$sid caller:$callerId',
+              'stream:$sid caller:$callerId',
         );
         return;
       }
@@ -403,11 +432,13 @@ extension CallEventHandler on WebsocketController {
     /// after user was removed from mic and sits again.
     final int normalized = _normalizeAudioOn(callData);
     final int audioOn = normalized == -1 ? 1 : normalized;
+    final bool mutedByHost =
+        _mutedFlagValue(callData['is_muted_by_host']) ?? false;
 
     callData['audio_on'] = audioOn;
     callData['is_audio_on'] = audioOn;
     callData['is_muted'] = audioOn == 1 ? 0 : 1;
-    callData['is_muted_by_host'] = audioOn == 1 ? 0 : 1;
+    callData['is_muted_by_host'] = mutedByHost ? 1 : 0;
     callData['is_speaking'] = false;
 
     if (callData['user'] is Map) {
@@ -431,24 +462,7 @@ extension CallEventHandler on WebsocketController {
       final call = Map<String, dynamic>.from(item);
       if (_callUserId(call) != currentUserId) continue;
 
-      final mutedRaw =
-          call['is_muted'] ?? call['is_muted_by_host'] ?? call['muted'];
-      final audioOnRaw = call['audio_on'] ?? call['is_audio_on'];
-      final mutedText = mutedRaw?.toString().toLowerCase().trim() ?? '';
-      final audioText = audioOnRaw?.toString().toLowerCase().trim() ?? '';
-
-      if (mutedText == '1' ||
-          mutedText == 'true' ||
-          mutedText == 'yes' ||
-          mutedText == 'muted') {
-        return true;
-      }
-      if (audioText == '0' ||
-          audioText == 'false' ||
-          audioText == 'off' ||
-          audioText == 'muted') {
-        return true;
-      }
+      if (_normalizeAudioOn(call) == 0) return true;
     }
 
     return false;
@@ -476,7 +490,8 @@ extension CallEventHandler on WebsocketController {
       call['audio_on'] = muted ? 0 : 1;
       call['is_audio_on'] = muted ? 0 : 1;
       call['is_muted'] = muted ? 1 : 0;
-      call['is_muted_by_host'] = muted ? 1 : 0;
+      // Local republish changes the user's mic state, not host moderation.
+      call['is_muted_by_host'] = call['is_muted_by_host'] ?? 0;
 
       if (call['user'] is Map) {
         final user = Map<String, dynamic>.from(call['user']);
@@ -491,7 +506,6 @@ extension CallEventHandler on WebsocketController {
 
     _refreshLiveCallListSmooth();
     audioMutedUserMap.refresh();
-    livestreamController.update();
     liveLog(
       '✅ Self seat mic state synced => $reason user:$currentUserId muted:$muted',
     );
@@ -502,10 +516,19 @@ extension CallEventHandler on WebsocketController {
     /// is re-published with ChannelMediaOptions again.
     /// But user-er manual mute state preserve korte hobe.
     final bool keepMuted = _isSelfMutedNow();
-    _markSelfSeatMicStateInState(reason: reason, muted: keepMuted);
-
+    final int currentUserId = _currentUserIdInt();
+    if (_selfMicPublishedUserId == currentUserId &&
+        _selfMicPublishedMuted == keepMuted) {
+      return;
+    }
     final engine = _agoraService.engine;
-    if (engine == null) return;
+    if (engine == null) {
+      liveLog(
+        '⚠️ Seat mic republish skipped: Agora engine not ready => $reason',
+      );
+      return;
+    }
+    _markSelfSeatMicStateInState(reason: reason, muted: keepMuted);
 
     try {
       await engine.setClientRole(role: ClientRoleType.clientRoleBroadcaster);
@@ -543,6 +566,8 @@ extension CallEventHandler on WebsocketController {
       livestreamController.mute.value = keepMuted;
       livestreamController.isMuted.value = keepMuted;
       livestreamController.isAudioEnabled.value = !keepMuted;
+      _selfMicPublishedUserId = currentUserId;
+      _selfMicPublishedMuted = keepMuted;
       liveLog(
         '✅ Seat mic republished for current user => $reason muted_preserved:$keepMuted',
       );
@@ -552,22 +577,22 @@ extension CallEventHandler on WebsocketController {
   }
 
   Future<void> _activateAcceptedCallerMedia(
-    Map<String, dynamic> callData,
-    int callerId,
-  ) {
+      Map<String, dynamic> callData,
+      int callerId,
+      ) {
     final existing = _callerMediaTransitionFutures[callerId];
     if (existing != null) return existing;
     final transition = _performAcceptedCallerMedia(callData, callerId);
     _callerMediaTransitionFutures[callerId] = transition;
     return transition.whenComplete(
-      () => _callerMediaTransitionFutures.remove(callerId),
+          () => _callerMediaTransitionFutures.remove(callerId),
     );
   }
 
   Future<void> _performAcceptedCallerMedia(
-    Map<String, dynamic> callData,
-    int callerId,
-  ) async {
+      Map<String, dynamic> callData,
+      int callerId,
+      ) async {
     final engine = _agoraService.engine;
     if (engine == null) return;
     final callType = (callData['call_type'] ?? '').toString().toLowerCase();
@@ -617,8 +642,8 @@ extension CallEventHandler on WebsocketController {
         );
         await engine.setParameters(
           '{"che.video.hardware_encoding": true,'
-          '"che.video.enableAdaptiveBitrate": true,'
-          '"rtc.video.dynamic_switch": true}',
+              '"che.video.enableAdaptiveBitrate": true,'
+              '"rtc.video.dynamic_switch": true}',
         );
         await _agoraService.applyNaturalLowLightEnhancement();
         await _agoraService.setBeautyNatural();
@@ -653,7 +678,7 @@ extension CallEventHandler on WebsocketController {
     _localPublishingCallerId = callerId;
     debugPrint(
       'VIDEO_CALL_ROLE_READY => role=caller user=$callerId '
-      'mic=${microphone.isGranted} camera=$publishVideo',
+          'mic=${microphone.isGranted} camera=$publishVideo',
     );
 
     if (wantsVideo && !camera.isGranted) {
@@ -668,7 +693,7 @@ extension CallEventHandler on WebsocketController {
     }
     liveLog(
       '✅ Accepted caller media published => caller:$callerId '
-      'mic:${microphone.isGranted} camera:$publishVideo',
+          'mic:${microphone.isGranted} camera:$publishVideo',
     );
   }
 
@@ -785,7 +810,7 @@ extension CallEventHandler on WebsocketController {
     livestreamController.update();
     liveLog(
       '🔇 Current user auto-muted after seat signal => '
-      'user:$currentUserId confirmed:$confirmedSeatExit reason:$reason',
+          'user:$currentUserId confirmed:$confirmedSeatExit reason:$reason',
     );
   }
 
@@ -800,7 +825,11 @@ extension CallEventHandler on WebsocketController {
     try {
       /// Defense in depth: even if the leaving device is slow to process its
       /// own event, this device stops playing that user's old Agora audio.
-      await engine.muteRemoteAudioStream(uid: userId, mute: true);
+      await applyRemoteAudioMuteIfChanged(
+        userId: userId,
+        muted: true,
+        reason: reason,
+      );
       liveLog(
         '🔇 Remote caller audio stopped after seat exit => user:$userId reason:$reason',
       );
@@ -814,13 +843,13 @@ extension CallEventHandler on WebsocketController {
     /// call_data / caller / livestream_call / data / direct payload.
     final dynamic rawCallData =
         payload['call_data'] ??
-        payload['caller_data'] ??
-        payload['caller'] ??
-        payload['livestream_call'] ??
-        payload['live_call'] ??
-        payload['call'] ??
-        payload['data'] ??
-        payload;
+            payload['caller_data'] ??
+            payload['caller'] ??
+            payload['livestream_call'] ??
+            payload['live_call'] ??
+            payload['call'] ??
+            payload['data'] ??
+            payload;
 
     if (rawCallData is! Map) {
       printSeatTrace('live_call_invalid_payload', error: 'payload_not_map');
@@ -828,6 +857,10 @@ extension CallEventHandler on WebsocketController {
     }
 
     final callData = Map<String, dynamic>.from(rawCallData);
+    livestreamController.syncVipStateFromPayload(<String, dynamic>{
+      ...payload,
+      'user': callData['user'] ?? payload['user'],
+    });
 
     /// Popup-er name/profile/level null issue fix:
     /// backend payload-er jekhanei user data thakuk, ekhane normalize kore
@@ -838,9 +871,9 @@ extension CallEventHandler on WebsocketController {
     /// Backend may send seat_no=100 and is_locked=yes for video call request.
     /// That old value must not pollute seat/call UI.
     final String _incomingCallType =
-        (callData['call_type'] ?? payload['call_type'] ?? '')
-            .toString()
-            .toLowerCase();
+    (callData['call_type'] ?? payload['call_type'] ?? '')
+        .toString()
+        .toLowerCase();
     final int _incomingSeatNo = _toInt(
       callData['seat_no'] ?? payload['seat_no'],
     );
@@ -853,9 +886,9 @@ extension CallEventHandler on WebsocketController {
 
     final livestreamId =
         callData['livestream_id'] ??
-        callData['stream_id'] ??
-        payload['livestream_id'] ??
-        payload['stream_id'];
+            callData['stream_id'] ??
+            payload['livestream_id'] ??
+            payload['stream_id'];
 
     /// streamID empty/null thakle current room set kore nebo, nahole popup block hoy.
     if (streamID.value.toString().isEmpty && livestreamId != null) {
@@ -905,14 +938,14 @@ extension CallEventHandler on WebsocketController {
     _hydrateCallDataOnce(callData, livestreamId, callerId);
 
     final String _callTypeAfterHydrate =
-        (callData['call_type'] ?? payload['call_type'] ?? '')
-            .toString()
-            .toLowerCase();
+    (callData['call_type'] ?? payload['call_type'] ?? '')
+        .toString()
+        .toLowerCase();
     final int _seatAfterHydrate = _toInt(
       callData['seat_no'] ?? payload['seat_no'],
     );
     if ((_callTypeAfterHydrate == 'video' ||
-            _callTypeAfterHydrate == 'popular') &&
+        _callTypeAfterHydrate == 'popular') &&
         _seatAfterHydrate >= 100) {
       callData['is_locked'] = 'no';
       callData['seat_locked'] = 0;
@@ -921,24 +954,24 @@ extension CallEventHandler on WebsocketController {
 
     /// Normalize status from many possible backend keys.
     String callStatus =
-        (callData['call_status'] ??
-                callData['status'] ??
-                payload['call_status'] ??
-                payload['status'] ??
-                '')
-            .toString()
-            .toLowerCase()
-            .trim();
+    (callData['call_status'] ??
+        callData['status'] ??
+        payload['call_status'] ??
+        payload['status'] ??
+        '')
+        .toString()
+        .toLowerCase()
+        .trim();
 
     final action =
-        (callData['action'] ??
-                callData['call_action'] ??
-                payload['action'] ??
-                payload['call_action'] ??
-                '')
-            .toString()
-            .toLowerCase()
-            .trim();
+    (callData['action'] ??
+        callData['call_action'] ??
+        payload['action'] ??
+        payload['call_action'] ??
+        '')
+        .toString()
+        .toLowerCase()
+        .trim();
 
     final actionType = (payload['action_type'] ?? payload['type'] ?? '')
         .toString()
@@ -947,14 +980,14 @@ extension CallEventHandler on WebsocketController {
 
     final bool audioRoom =
         _isCurrentAudioOnlyRoom(livestreamId: livestreamId) ||
-        _truthy(payload['is_audio_seat_join']) ||
-        _truthy(callData['is_audio_seat_join']) ||
-        ((_truthy(payload['auto_accepted']) ||
+            _truthy(payload['is_audio_seat_join']) ||
+            _truthy(callData['is_audio_seat_join']) ||
+            ((_truthy(payload['auto_accepted']) ||
                 _truthy(callData['auto_accepted'])) &&
-            !_truthy(
-              payload['requires_host_acceptance'] ??
-                  callData['requires_host_acceptance'],
-            ));
+                !_truthy(
+                  payload['requires_host_acceptance'] ??
+                      callData['requires_host_acceptance'],
+                ));
 
     if (callStatus.isEmpty) {
       /// Terminal/accepted actions MUST win before generic live_stream_call.
@@ -985,7 +1018,10 @@ extension CallEventHandler on WebsocketController {
           action == 'request' ||
           action == 'pending') {
         callStatus = 'pending';
-      } else if (actionType == 'multi_live_seat_joined') {
+      } else if (actionType == 'multi_live_seat_joined' ||
+          actionType == 'seat_updated' ||
+          actionType == 'seat_joined' ||
+          actionType == 'live_seat_joined') {
         callStatus = 'joined';
       } else if (actionType == 'multi_live_seat_left' ||
           actionType == 'caller_left' ||
@@ -1005,6 +1041,84 @@ extension CallEventHandler on WebsocketController {
     final int eventSeatNo = _toInt(
       callData['seat_no'] ?? callData['seat'] ?? callData['seat_number'],
     );
+    int seatEventRevision = _eventTimeMs(
+      callData['event_timestamp'] ??
+          callData['occurred_at'] ??
+          callData['updated_at'] ??
+          callData['created_at'] ??
+          payload['timestamp'],
+    );
+    if (seatEventRevision == 0) {
+      final matches = RegExp(
+        r'(\d{10,13})',
+      ).allMatches((payload['event_id'] ?? '').toString()).toList();
+      if (matches.isNotEmpty) {
+        seatEventRevision = _eventTimeMs(matches.last.group(1));
+      }
+    }
+    final String callSessionId =
+    (callData['call_session_id'] ??
+        callData['request_id'] ??
+        payload['call_session_id'] ??
+        payload['request_id'] ??
+        '')
+        .toString()
+        .trim();
+    final String callPrefix = '${_toInt(livestreamId)}:$callerId:';
+    final String logicalCallKey =
+        '$callPrefix${callSessionId.isNotEmpty ? callSessionId : eventSeatNo}';
+    final bool terminalCallStatus =
+        callStatus == 'canceled' ||
+            callStatus == 'cancelled' ||
+            callStatus == 'rejected' ||
+            callStatus == 'left' ||
+            callStatus == 'ended' ||
+            callStatus == 'end' ||
+            callStatus == 'seat_leave' ||
+            callStatus == 'seat_left';
+    if (callStatus == 'pending' ||
+        callStatus == 'accepted' ||
+        callStatus == 'joined') {
+      _terminalCallSessions.removeWhere((key, _) => key.startsWith(callPrefix));
+    } else if (terminalCallStatus) {
+      if (_terminalCallSessions.containsKey(logicalCallKey)) {
+        LiveRealtimeDebugLog.event(
+          'CALL_TERMINAL_DUPLICATE_IGNORED',
+          <String, Object?>{
+            'room': _toInt(livestreamId),
+            'user': callerId,
+            'seat': eventSeatNo,
+            'status': callStatus,
+            'session': callSessionId,
+          },
+        );
+        return;
+      }
+      _terminalCallSessions[logicalCallKey] =
+          DateTime.now().millisecondsSinceEpoch;
+      while (_terminalCallSessions.length >
+          WebsocketController._maxTerminalCallSessions) {
+        _terminalCallSessions.remove(_terminalCallSessions.keys.first);
+      }
+    }
+    final int rtOccupiedBefore = kDebugMode
+        ? LiveRealtimeDebugLog.seatEntries(liveCallList).length
+        : 0;
+    final String rtCallTag =
+    (callStatus == 'accepted' || callStatus == 'joined')
+        ? 'CALL_ACCEPT'
+        : callStatus == 'pending'
+        ? 'CALL_REQUEST'
+        : (callStatus == 'rejected' || callStatus == 'canceled')
+        ? 'CALL_REJECT'
+        : 'CALL_END';
+    LiveRealtimeDebugLog.event(rtCallTag, <String, Object?>{
+      'room': _toInt(livestreamId),
+      'user': callerId,
+      'seat': eventSeatNo,
+      'status': callStatus,
+      'event_id': payload['event_id'],
+    });
 
     /// Audio live has no pending host-confirmation call flow. Drop any stale
     /// pending frame instead of converting it to accepted (which could re-add a
@@ -1016,12 +1130,12 @@ extension CallEventHandler on WebsocketController {
       });
       pendingCall.refresh();
       _activeCallPopupKeys.removeWhere(
-        (key) => key.startsWith('${_toInt(livestreamId)}_${_toInt(callerId)}_'),
+            (key) => key.startsWith('${_toInt(livestreamId)}_${_toInt(callerId)}_'),
       );
       liveLog(
         '🚫 AUDIO_PENDING_CALL_EVENT_DROPPED => '
-        'stream:${_toInt(livestreamId)} caller:$callerId seat:$eventSeatNo '
-        'action:$action actionType:$actionType',
+            'stream:${_toInt(livestreamId)} caller:$callerId seat:$eventSeatNo '
+            'action:$action actionType:$actionType',
       );
       return;
     }
@@ -1039,8 +1153,8 @@ extension CallEventHandler on WebsocketController {
       pendingCall.refresh();
       liveLog(
         '🚫 STALE_LIVE_CALL_IGNORED_AFTER_ROOM_EXIT => '
-        'stream:${_toInt(livestreamId)} caller:$callerId '
-        'status:$callStatus action:$action',
+            'stream:${_toInt(livestreamId)} caller:$callerId '
+            'status:$callStatus action:$action',
       );
       return;
     }
@@ -1073,43 +1187,94 @@ extension CallEventHandler on WebsocketController {
     if (callStatus == 'pending' &&
         (_handledCallPopupKeys.contains(popupKey) || alreadyAccepted)) {
       pendingCall.removeWhere(
-        (call) => call['caller_id'].toString() == callerId.toString(),
+            (call) => call['caller_id'].toString() == callerId.toString(),
       );
       pendingCall.refresh();
       return;
     }
 
     if (callStatus == 'accepted' || callStatus == 'joined') {
+      final int previousSeatRevision = _seatRevisionByUser[callerId] ?? 0;
+      if (seatEventRevision > 0 && seatEventRevision < previousSeatRevision) {
+        LiveRealtimeDebugLog.event(
+          'STALE_SEAT_EVENT_IGNORED',
+          <String, Object?>{
+            'room': _toInt(livestreamId),
+            'user': callerId,
+            'seat': eventSeatNo,
+            'event_id': payload['event_id'],
+          },
+        );
+        return;
+      }
+      _seatRevisionByUser[callerId] = seatEventRevision > 0
+          ? seatEventRevision
+          : DateTime.now().millisecondsSinceEpoch;
       livestreamController.clearDepartedCallerGuard(callerId);
       _activeCallPopupKeys.remove(popupKey);
       _handledCallPopupKeys.add(popupKey);
 
-      /// Current user jokhon seat-e uthbe, old backend mute snapshot jeno
-      /// mic off kore na dey. Fresh seat join always starts self as unmuted.
-      if (isMeCaller) {
-        callData['audio_on'] = 1;
-        callData['is_audio_on'] = 1;
-        callData['is_muted'] = 0;
-        callData['is_muted_by_host'] = 0;
-        if (callData['user'] is Map) {
-          final user = Map<String, dynamic>.from(callData['user']);
-          user['audio_on'] = 1;
-          user['is_audio_on'] = 1;
-          user['is_muted'] = 0;
-          callData['user'] = user;
+      pendingCall.removeWhere(
+            (call) => call['caller_id'].toString() == callerId.toString(),
+      );
+
+      if (eventSeatNo > 0) {
+        final int acceptedUserId = _toInt(callerId);
+        final bool occupiedByOther = liveCallList.any((raw) {
+          if (raw is! Map) return false;
+          final old = Map<String, dynamic>.from(raw);
+          final oldUserId = _callUserId(old);
+          final oldSeatNo = _toInt(
+            old['seat_no'] ?? old['seat'] ?? old['seat_number'],
+          );
+          return oldSeatNo == eventSeatNo && oldUserId != acceptedUserId;
+        });
+        if (occupiedByOther) {
+          LiveRealtimeDebugLog.event(
+            'SEAT_CONFLICT_RECONCILE',
+            <String, Object?>{
+              'room': _toInt(livestreamId),
+              'user': callerId,
+              'seat': eventSeatNo,
+              'source': actionType.isEmpty ? action : actionType,
+            },
+          );
+          unawaited(
+            livestreamController.tryToGetCallList(
+              streamId: _toInt(livestreamId),
+              force: true,
+            ),
+          );
+          return;
+        }
+        // A realtime seat delta is authoritative for this one seat. Remove a
+        // previous occupant of the same seat and any old seat row for this
+        // user before the normal rich-profile merge below. Duplicate delivery
+        // remains idempotent because the matching user row is retained.
+        liveCallList.removeWhere((raw) {
+          if (raw is! Map) return false;
+          final old = Map<String, dynamic>.from(raw);
+          final oldUserId = _callUserId(old);
+          final oldSeatNo = _toInt(
+            old['seat_no'] ?? old['seat'] ?? old['seat_number'],
+          );
+          return (oldSeatNo == eventSeatNo && oldUserId != acceptedUserId) ||
+              (oldUserId == acceptedUserId && oldSeatNo != eventSeatNo);
+        });
+        if (kDebugMode) {
+          debugPrint(
+            'SEAT_UPSERT room=${_toInt(livestreamId)} '
+                'seat=$eventSeatNo user=$callerId',
+          );
         }
       }
-
-      pendingCall.removeWhere(
-        (call) => call['caller_id'].toString() == callerId.toString(),
-      );
 
       if (!liveCallList.any((call) {
         if (call is! Map) return false;
         final oldCallerId =
             call['caller_id'] ??
-            call['user_id'] ??
-            (call['user'] is Map ? call['user']['id'] : null);
+                call['user_id'] ??
+                (call['user'] is Map ? call['user']['id'] : null);
         return oldCallerId.toString() == callerId.toString();
       })) {
         _applyNormalSeatAudioState(callData);
@@ -1128,8 +1293,8 @@ extension CallEventHandler on WebsocketController {
           if (call is! Map) return false;
           final oldCallerId =
               call['caller_id'] ??
-              call['user_id'] ??
-              (call['user'] is Map ? call['user']['id'] : null);
+                  call['user_id'] ??
+                  (call['user'] is Map ? call['user']['id'] : null);
           return oldCallerId.toString() == callerId.toString();
         });
         if (index != -1) {
@@ -1151,8 +1316,8 @@ extension CallEventHandler on WebsocketController {
           final oldName = oldUser['name']?.toString() ?? '';
           final newLooksFallback =
               newName.isEmpty ||
-              newName == 'Unknown User' ||
-              newName.startsWith('User ');
+                  newName == 'Unknown User' ||
+                  newName.startsWith('User ');
 
           if (oldUser.isNotEmpty &&
               (newUser.isEmpty || newLooksFallback) &&
@@ -1162,27 +1327,51 @@ extension CallEventHandler on WebsocketController {
             merged['user'] = {...oldUser, ...newUser};
           }
 
+          if (merged['user'] is Map) {
+            final richUser = Map<String, dynamic>.from(merged['user']);
+            for (final key in const <String>[
+              'vip_purchase_history',
+              'vipPurchaseHistory',
+              'asset_purchase_histories',
+              'profile_frame_history',
+            ]) {
+              if ((richUser[key] == null ||
+                  (richUser[key] is Map && richUser[key].isEmpty)) &&
+                  oldUser[key] != null) {
+                richUser[key] = oldUser[key];
+              }
+            }
+            merged['user'] = richUser;
+          }
+
           /// Preserve mute state if the new event is partial/missing audio keys.
           final int newAudio = _normalizeAudioOn(callData);
           final int oldAudio = _normalizeAudioOn(old);
 
           final bool isSeatJoinedEvent =
               actionType == 'multi_live_seat_joined' ||
-              callStatus == 'joined' ||
-              callStatus == 'accepted';
+                  callStatus == 'joined' ||
+                  callStatus == 'accepted';
 
           final int mergedAudio = newAudio != -1
               ? newAudio
               : (isSeatJoinedEvent
-                    ? 1
-                    : (oldAudio == -1
-                          ? (old['audio_on']?.toString() == '0' ? 0 : 1)
-                          : oldAudio));
+              ? 1
+              : (oldAudio == -1
+              ? (old['audio_on']?.toString() == '0' ? 0 : 1)
+              : oldAudio));
 
           merged['audio_on'] = mergedAudio;
           merged['is_audio_on'] = mergedAudio;
           merged['is_muted'] = mergedAudio == 1 ? 0 : 1;
-          merged['is_muted_by_host'] = mergedAudio == 1 ? 0 : 1;
+          final bool mergedMutedByHost =
+              _mutedFlagValue(
+                callData.containsKey('is_muted_by_host')
+                    ? callData['is_muted_by_host']
+                    : old['is_muted_by_host'],
+              ) ??
+                  false;
+          merged['is_muted_by_host'] = mergedMutedByHost ? 1 : 0;
           merged['is_speaking'] = mergedAudio == 1
               ? (merged['is_speaking'] ?? false)
               : false;
@@ -1198,14 +1387,14 @@ extension CallEventHandler on WebsocketController {
           final int joinedUserId =
               int.tryParse(
                 (merged['user'] is Map
-                            ? merged['user']['id']
-                            : (merged['user_id'] ??
-                                  merged['caller_id'] ??
-                                  callerId))
-                        ?.toString() ??
+                    ? merged['user']['id']
+                    : (merged['user_id'] ??
+                    merged['caller_id'] ??
+                    callerId))
+                    ?.toString() ??
                     '0',
               ) ??
-              0;
+                  0;
           if (joinedUserId > 0) {
             /// ✅ Critical: do not use putIfAbsent here.
             /// If user was muted before and later unmuted/rejoined, old cache=true
@@ -1283,7 +1472,21 @@ extension CallEventHandler on WebsocketController {
             reason: 'seat_join_or_accept caller=$callerId',
           );
         }
+      } else {
+        final bool effectiveMuted = audioMutedUserMap[callerId] ?? false;
+        await applyRemoteAudioMuteIfChanged(
+          userId: callerId,
+          muted: effectiveMuted,
+          reason: 'seat_join_or_accept',
+        );
       }
+
+      LiveRealtimeDebugLog.event('SEAT_AUDIO_STATE', <String, Object?>{
+        'room': _toInt(livestreamId),
+        'user': callerId,
+        'seat': eventSeatNo,
+        'muted': audioMutedUserMap[callerId] ?? false,
+      });
 
       if (isMeCaller) {
         final selfSeat = _toInt(
@@ -1308,6 +1511,24 @@ extension CallEventHandler on WebsocketController {
       );
       syncLivestreamCallers();
       livestreamController.syncVideoCallerAgoraMappingsFromCalls(liveCallList);
+      // ✅ FIX: see _ensureViewerPresenceForAcceptedSeat. Without this, a
+      // seated user whose own viewer_joined event never registered locally
+      // stayed missing from the viewer list forever, so the viewer count
+      // could read lower than the number of occupied seats.
+      _ensureViewerPresenceForAcceptedSeat(callData);
+      LiveRealtimeDebugLog.event('SEAT_JOIN', <String, Object?>{
+        'room': _toInt(livestreamId),
+        'seat': eventSeatNo,
+        'user': callerId,
+        'name': callData['user'] is Map ? callData['user']['name'] : null,
+        'source': actionType.isEmpty ? action : actionType,
+        'occupied_before': rtOccupiedBefore,
+        'occupied_after': kDebugMode
+            ? LiveRealtimeDebugLog.seatEntries(liveCallList).length
+            : 0,
+      });
+      _rtSeats(payload);
+      _rtState(payload);
     } else if (callStatus == 'pending') {
       /// Final safety: pending confirmation is never valid in an audio-only room.
       if (audioRoom) {
@@ -1347,10 +1568,10 @@ extension CallEventHandler on WebsocketController {
         callStatus == 'seat_left') {
       final bool weakAcceptedTimeout =
           (callStatus == 'timeout' || callStatus == 'timed_out') &&
-          (_isUserAcceptedSeatLocally(callerId) ||
-              _isVideoCallerMediaStillActive(_toInt(callerId))) &&
-          callData['remove_viewer'] != true &&
-          callData['viewer_removed'] != true;
+              (_isUserAcceptedSeatLocally(callerId) ||
+                  _isVideoCallerMediaStillActive(_toInt(callerId))) &&
+              callData['remove_viewer'] != true &&
+              callData['viewer_removed'] != true;
 
       /// Backend heartbeat/presence timeout can arrive while the caller is
       /// still connected, visible and publishing. Keep the accepted seat/call
@@ -1411,7 +1632,7 @@ extension CallEventHandler on WebsocketController {
       );
       debugPrint(
         'VIEWER_PRESENCE_PRESERVED => user=$callerId reason=call_$callStatus '
-        'removeViewer=${callData['remove_viewer']} viewerRemoved=${callData['viewer_removed']}',
+            'removeViewer=${callData['remove_viewer']} viewerRemoved=${callData['viewer_removed']}',
       );
 
       // This is a seat/mic leave event, not live-room leave.
@@ -1429,8 +1650,8 @@ extension CallEventHandler on WebsocketController {
         if (call is! Map) return false;
         final oldCallerId =
             call['caller_id'] ??
-            call['user_id'] ??
-            (call['user'] is Map ? call['user']['id'] : null);
+                call['user_id'] ??
+                (call['user'] is Map ? call['user']['id'] : null);
         return oldCallerId.toString() == callerId.toString();
       });
 

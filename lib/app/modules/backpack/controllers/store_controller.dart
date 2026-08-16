@@ -15,20 +15,53 @@ class StoreController extends GetxController {
 
   final isLoading = false.obs;
 
-  final assetList = [].obs;
-  Future getAssetList() async {
-    isLoading.value = true;
-    final data = await _dio.get(
-      kAssetListUrl,
-      options: Options(
-        headers: {
-          'Authorization': 'Bearer ${authController.userProfile.value.token}',
-        },
-      ),
-    );
+  final assetList = <dynamic>[].obs;
 
-    assetList.value = data.data['assets'];
-    isLoading.value = false;
+  /// Medal/Achievement page uses Store API items whose type is Badge.
+  /// Kept as baseAssetList so the existing Medal page contract stays unchanged.
+  final baseAssetList = <dynamic>[].obs;
+
+  bool _isBaseAsset(dynamic rawItem) {
+    if (rawItem is! Map) return false;
+
+    final Map<String, dynamic> item = Map<String, dynamic>.from(rawItem);
+    final String type = (item['type'] ?? '').toString().trim().toLowerCase();
+
+    return type == 'badge';
+  }
+
+  void _syncBaseAssetList() {
+    baseAssetList.assignAll(assetList.where(_isBaseAsset));
+  }
+
+  Future getAssetList() async {
+    try {
+      isLoading.value = true;
+
+      final response = await _dio.get(
+        kAssetListUrl,
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer ${authController.userProfile.value.token}',
+            'Accept': 'application/json',
+          },
+        ),
+      );
+
+      final dynamic body = response.data;
+      final dynamic rawAssets = body is Map ? body['assets'] : null;
+
+      if (rawAssets is List) {
+        assetList.assignAll(rawAssets);
+      } else {
+        assetList.clear();
+      }
+
+      _syncBaseAssetList();
+      return assetList;
+    } finally {
+      isLoading.value = false;
+    }
   }
 
   ///----------------------asset sending ----------------------
@@ -517,18 +550,7 @@ class StoreController extends GetxController {
       );
 
       final body = _asStringMap(response.data);
-      Fluttertoast.showToast(
-        msg: _cleanMapString(body['message']).isEmpty
-            ? (value
-            ? ('VIP activated successfully').appTr
-            : ('VIP deactivated successfully').appTr)
-            : _cleanMapString(body['message']),
-        toastLength: Toast.LENGTH_SHORT,
-        gravity: ToastGravity.BOTTOM,
-        backgroundColor: Colors.green,
-        textColor: Colors.white,
-        fontSize: 14,
-      );
+
 
       await showBackPackList(showLoader: false);
       try {

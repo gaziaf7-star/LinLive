@@ -10,6 +10,11 @@ class RenderStreamVideoController extends GetxController {
   final activeCallList = <Widget>[].obs;
   LivestreamController liveController = Get.find();
 
+  // ✅ FIX: see the identical guard in multi_live_view.dart. setClientRole
+  // was being re-issued unconditionally every time this ran, which
+  // renegotiates the media connection and causes visible audio/video hits.
+  bool _localClientRoleIsBroadcaster = false;
+
   Future<List<Widget>> getRenderViews({
     required List<dynamic> listActiveCalls,
     required bool muted,
@@ -59,9 +64,17 @@ class RenderStreamVideoController extends GetxController {
       } else {
         try {
           if (uid == authController.userProfile.value.user!.id!) {
-            await engine.setClientRole(
-              role: ClientRoleType.clientRoleBroadcaster,
-            );
+            if (!_localClientRoleIsBroadcaster) {
+              _localClientRoleIsBroadcaster = true;
+              try {
+                await engine.setClientRole(
+                  role: ClientRoleType.clientRoleBroadcaster,
+                );
+              } catch (e) {
+                _localClientRoleIsBroadcaster = false;
+                rethrow;
+              }
+            }
             renderViews.add(
               AgoraVideoView(
                 controller: VideoViewController(

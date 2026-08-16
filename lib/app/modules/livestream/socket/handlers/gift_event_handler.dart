@@ -19,10 +19,10 @@ extension GiftEventHandler on WebsocketController {
 
         final dynamic coinRaw =
             data['total_gift_coins'] ??
-            data['total_coins'] ??
-            data['gifts_coins'] ??
-            data['gift_amount'] ??
-            data['stream_coins'];
+                data['total_coins'] ??
+                data['gifts_coins'] ??
+                data['gift_amount'] ??
+                data['stream_coins'];
 
         final int coins = _toInt(coinRaw);
 
@@ -35,7 +35,7 @@ extension GiftEventHandler on WebsocketController {
         if (data['user_gift_counts'] != null) {
           userGiftCounts.value = Map<String, Map<String, dynamic>>.from(
             data['user_gift_counts'].map(
-              (key, value) =>
+                  (key, value) =>
                   MapEntry(key.toString(), Map<String, dynamic>.from(value)),
             ),
           );
@@ -54,9 +54,9 @@ extension GiftEventHandler on WebsocketController {
   }
 
   bool _looksLikeViewerOnlyPayloadForCoin(
-    Map<String, dynamic> payload,
-    Map<String, dynamic> data,
-  ) {
+      Map<String, dynamic> payload,
+      Map<String, dynamic> data,
+      ) {
     /// viewer/user join payload may contain user.balance/coins/gifts_coins = 0.
     /// That is NOT the live received gift total, so never sync live total from it.
     final action = (payload['action_type'] ?? payload['action'] ?? '')
@@ -86,9 +86,9 @@ extension GiftEventHandler on WebsocketController {
   }
 
   void syncGiftCoinsFromPayload(
-    Map<String, dynamic> payload, {
-    String source = 'payload',
-  }) {
+      Map<String, dynamic> payload, {
+        String source = 'payload',
+      }) {
     try {
       final Map<String, dynamic> data = payload['data'] is Map
           ? Map<String, dynamic>.from(payload['data'])
@@ -105,19 +105,19 @@ extension GiftEventHandler on WebsocketController {
 
       final bool hasLiveCoinKey =
           data.containsKey('total_gift_coins') ||
-          data.containsKey('total_coins') ||
-          data.containsKey('gift_amount') ||
-          data.containsKey('stream_coins') ||
-          data.containsKey('received_coins');
+              data.containsKey('total_coins') ||
+              data.containsKey('gift_amount') ||
+              data.containsKey('stream_coins') ||
+              data.containsKey('received_coins');
 
       /// Do NOT treat data['gifts_coins'] alone as live total when it comes
       /// from viewer/user object. User.gifts_coins is often 0 for late viewers.
       final bool hasOnlyUserGiftCoins =
           data.containsKey('gifts_coins') &&
-          !hasLiveCoinKey &&
-          (data.containsKey('id') ||
-              data.containsKey('user_id') ||
-              data.containsKey('profile_image'));
+              !hasLiveCoinKey &&
+              (data.containsKey('id') ||
+                  data.containsKey('user_id') ||
+                  data.containsKey('profile_image'));
 
       if (!hasLiveCoinKey && hasOnlyUserGiftCoins) {
         liveLog('🪙 Gift coin sync skipped user.gifts_coins from $source');
@@ -126,11 +126,11 @@ extension GiftEventHandler on WebsocketController {
 
       final dynamic coinRaw =
           data['total_gift_coins'] ??
-          data['total_coins'] ??
-          data['gift_amount'] ??
-          data['stream_coins'] ??
-          data['received_coins'] ??
-          data['gifts_coins'];
+              data['total_coins'] ??
+              data['gift_amount'] ??
+              data['stream_coins'] ??
+              data['received_coins'] ??
+              data['gifts_coins'];
 
       if (coinRaw == null) return;
 
@@ -152,7 +152,7 @@ extension GiftEventHandler on WebsocketController {
           payloadStreamId != currentStreamId) {
         liveLog(
           '⛔ Gift coins ignored from other stream '
-          '=> event=$payloadStreamId current=$currentStreamId source=$source keep=${totalGiftCoins.value}',
+              '=> event=$payloadStreamId current=$currentStreamId source=$source keep=${totalGiftCoins.value}',
         );
         return;
       }
@@ -388,17 +388,17 @@ extension GiftEventHandler on WebsocketController {
         ? Map<String, dynamic>.from(data['gift'])
         : <String, dynamic>{};
     final String category =
-        (data['gift_category'] ??
-                data['gift_type'] ??
-                data['type'] ??
-                gift['category'] ??
-                gift['gift_category'] ??
-                gift['gift_type'] ??
-                gift['type'] ??
-                gift['name'] ??
-                '')
-            .toString()
-            .toLowerCase();
+    (data['gift_category'] ??
+        data['gift_type'] ??
+        data['type'] ??
+        gift['category'] ??
+        gift['gift_category'] ??
+        gift['gift_type'] ??
+        gift['type'] ??
+        gift['name'] ??
+        '')
+        .toString()
+        .toLowerCase();
     return data['is_lucky_gift'] == true ||
         data['is_lucky_gift'].toString() == '1' ||
         gift['is_lucky_gift'] == true ||
@@ -410,9 +410,7 @@ extension GiftEventHandler on WebsocketController {
     _luckyCardHideTimer?.cancel();
     _luckyCurrentFlightComplete = false;
     giftsData.value = Map<String, dynamic>.from(next);
-    giftsData.refresh();
     isGiftAnimationShowing.value = true;
-    isGiftAnimationShowing.refresh();
   }
 
   /// Normal gifts close after each animation.
@@ -577,26 +575,26 @@ extension GiftEventHandler on WebsocketController {
         role == 'sender'
             ? ['sender', 'gifter', 'from_user', 'user']
             : [
-                'receiver',
-                'receiver_user',
-                'to_user',
-                'host',
-                'broadcaster',
-                'livestream_user',
-              ],
+          'receiver',
+          'receiver_user',
+          'to_user',
+          'host',
+          'broadcaster',
+          'livestream_user',
+        ],
       ),
     );
 
     final id =
         direct['id'] ??
-        direct['user_id'] ??
-        fallbackId ??
-        _pickGiftValue(
-          data,
-          role == 'sender'
-              ? ['sender_id', 'gifter_id', 'user_id']
-              : ['receiver_id', 'to_user_id', 'host_id', 'broadcaster_id'],
-        );
+            direct['user_id'] ??
+            fallbackId ??
+            _pickGiftValue(
+              data,
+              role == 'sender'
+                  ? ['sender_id', 'gifter_id', 'user_id']
+                  : ['receiver_id', 'to_user_id', 'host_id', 'broadcaster_id'],
+            );
 
     final cached = _findGiftUserById(id);
 
@@ -611,38 +609,38 @@ extension GiftEventHandler on WebsocketController {
           role == 'sender'
               ? ['sender_name', 'gifter_name', 'user_name', 'name']
               : [
-                  'receiver_name',
-                  'to_user_name',
-                  'host_name',
-                  'broadcaster_name',
-                ],
+            'receiver_name',
+            'to_user_name',
+            'host_name',
+            'broadcaster_name',
+          ],
         ),
         'level': _pickGiftValue(
           data,
           role == 'sender'
               ? ['sender_level', 'gifter_level', 'level']
               : [
-                  'receiver_level',
-                  'to_user_level',
-                  'host_level',
-                  'broadcaster_level',
-                ],
+            'receiver_level',
+            'to_user_level',
+            'host_level',
+            'broadcaster_level',
+          ],
         ),
         'profile_image': _pickGiftValue(
           data,
           role == 'sender'
               ? [
-                  'sender_profile_image',
-                  'gifter_profile_image',
-                  'profile_image',
-                  'avatar',
-                ]
+            'sender_profile_image',
+            'gifter_profile_image',
+            'profile_image',
+            'avatar',
+          ]
               : [
-                  'receiver_profile_image',
-                  'to_user_profile_image',
-                  'host_profile_image',
-                  'broadcaster_profile_image',
-                ],
+            'receiver_profile_image',
+            'to_user_profile_image',
+            'host_profile_image',
+            'broadcaster_profile_image',
+          ],
         ),
       },
     ]);
@@ -656,12 +654,12 @@ extension GiftEventHandler on WebsocketController {
       direct,
       {
         'id':
-            direct['id'] ?? _pickGiftValue(data, ['gift_id', 'asset_id', 'id']),
+        direct['id'] ?? _pickGiftValue(data, ['gift_id', 'asset_id', 'id']),
         'name':
-            direct['name'] ??
+        direct['name'] ??
             _pickGiftValue(data, ['gift_name', 'asset_name', 'name']),
         'image':
-            direct['image'] ??
+        direct['image'] ??
             direct['gift_image'] ??
             direct['show_image'] ??
             _pickGiftValue(data, [
@@ -673,7 +671,7 @@ extension GiftEventHandler on WebsocketController {
               'svga',
             ]),
         'gift_image':
-            direct['gift_image'] ??
+        direct['gift_image'] ??
             direct['image'] ??
             _pickGiftValue(data, [
               'gift_image',
@@ -684,7 +682,7 @@ extension GiftEventHandler on WebsocketController {
               'svga',
             ]),
         'show_image':
-            direct['show_image'] ??
+        direct['show_image'] ??
             direct['image'] ??
             _pickGiftValue(data, [
               'show_image',
@@ -695,11 +693,11 @@ extension GiftEventHandler on WebsocketController {
               'svga',
             ]),
         'coin':
-            direct['coin'] ??
+        direct['coin'] ??
             direct['coins'] ??
             _pickGiftValue(data, ['gift_coin', 'coin', 'coins', 'total_coins']),
         'audio':
-            direct['audio'] ??
+        direct['audio'] ??
             direct['gift_audio'] ??
             direct['sound'] ??
             direct['audio_url'] ??
@@ -712,7 +710,7 @@ extension GiftEventHandler on WebsocketController {
               'gift_sound',
             ]),
         'gift_audio':
-            direct['gift_audio'] ??
+        direct['gift_audio'] ??
             direct['audio'] ??
             direct['sound'] ??
             direct['audio_url'] ??
@@ -725,7 +723,7 @@ extension GiftEventHandler on WebsocketController {
               'gift_sound',
             ]),
         'sound':
-            direct['sound'] ??
+        direct['sound'] ??
             direct['audio'] ??
             direct['gift_audio'] ??
             _pickGiftValue(data, [
@@ -737,7 +735,7 @@ extension GiftEventHandler on WebsocketController {
               'gift_sound',
             ]),
         'category':
-            direct['category'] ??
+        direct['category'] ??
             direct['gift_category'] ??
             direct['gift_type'] ??
             _pickGiftValue(data, [
@@ -747,21 +745,21 @@ extension GiftEventHandler on WebsocketController {
               'type',
             ]),
         'gift_category':
-            direct['gift_category'] ??
+        direct['gift_category'] ??
             direct['category'] ??
             _pickGiftValue(data, ['gift_category', 'category']),
         'gift_type':
-            direct['gift_type'] ??
+        direct['gift_type'] ??
             direct['type'] ??
             _pickGiftValue(data, ['gift_type', 'type']),
         'is_lucky': direct['is_lucky'] ?? _pickGiftValue(data, ['is_lucky']),
         'is_lucky_gift':
-            direct['is_lucky_gift'] ?? _pickGiftValue(data, ['is_lucky_gift']),
+        direct['is_lucky_gift'] ?? _pickGiftValue(data, ['is_lucky_gift']),
         'lucky': direct['lucky'] ?? _pickGiftValue(data, ['lucky']),
         'lucky_ratio':
-            direct['lucky_ratio'] ?? _pickGiftValue(data, ['lucky_ratio']),
+        direct['lucky_ratio'] ?? _pickGiftValue(data, ['lucky_ratio']),
         'lucky_coin':
-            direct['lucky_coin'] ?? _pickGiftValue(data, ['lucky_coin']),
+        direct['lucky_coin'] ?? _pickGiftValue(data, ['lucky_coin']),
         'back_coin': direct['back_coin'] ?? _pickGiftValue(data, ['back_coin']),
       },
     ]);
@@ -769,15 +767,15 @@ extension GiftEventHandler on WebsocketController {
 
   String _normalGiftMediaPath(Map<String, dynamic> gift) {
     final String path =
-        (gift['gift_image'] ??
-                gift['image'] ??
-                gift['show_image'] ??
-                gift['svga'] ??
-                gift['animation'] ??
-                gift['animation_url'] ??
-                '')
-            .toString()
-            .trim();
+    (gift['gift_image'] ??
+        gift['image'] ??
+        gift['show_image'] ??
+        gift['svga'] ??
+        gift['animation'] ??
+        gift['animation_url'] ??
+        '')
+        .toString()
+        .trim();
 
     if (path.isEmpty || path.toLowerCase() == 'null' || path == 'file:///') {
       return '';
@@ -814,6 +812,15 @@ extension GiftEventHandler on WebsocketController {
   /// Lucky reference-video card stays mounted while its individual gift flights
   /// are consumed one by one.
 
+  String _giftVisualCoalesceKey(Map<String, dynamic> data) {
+    final Map<String, dynamic> gift = _mapFrom(data['gift']);
+    final Map<String, dynamic> sender = _mapFrom(data['sender']);
+    final Map<String, dynamic> receiver = _mapFrom(data['receiver']);
+    return '${gift['id'] ?? gift['gift_id'] ?? data['gift_id']}|'
+        '${sender['id'] ?? sender['user_id'] ?? data['sender_id']}|'
+        '${receiver['id'] ?? receiver['user_id'] ?? data['receiver_id']}';
+  }
+
   void _enqueueGiftAnimation(Map<String, dynamic> rawData) {
     final Map<String, dynamic> data = Map<String, dynamic>.from(rawData);
 
@@ -826,7 +833,7 @@ extension GiftEventHandler on WebsocketController {
     if (!incomingLucky && !_normalGiftHasPlayableMedia(incomingGift)) {
       liveLog(
         '⚡ Empty normal gift animation skipped immediately '
-        '=> giftId=${incomingGift['id'] ?? data['gift_id']}',
+            '=> giftId=${incomingGift['id'] ?? data['gift_id']}',
       );
       return;
     }
@@ -837,7 +844,6 @@ extension GiftEventHandler on WebsocketController {
       liveLog('⚡ Stale empty normal gift cleared before next animation');
       isGiftAnimationShowing.value = false;
       giftsData.value = <String, dynamic>{};
-      giftsData.refresh();
     }
 
     final int serial = ++_giftAnimationSerial;
@@ -847,11 +853,11 @@ extension GiftEventHandler on WebsocketController {
     // tap look new again when local/API/WebSocket copies reached this queue.
     final dynamic physicalSerial =
         data['gift_animation_serial'] ??
-        data['animation_serial'] ??
-        data['client_combo_serial'] ??
-        data['combo_serial'] ??
-        data['tap_serial'] ??
-        data['send_serial'];
+            data['animation_serial'] ??
+            data['client_combo_serial'] ??
+            data['combo_serial'] ??
+            data['tap_serial'] ??
+            data['send_serial'];
     data['gift_animation_serial'] ??= physicalSerial ?? serial;
     data['animation_serial'] ??= data['gift_animation_serial'];
     data['timestamp'] ??= DateTime.now().toIso8601String();
@@ -859,7 +865,7 @@ extension GiftEventHandler on WebsocketController {
 
     final bool currentLucky =
         giftsData.isNotEmpty &&
-        _isLuckyAnimationMap(Map<String, dynamic>.from(giftsData));
+            _isLuckyAnimationMap(Map<String, dynamic>.from(giftsData));
 
     /// Card is still visible but the previous Lucky flight has already ended:
     /// put the new tap directly into the same mounted widget.
@@ -871,30 +877,70 @@ extension GiftEventHandler on WebsocketController {
       return;
     }
 
-    // Keep the exact first 200 rapid taps. Beyond that, replace the oldest
-    // not-yet-mounted item instead of allowing unbounded Map/list growth to
-    // terminate low-memory devices. Normal use (including 100 taps) is exact.
-    if (_giftAnimationQueue.length >= 200) {
-      _giftAnimationQueue.removeFirst();
+    // Keep a bounded visual backlog. Accounting and timeline state are handled
+    // before this presentation-only queue and are never dropped here.
+    // Replace the oldest not-yet-mounted item instead of allowing unbounded
+    // Map/list growth to terminate low-memory devices.
+    const int maxVisualGiftBacklog = 10;
+    if (_giftAnimationQueue.length >= maxVisualGiftBacklog) {
+      final List<Map<String, dynamic>> compacted = _giftAnimationQueue.toList(
+        growable: true,
+      );
+      int replaceIndex = -1;
+      if (!incomingLucky) {
+        final String incomingKey = _giftVisualCoalesceKey(data);
+        replaceIndex = compacted.lastIndexWhere(
+              (item) =>
+          !_isLuckyAnimationMap(item) &&
+              _giftVisualCoalesceKey(item) == incomingKey,
+        );
+      }
+      if (replaceIndex < 0) {
+        replaceIndex = compacted.indexWhere(
+              (item) => !_isLuckyAnimationMap(item),
+        );
+      }
+      if (replaceIndex < 0) replaceIndex = 0;
+      compacted.removeAt(replaceIndex);
+      _giftAnimationQueue
+        ..clear()
+        ..addAll(compacted);
     }
     _giftAnimationQueue.addLast(data);
 
-    _forceGiftPrint('GIFT ANIMATION QUEUE ITEM ADDED', {
-      'queue_serial': serial,
-      'incoming_is_lucky': incomingLucky,
-      'current_is_lucky': currentLucky,
-      'queue_length_after_add': _giftAnimationQueue.length,
-      'is_animation_showing': isGiftAnimationShowing.value,
-      'queued_data': data,
-    });
+    if (kDebugMode && _giftAnimationQueue.length >= 8) {
+      debugPrint(
+        'Gift visual backlog high: '
+            '${_giftAnimationQueue.length}/$maxVisualGiftBacklog',
+      );
+    }
 
-    // Never drop a physical Combo tap. Queue.removeFirst() keeps processing O(1)
-    // even when many taps are waiting, so exact tap count is preserved smoothly.
+    if (kLiveDebug)
+      _forceGiftPrint('GIFT ANIMATION QUEUE ITEM ADDED', {
+        'queue_serial': serial,
+        'incoming_is_lucky': incomingLucky,
+        'current_is_lucky': currentLucky,
+        'queue_length_after_add': _giftAnimationQueue.length,
+        'is_animation_showing': isGiftAnimationShowing.value,
+        'queued_data': data,
+      });
+
+    // Every physical tap has already completed business-state processing.
+    // Under overload this queue retains only a bounded representative visual
+    // backlog; the permanent Lucky layer keeps its own bounded count/flight UI.
 
     if (!isGiftAnimationShowing.value && !_giftAnimationQueueMounting) {
       _showNextQueuedGiftAnimation();
     }
   }
+
+  /// ✅ FIX: exposes queue depth so GiftAnimationWidget (gifts_animation.dart)
+  /// can detect a backlog and shorten its own display time accordingly,
+  /// instead of every queued gift waiting out its full natural animation
+  /// length (or the long safety-timer fallback) one after another — that
+  /// serial wait is what made a burst of gifts feel like each one showed
+  /// up 7-8+ seconds late.
+  int get giftAnimationQueueLength => _giftAnimationQueue.length;
 
   void _showNextQueuedGiftAnimation() {
     if (_giftAnimationQueueMounting || isGiftAnimationShowing.value) return;
@@ -923,7 +969,7 @@ extension GiftEventHandler on WebsocketController {
 
         liveLog(
           '⚡ Invalid queued normal gift discarded '
-          '=> giftId=${candidateGift['id'] ?? candidate['gift_id']}',
+              '=> giftId=${candidateGift['id'] ?? candidate['gift_id']}',
         );
       }
 
@@ -932,17 +978,16 @@ extension GiftEventHandler on WebsocketController {
       _luckyCardHideTimer?.cancel();
       _luckyCurrentFlightComplete = false;
       giftsData.value = next;
-      giftsData.refresh();
 
-      _forceGiftPrint('GIFT ANIMATION MOUNTED FINAL DATA', {
-        'mounted_gifts_data': next,
-        'remaining_queue_length': _giftAnimationQueue.length,
-        'gift_animation_serial': next['gift_animation_serial'],
-        'animation_serial': next['animation_serial'],
-      });
+      if (kLiveDebug)
+        _forceGiftPrint('GIFT ANIMATION MOUNTED FINAL DATA', {
+          'mounted_gifts_data': next,
+          'remaining_queue_length': _giftAnimationQueue.length,
+          'gift_animation_serial': next['gift_animation_serial'],
+          'animation_serial': next['animation_serial'],
+        });
 
       isGiftAnimationShowing.value = true;
-      isGiftAnimationShowing.refresh();
     } finally {
       _giftAnimationQueueMounting = false;
     }
@@ -982,10 +1027,10 @@ extension GiftEventHandler on WebsocketController {
   }
 
   List<int> _giftReceiverIdsFromPayload(
-    Map<String, dynamic> data,
-    dynamic singleReceiverId, {
-    bool allowReceiverList = false,
-  }) {
+      Map<String, dynamic> data,
+      dynamic singleReceiverId, {
+        bool allowReceiverList = false,
+      }) {
     final ids = <int>[];
 
     void addOne(dynamic value) {
@@ -1002,13 +1047,13 @@ extension GiftEventHandler on WebsocketController {
     if (allowReceiverList) {
       final rawList =
           data['animation_receiver_ids'] ??
-          data['receiver_ids_for_animation'] ??
-          data['lucky_receiver_ids'] ??
-          data['all_receiver_ids'] ??
-          data['receiver_ids'] ??
-          data['receiverIds'] ??
-          data['to_user_ids'] ??
-          data['receiver_id_list'];
+              data['receiver_ids_for_animation'] ??
+              data['lucky_receiver_ids'] ??
+              data['all_receiver_ids'] ??
+              data['receiver_ids'] ??
+              data['receiverIds'] ??
+              data['to_user_ids'] ??
+              data['receiver_id_list'];
 
       if (rawList is List) {
         for (final id in rawList) {
@@ -1072,6 +1117,96 @@ extension GiftEventHandler on WebsocketController {
         if (found.isNotEmpty) return found;
       }
     }
+
+    final currentUser = authController.userProfile.value.user;
+    final currentUserId = currentUser?.id?.toInt() ?? 0;
+    if (currentUserId.toString() == idText) {
+      return {
+        'id': currentUserId,
+        'user_id': currentUserId,
+        'name': currentUser?.name ?? 'You',
+        'profile_image': currentUser?.profileImage ?? '',
+        'level': currentUser?.level ?? 0,
+        'coins': currentUser?.coins,
+        'earned_coins': currentUser?.earnedCoins,
+      };
+    }
+
+    return {'id': _giftInt(rawUserId), 'user_id': _giftInt(rawUserId)};
+  }
+
+  /// ✅ FIX: see the call site in the multi-receiver expansion loop above.
+  /// Scans liveCallList/pendingCall/commentsList/giftMessagesList exactly
+  /// ONCE, building a userId -> profile map, instead of _findLiveUserForGift
+  /// rescanning all four lists from scratch for every receiver. Earlier
+  /// lists win on id conflicts, matching _findLiveUserForGift's original
+  /// scan order (liveCallList, pendingCall, commentsList, giftMessagesList).
+  Map<String, Map<String, dynamic>> _buildLiveUserIndexForGift() {
+    final index = <String, Map<String, dynamic>>{};
+
+    Map<String, dynamic> userFromMap(Map item) {
+      final user = item['user'];
+      final caller = item['caller'];
+      final viewer = item['viewer'];
+      final sender = item['sender'];
+      final receiver = item['receiver'];
+
+      final nested = user is Map
+          ? Map<String, dynamic>.from(user)
+          : caller is Map
+          ? Map<String, dynamic>.from(caller)
+          : viewer is Map
+          ? Map<String, dynamic>.from(viewer)
+          : sender is Map
+          ? Map<String, dynamic>.from(sender)
+          : receiver is Map
+          ? Map<String, dynamic>.from(receiver)
+          : <String, dynamic>{};
+
+      return nested.isNotEmpty ? nested : Map<String, dynamic>.from(item);
+    }
+
+    void indexList(Iterable<dynamic> list) {
+      for (final raw in list) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        final resolved = userFromMap(item);
+        if (resolved.isEmpty) continue;
+
+        for (final dynamic rawId in <dynamic>[
+          item['id'],
+          item['user_id'],
+          item['caller_id'],
+          item['viewer_id'],
+          resolved['id'],
+          resolved['user_id'],
+        ]) {
+          final String? key = rawId?.toString();
+          if (key == null || key.isEmpty || key == 'null') continue;
+          index.putIfAbsent(key, () => resolved);
+        }
+      }
+    }
+
+    indexList(liveCallList);
+    indexList(pendingCall);
+    indexList(commentsList);
+    indexList(giftMessagesList);
+
+    return index;
+  }
+
+  /// O(1) counterpart to _findLiveUserForGift, reading from an index built
+  /// once by _buildLiveUserIndexForGift instead of rescanning every list.
+  Map<String, dynamic> _liveUserFromIndex(
+      Map<String, Map<String, dynamic>> index,
+      dynamic rawUserId,
+      ) {
+    final idText = rawUserId?.toString() ?? '';
+    if (idText.isEmpty || idText == 'null') return <String, dynamic>{};
+
+    final found = index[idText];
+    if (found != null) return found;
 
     final currentUser = authController.userProfile.value.user;
     final currentUserId = currentUser?.id?.toInt() ?? 0;
@@ -1263,9 +1398,9 @@ extension GiftEventHandler on WebsocketController {
   }
 
   int _giftQuantityFromPayload(
-    Map<String, dynamic> giftData,
-    Map<String, dynamic> gift,
-  ) {
+      Map<String, dynamic> giftData,
+      Map<String, dynamic> gift,
+      ) {
     final int quantity = _toInt(
       giftData['quantity'] ??
           giftData['qty'] ??
@@ -1304,32 +1439,33 @@ extension GiftEventHandler on WebsocketController {
     final int quantity = _giftQuantityFromPayload(giftData, gift);
 
     final String senderName =
-        (sender['name'] ?? sender['username'] ?? ('User').appTr).toString();
+    (sender['name'] ?? sender['username'] ?? ('User').appTr).toString();
     final String receiverName =
-        (receiver['name'] ?? receiver['username'] ?? ('User').appTr).toString();
+    (receiver['name'] ?? receiver['username'] ?? ('User').appTr).toString();
     final String giftName =
-        (gift['name'] ?? gift['gift_name'] ?? ('Gift').appTr).toString();
+    (gift['name'] ?? gift['gift_name'] ?? ('Gift').appTr).toString();
 
     final String senderSeatText = senderSeat > 0 ? '$senderSeat' : 'none';
     final String receiverSeatText = receiverSeat > 0 ? '$receiverSeat' : 'none';
 
     liveLog(
       '🎁 GIFT => $senderName(ID:$senderId, seat:$senderSeatText) '
-      '→ $receiverName(ID:$receiverId, seat:$receiverSeatText) '
-      '| gift:$giftName | quantity:$quantity',
+          '→ $receiverName(ID:$receiverId, seat:$receiverSeatText) '
+          '| gift:$giftName | quantity:$quantity',
     );
   }
 
   /// Public entry for sender-side instant animation only.
   /// Coins, history and final totals still come from the confirmed WebSocket event.
   void handleOptimisticGift(Map<String, dynamic> payload) {
-    _forceGiftPrint('GIFT OPTIMISTIC HANDLER INPUT ALL DATA', {
-      'payload': payload,
-      'current_stream_id': streamID.value,
-      'active_audio_stream_id': activeAudioStreamId.value,
-      'queue_length_before': _giftAnimationQueue.length,
-      'current_gifts_data_before': giftsData,
-    });
+    if (kLiveDebug)
+      _forceGiftPrint('GIFT OPTIMISTIC HANDLER INPUT ALL DATA', {
+        'payload': payload,
+        'current_stream_id': streamID.value,
+        'active_audio_stream_id': activeAudioStreamId.value,
+        'queue_length_before': _giftAnimationQueue.length,
+        'current_gifts_data_before': giftsData,
+      });
 
     _handleUnifiedGift({
       ...payload,
@@ -1349,18 +1485,18 @@ extension GiftEventHandler on WebsocketController {
         _optimisticClientEventUntilMs.remove(target);
         _giftAnimationQueue.removeWhere((Map<String, dynamic> item) {
           final String itemId =
-              (item['client_event_id'] ?? item['client_request_id'] ?? '')
-                  .toString()
-                  .trim();
+          (item['client_event_id'] ?? item['client_request_id'] ?? '')
+              .toString()
+              .trim();
           return itemId == target && item['optimistic_local'] == true;
         });
 
         final String currentId =
-            (giftsData['client_event_id'] ??
-                    giftsData['client_request_id'] ??
-                    '')
-                .toString()
-                .trim();
+        (giftsData['client_event_id'] ??
+            giftsData['client_request_id'] ??
+            '')
+            .toString()
+            .trim();
 
         if (currentId == target && giftsData['optimistic_local'] == true) {
           hideGiftAnimation();
@@ -1375,7 +1511,9 @@ extension GiftEventHandler on WebsocketController {
   }
 
   void _handleUnifiedGift(Map<String, dynamic> payload) {
-    _forceGiftPrint('🎁 HANDLE UNIFIED GIFT RAW PAYLOAD', payload);
+    if (kLiveDebug) {
+      _forceGiftPrint('🎁 HANDLE UNIFIED GIFT RAW PAYLOAD', payload);
+    }
 
     final giftData = <String, dynamic>{
       ...payload,
@@ -1384,22 +1522,23 @@ extension GiftEventHandler on WebsocketController {
       ..._mapFrom(payload['gift_info']),
     };
 
-    _forceGiftPrint('🎁 HANDLE UNIFIED GIFT MERGED DATA', {
-      'raw_payload': payload,
-      'merged_gift_data': giftData,
-      'raw_data': payload['data'],
-      'raw_gift': payload['gift'],
-      'raw_gift_data': payload['gift_data'],
-      'raw_gift_info': payload['gift_info'],
-      'raw_lucky_result': payload['lucky_result'],
-      'raw_lucky_results': payload['lucky_results'],
-    });
+    if (kLiveDebug)
+      _forceGiftPrint('🎁 HANDLE UNIFIED GIFT MERGED DATA', {
+        'raw_payload': payload,
+        'merged_gift_data': giftData,
+        'raw_data': payload['data'],
+        'raw_gift': payload['gift'],
+        'raw_gift_data': payload['gift_data'],
+        'raw_gift_info': payload['gift_info'],
+        'raw_lucky_result': payload['lucky_result'],
+        'raw_lucky_results': payload['lucky_results'],
+      });
 
     final livestreamId =
         giftData['livestream_id'] ??
-        giftData['stream_id'] ??
-        payload['livestream_id'] ??
-        payload['stream_id'];
+            giftData['stream_id'] ??
+            payload['livestream_id'] ??
+            payload['stream_id'];
 
     /// ✅ PK gift guard:
     /// During PK, gift can be sent to opponent livestream id. That is not the
@@ -1410,45 +1549,45 @@ extension GiftEventHandler on WebsocketController {
     try {
       final bool looksPkGift =
           payload['is_pk'] == true ||
-          payload['is_pk'] == 1 ||
-          payload['is_pk']?.toString() == '1' ||
-          giftData['is_pk'] == true ||
-          giftData['is_pk'] == 1 ||
-          giftData['is_pk']?.toString() == '1' ||
-          _toInt(payload['pk_id'] ?? giftData['pk_id']) > 0 ||
-          (payload['pk_channel'] ??
+              payload['is_pk'] == 1 ||
+              payload['is_pk']?.toString() == '1' ||
+              giftData['is_pk'] == true ||
+              giftData['is_pk'] == 1 ||
+              giftData['is_pk']?.toString() == '1' ||
+              _toInt(payload['pk_id'] ?? giftData['pk_id']) > 0 ||
+              (payload['pk_channel'] ??
                   payload['pk_channel_name'] ??
                   giftData['pk_channel'] ??
                   giftData['pk_channel_name'] ??
                   '')
-              .toString()
-              .trim()
-              .isNotEmpty;
+                  .toString()
+                  .trim()
+                  .isNotEmpty;
 
       if (looksPkGift) {
         final int eventStreamId = _toInt(livestreamId);
         final int eventPkId = _toInt(payload['pk_id'] ?? giftData['pk_id']);
         final String eventChannel =
-            (payload['pk_channel_name'] ??
-                    payload['pk_channel'] ??
-                    giftData['pk_channel_name'] ??
-                    giftData['pk_channel'] ??
-                    '')
-                .toString()
-                .trim();
+        (payload['pk_channel_name'] ??
+            payload['pk_channel'] ??
+            giftData['pk_channel_name'] ??
+            giftData['pk_channel'] ??
+            '')
+            .toString()
+            .trim();
 
         final int currentPkId = livestreamController.currentPkId.value;
         final bool pkIdMatch =
             eventPkId > 0 && currentPkId > 0 && eventPkId == currentPkId;
         final bool pkChannelMatch =
             eventChannel.isNotEmpty &&
-            livestreamController.pkChannelName.value.trim().isNotEmpty &&
-            eventChannel == livestreamController.pkChannelName.value.trim();
+                livestreamController.pkChannelName.value.trim().isNotEmpty &&
+                eventChannel == livestreamController.pkChannelName.value.trim();
         final bool pkStreamMatch =
             eventStreamId > 0 &&
-            (eventStreamId == livestreamController.pkSenderLivestreamId.value ||
-                eventStreamId ==
-                    livestreamController.pkReceiverLivestreamId.value);
+                (eventStreamId == livestreamController.pkSenderLivestreamId.value ||
+                    eventStreamId ==
+                        livestreamController.pkReceiverLivestreamId.value);
 
         isPkGiftForCurrentBattle = pkIdMatch || pkChannelMatch || pkStreamMatch;
       }
@@ -1494,25 +1633,25 @@ extension GiftEventHandler on WebsocketController {
 
     final bool isLuckyGiftPayload =
         luckyText(payload['action_type']).contains('lucky') ||
-        luckyText(giftData['action_type']).contains('lucky') ||
-        luckyCategory.contains('lucky') ||
-        luckyText(giftForLuckyCheck['name']).contains('lucky') ||
-        luckyTrue(payload['is_lucky_gift']) ||
-        luckyTrue(giftData['is_lucky_gift']) ||
-        luckyTrue(giftForLuckyCheck['is_lucky_gift']) ||
-        luckyTrue(giftForLuckyCheck['is_lucky']) ||
-        luckyTrue(giftForLuckyCheck['lucky']) ||
-        giftForLuckyCheck['lucky_ratio'] != null ||
-        giftForLuckyCheck['lucky_coin'] != null ||
-        giftForLuckyCheck['back_coin'] != null ||
-        payload['lucky_results'] is List ||
-        giftData['lucky_results'] is List ||
-        payload['big_win_events'] is List ||
-        giftData['big_win_events'] is List ||
-        payload['lucky_result'] is Map ||
-        giftData['lucky_result'] is Map;
+            luckyText(giftData['action_type']).contains('lucky') ||
+            luckyCategory.contains('lucky') ||
+            luckyText(giftForLuckyCheck['name']).contains('lucky') ||
+            luckyTrue(payload['is_lucky_gift']) ||
+            luckyTrue(giftData['is_lucky_gift']) ||
+            luckyTrue(giftForLuckyCheck['is_lucky_gift']) ||
+            luckyTrue(giftForLuckyCheck['is_lucky']) ||
+            luckyTrue(giftForLuckyCheck['lucky']) ||
+            giftForLuckyCheck['lucky_ratio'] != null ||
+            giftForLuckyCheck['lucky_coin'] != null ||
+            giftForLuckyCheck['back_coin'] != null ||
+            payload['lucky_results'] is List ||
+            giftData['lucky_results'] is List ||
+            payload['big_win_events'] is List ||
+            giftData['big_win_events'] is List ||
+            payload['lucky_result'] is Map ||
+            giftData['lucky_result'] is Map;
 
-    if (isLuckyGiftPayload) {
+    if (kLiveDebug && isLuckyGiftPayload) {
       _forceGiftPrint('🍀 LUCKY GIFT_SENT / UNIFIED GIFT FULL DATA', {
         'raw_payload': payload,
         'merged_gift_data': giftData,
@@ -1528,25 +1667,25 @@ extension GiftEventHandler on WebsocketController {
 
     final bool hasLuckyResultData =
         payload['lucky_result'] is Map ||
-        giftData['lucky_result'] is Map ||
-        (payload['lucky_results'] is List &&
-            (payload['lucky_results'] as List).isNotEmpty) ||
-        (giftData['lucky_results'] is List &&
-            (giftData['lucky_results'] as List).isNotEmpty) ||
-        (payload['big_win_events'] is List &&
-            (payload['big_win_events'] as List).isNotEmpty) ||
-        (giftData['big_win_events'] is List &&
-            (giftData['big_win_events'] as List).isNotEmpty) ||
-        payload['multiplier'] != null ||
-        giftData['multiplier'] != null ||
-        payload['win_amount'] != null ||
-        giftData['win_amount'] != null ||
-        payload['back_coin'] != null ||
-        giftData['back_coin'] != null ||
-        payload['win_coin'] != null ||
-        giftData['win_coin'] != null;
+            giftData['lucky_result'] is Map ||
+            (payload['lucky_results'] is List &&
+                (payload['lucky_results'] as List).isNotEmpty) ||
+            (giftData['lucky_results'] is List &&
+                (giftData['lucky_results'] as List).isNotEmpty) ||
+            (payload['big_win_events'] is List &&
+                (payload['big_win_events'] as List).isNotEmpty) ||
+            (giftData['big_win_events'] is List &&
+                (giftData['big_win_events'] as List).isNotEmpty) ||
+            payload['multiplier'] != null ||
+            giftData['multiplier'] != null ||
+            payload['win_amount'] != null ||
+            giftData['win_amount'] != null ||
+            payload['back_coin'] != null ||
+            giftData['back_coin'] != null ||
+            payload['win_coin'] != null ||
+            giftData['win_coin'] != null;
 
-    if (isLuckyGiftPayload) {
+    if (kLiveDebug && isLuckyGiftPayload) {
       _forceGiftPrint('🍀 LUCKY GIFT DETECTION DECISION', {
         'is_lucky_gift_payload': isLuckyGiftPayload,
         'has_lucky_result_data': hasLuckyResultData,
@@ -1554,7 +1693,7 @@ extension GiftEventHandler on WebsocketController {
         'lucky_result': payload['lucky_result'] ?? giftData['lucky_result'],
         'lucky_results': payload['lucky_results'] ?? giftData['lucky_results'],
         'big_win_events':
-            payload['big_win_events'] ?? giftData['big_win_events'],
+        payload['big_win_events'] ?? giftData['big_win_events'],
         'multiplier': payload['multiplier'] ?? giftData['multiplier'],
         'win_amount': payload['win_amount'] ?? giftData['win_amount'],
         'back_coin': payload['back_coin'] ?? giftData['back_coin'],
@@ -1575,18 +1714,18 @@ extension GiftEventHandler on WebsocketController {
     }
 
     final String unifiedAction =
-        (giftData['action_type'] ??
-                payload['action_type'] ??
-                giftData['type'] ??
-                '')
-            .toString()
-            .trim()
-            .toLowerCase();
+    (giftData['action_type'] ??
+        payload['action_type'] ??
+        giftData['type'] ??
+        '')
+        .toString()
+        .trim()
+        .toLowerCase();
     final bool luckyResultOnlyAction =
         unifiedAction == 'lucky_gift_result' ||
-        unifiedAction == 'lucky_gift_back_coin' ||
-        unifiedAction == 'lucky_gift_card' ||
-        unifiedAction.contains('lucky_result');
+            unifiedAction == 'lucky_gift_back_coin' ||
+            unifiedAction == 'lucky_gift_card' ||
+            unifiedAction.contains('lucky_result');
 
     // Result frames update WIN/times/coin only. They are not another physical
     // send and must never enter the visual queue.
@@ -1596,10 +1735,10 @@ extension GiftEventHandler on WebsocketController {
 
     final senderId =
         _pickGiftValue(giftData, ['sender_id', 'gifter_id', 'user_id']) ??
-        _mapFrom(
-          giftData['sender'] ?? giftData['gifter'] ?? giftData['user'],
-        )['id'] ??
-        '';
+            _mapFrom(
+              giftData['sender'] ?? giftData['gifter'] ?? giftData['user'],
+            )['id'] ??
+            '';
 
     final receiverId =
         _pickGiftValue(giftData, [
@@ -1608,24 +1747,24 @@ extension GiftEventHandler on WebsocketController {
           'host_id',
           'broadcaster_id',
         ]) ??
-        _mapFrom(
-          giftData['receiver'] ??
-              giftData['receiver_user'] ??
-              giftData['to_user'] ??
-              giftData['host'] ??
-              giftData['broadcaster'],
-        )['id'] ??
-        '';
+            _mapFrom(
+              giftData['receiver'] ??
+                  giftData['receiver_user'] ??
+                  giftData['to_user'] ??
+                  giftData['host'] ??
+                  giftData['broadcaster'],
+            )['id'] ??
+            '';
 
     final giftId =
         _pickGiftValue(giftData, ['gift_id', 'asset_id']) ??
-        _mapFrom(
-          giftData['gift'] ??
-              giftData['gift_data'] ??
-              giftData['gift_info'] ??
-              giftData['asset'],
-        )['id'] ??
-        '';
+            _mapFrom(
+              giftData['gift'] ??
+                  giftData['gift_data'] ??
+                  giftData['gift_info'] ??
+                  giftData['asset'],
+            )['id'] ??
+            '';
 
     /// ✅ Multi receiver fix:
     /// Only sender-side optimistic payload may expand receiver_ids.
@@ -1634,9 +1773,9 @@ extension GiftEventHandler on WebsocketController {
     /// receivers becomes 900 on each seat.
     final bool isClientOptimisticGift =
         giftData['client_optimistic'] == true ||
-        giftData['optimistic_local'] == true ||
-        giftData['is_optimistic'] == true ||
-        giftData['source']?.toString() == 'local_send';
+            giftData['optimistic_local'] == true ||
+            giftData['is_optimistic'] == true ||
+            giftData['source']?.toString() == 'local_send';
     final bool alreadyExpanded = giftData['__expanded_receiver'] == true;
 
     /// ✅ Multi receiver robust fix:
@@ -1646,7 +1785,7 @@ extension GiftEventHandler on WebsocketController {
     final bool hasConcreteSingleReceiver = _toInt(receiverId) > 0;
     final bool mayExpandReceiverList =
         !alreadyExpanded &&
-        (isClientOptimisticGift || !hasConcreteSingleReceiver);
+            (isClientOptimisticGift || !hasConcreteSingleReceiver);
 
     final List<int> expandedReceiverIds = _giftReceiverIdsFromPayload(
       giftData,
@@ -1660,8 +1799,21 @@ extension GiftEventHandler on WebsocketController {
     if (!isLuckyGiftPayload &&
         !alreadyExpanded &&
         expandedReceiverIds.length > 1) {
+      // ✅ FIX (ANR: "Input dispatching timed out" on the UI isolate):
+      // _findLiveUserForGift independently rescans liveCallList + pendingCall
+      // + commentsList + giftMessagesList from scratch on every call (each
+      // list item gets re-cast to a Map and compared across up to 6 id
+      // fields). Calling it once per receiver inside this loop made a
+      // multi-receiver gift (sent to many seats at once) do
+      // O(receivers × total items across all 4 lists) of synchronous work.
+      // In a busy/long-running room, commentsList and giftMessagesList can
+      // grow into the hundreds, so this could easily block the UI isolate
+      // long enough to trip Android's ANR watchdog. Building the id->profile
+      // index once up front turns every receiver lookup in the loop below
+      // into an O(1) map lookup instead.
+      final liveUserIndex = _buildLiveUserIndexForGift();
       for (final rid in expandedReceiverIds) {
-        final receiverUser = _findLiveUserForGift(rid);
+        final receiverUser = _liveUserFromIndex(liveUserIndex, rid);
         _handleUnifiedGift({
           ...giftData,
           'receiver_id': rid,
@@ -1673,7 +1825,7 @@ extension GiftEventHandler on WebsocketController {
           'multi_receiver_gift': expandedReceiverIds.length > 1,
           '__expanded_receiver': true,
           'event_id':
-              '${giftData['event_id'] ?? 'gift'}_${rid}_${DateTime.now().microsecondsSinceEpoch}',
+          '${giftData['event_id'] ?? 'gift'}_${rid}_${DateTime.now().microsecondsSinceEpoch}',
         });
       }
       return;
@@ -1684,15 +1836,15 @@ extension GiftEventHandler on WebsocketController {
     /// But user abar button click kore same gift send korle 800ms er por allow hobe.
     final int nowMs = DateTime.now().millisecondsSinceEpoch;
     final String clientEventId =
-        (giftData['client_event_id'] ??
-                giftData['client_request_id'] ??
-                giftData['request_uuid'] ??
-                '')
-            .toString()
-            .trim();
+    (giftData['client_event_id'] ??
+        giftData['client_request_id'] ??
+        giftData['request_uuid'] ??
+        '')
+        .toString()
+        .trim();
 
     _optimisticClientEventUntilMs.removeWhere(
-      (String _, int until) => until <= nowMs,
+          (String _, int until) => until <= nowMs,
     );
 
     final String shortDuplicateKey =
@@ -1718,20 +1870,20 @@ extension GiftEventHandler on WebsocketController {
         currentUserId > 0 && _toInt(senderId) == currentUserId;
     final bool suppressLuckySenderEcho =
         isLuckyGiftPayload &&
-        !animationOnly &&
-        senderIsCurrentUser &&
-        luckyOptimisticUntil > nowMs;
+            !animationOnly &&
+            senderIsCurrentUser &&
+            luckyOptimisticUntil > nowMs;
 
     final bool suppressExactClientEcho =
         !animationOnly &&
-        senderIsCurrentUser &&
-        clientEventId.isNotEmpty &&
-        (_optimisticClientEventUntilMs[clientEventId] ?? 0) > nowMs;
+            senderIsCurrentUser &&
+            clientEventId.isNotEmpty &&
+            (_optimisticClientEventUntilMs[clientEventId] ?? 0) > nowMs;
 
     final bool suppressConfirmedEchoAnimation =
         suppressLuckySenderEcho ||
-        suppressExactClientEcho ||
-        (!animationOnly && optimisticUntil > nowMs && optimisticCredits > 0);
+            suppressExactClientEcho ||
+            (!animationOnly && optimisticUntil > nowMs && optimisticCredits > 0);
 
     if (suppressConfirmedEchoAnimation && !suppressLuckySenderEcho) {
       if (optimisticCredits <= 1) {
@@ -1743,19 +1895,19 @@ extension GiftEventHandler on WebsocketController {
     }
 
     final String rawServerEventId =
-        (giftData['event_id'] ??
-                giftData['gift_event_id'] ??
-                giftData['transaction_id'] ??
-                giftData['gift_history_id'] ??
-                giftData['request_id'] ??
-                giftData['client_event_id'] ??
-                giftData['client_request_id'] ??
-                giftData['timestamp'] ??
-                '')
-            .toString()
-            .trim();
+    (giftData['event_id'] ??
+        giftData['gift_event_id'] ??
+        giftData['transaction_id'] ??
+        giftData['gift_history_id'] ??
+        giftData['request_id'] ??
+        giftData['client_event_id'] ??
+        giftData['client_request_id'] ??
+        giftData['timestamp'] ??
+        '')
+        .toString()
+        .trim();
     final String duplicateEventKey =
-        rawServerEventId.isNotEmpty && rawServerEventId != 'null'
+    rawServerEventId.isNotEmpty && rawServerEventId != 'null'
         ? '${shortDuplicateKey}_$rawServerEventId'
         : shortDuplicateKey;
     final int lastMs = _recentGiftEventMs[duplicateEventKey] ?? 0;
@@ -1808,7 +1960,7 @@ extension GiftEventHandler on WebsocketController {
     );
 
     if ((_toInt(receiver['id'] ?? receiver['user_id']) <= 0 ||
-            !_giftValueOk(receiver['profile_image'])) &&
+        !_giftValueOk(receiver['profile_image'])) &&
         _toInt(receiverId) > 0 &&
         _toInt(receiverId) == _toInt(sender['id'] ?? sender['user_id'])) {
       receiver = Map<String, dynamic>.from(sender);
@@ -1875,7 +2027,7 @@ extension GiftEventHandler on WebsocketController {
       "tap_serial": giftData['tap_serial'],
       "send_serial": giftData['send_serial'],
       "gift_animation_serial":
-          giftData['gift_animation_serial'] ??
+      giftData['gift_animation_serial'] ??
           giftData['animation_serial'] ??
           giftData['client_combo_serial'] ??
           giftData['combo_serial'],
@@ -1889,7 +2041,7 @@ extension GiftEventHandler on WebsocketController {
       if (!animationAssetReady) {
         liveLog(
           '⚡ Optimistic normal gift skipped: media not ready '
-          '=> giftId=${gift['id'] ?? giftId}',
+              '=> giftId=${gift['id'] ?? giftId}',
         );
         return;
       }
@@ -1925,7 +2077,7 @@ extension GiftEventHandler on WebsocketController {
     } else if (!suppressConfirmedEchoAnimation && !animationAssetReady) {
       liveLog(
         '⚡ Confirmed normal gift had no playable media; '
-        'timeline/coins kept, animation skipped',
+            'timeline/coins kept, animation skipped',
       );
     }
 
@@ -1945,7 +2097,7 @@ extension GiftEventHandler on WebsocketController {
       'receiver': receiver,
       'gift': gift,
       'comment':
-          '${sender['name'] ?? 'User'} sent ${gift['name'] ?? 'Gift'} to ${receiver['name'] ?? 'User'}',
+      '${sender['name'] ?? 'User'} sent ${gift['name'] ?? 'Gift'} to ${receiver['name'] ?? 'User'}',
       'timestamp': DateTime.now().toIso8601String(),
     };
 
@@ -1987,9 +2139,9 @@ extension GiftEventHandler on WebsocketController {
       /// so every seat receives exactly gift price once.
       final bool optimizedLuckyBatch =
           isLuckyGiftPayload &&
-          (giftData['optimized_lucky_batch'] == true ||
-              giftData['optimized_lucky_batch']?.toString() == '1' ||
-              giftData['animate_once'] == true);
+              (giftData['optimized_lucky_batch'] == true ||
+                  giftData['optimized_lucky_batch']?.toString() == '1' ||
+                  giftData['animate_once'] == true);
 
       final List<int> receiverIdsForCoin = _giftReceiverIdsFromPayload(
         giftData,
@@ -2050,9 +2202,9 @@ extension GiftEventHandler on WebsocketController {
   }
 
   Map<String, dynamic>? _extractCallerUserFromPayload(
-    Map<String, dynamic> payload,
-    Map<String, dynamic> callData,
-  ) {
+      Map<String, dynamic> payload,
+      Map<String, dynamic> callData,
+      ) {
     bool looksLikeUser(Map data) {
       return data['name'] != null ||
           data['profile_image'] != null ||

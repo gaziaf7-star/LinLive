@@ -6,55 +6,61 @@ extension RoomEventHandler on WebsocketController {
     String source = 'room_settings_updated',
   }) {
     try {
-      final Map<String, dynamic> data = payload['data'] is Map
-          ? Map<String, dynamic>.from(payload['data'])
-          : <String, dynamic>{};
+      Map<String, dynamic> mapOf(dynamic value) =>
+          value is Map ? Map<String, dynamic>.from(value) : <String, dynamic>{};
+      List<String> keysOf(dynamic value) => value is Map
+          ? value.keys.map((key) => key.toString()).toList(growable: false)
+          : const <String>[];
 
-      final Map<String, dynamic> liveData = payload['livestreamdata'] is Map
-          ? Map<String, dynamic>.from(payload['livestreamdata'])
-          : payload['livestream'] is Map
-          ? Map<String, dynamic>.from(payload['livestream'])
-          : payload['live_stream'] is Map
-          ? Map<String, dynamic>.from(payload['live_stream'])
-          : payload['stream'] is Map
-          ? Map<String, dynamic>.from(payload['stream'])
-          : payload['room'] is Map
-          ? Map<String, dynamic>.from(payload['room'])
-          : <String, dynamic>{};
+      final rawData = payload['_realtime_raw_data'] ?? payload['data'];
+      final rawDataMap = mapOf(rawData);
+      final rawDataData = mapOf(rawDataMap['data']);
+      final Map<String, dynamic> room = <String, dynamic>{};
+      const containers = <String>[
+        'data',
+        'livestreamdata',
+        'livestream',
+        'live_stream',
+        'stream',
+        'room',
+        'room_settings',
+        'settings',
+        'changes',
+        'delta',
+        'updated_data',
+        'attributes',
+      ];
+      void collect(dynamic raw, int depth) {
+        if (raw is! Map || depth > 4) return;
+        final current = Map<String, dynamic>.from(raw);
+        room.addAll(current);
+        for (final key in containers) {
+          collect(current[key], depth + 1);
+        }
+      }
 
-      final Map<String, dynamic> nestedLiveData = data['livestreamdata'] is Map
-          ? Map<String, dynamic>.from(data['livestreamdata'])
-          : data['livestream'] is Map
-          ? Map<String, dynamic>.from(data['livestream'])
-          : data['live_stream'] is Map
-          ? Map<String, dynamic>.from(data['live_stream'])
-          : data['stream'] is Map
-          ? Map<String, dynamic>.from(data['stream'])
-          : data['room'] is Map
-          ? Map<String, dynamic>.from(data['room'])
-          : <String, dynamic>{};
+      collect(payload, 0);
+      collect(rawData, 1);
 
-      /// IMPORTANT:
-      /// Backend sometimes broadcasts room edit with action_type:
-      /// room_settings_updated instead of live_stream_updated.
-      /// Old code only applied safety flags here, so audience did not see
-      /// seat/theme/background/title change instantly. This merged room map is
-      /// now used for both safety + full room UI sync.
-      final Map<String, dynamic> room = {
-        ...payload,
-        ...data,
-        ...liveData,
-        ...nestedLiveData,
-      };
+      LiveRealtimeDebugLog.event('ROOM_UPDATE_SHAPE', <String, Object?>{
+        'top_keys': keysOf(payload),
+        'data_keys': keysOf(rawData),
+        'data_data_keys': keysOf(rawDataData),
+        'livestreamdata_keys': keysOf(
+          payload['livestreamdata'] ?? rawDataMap['livestreamdata'],
+        ),
+        'room_settings_keys': keysOf(
+          payload['room_settings'] ??
+              rawDataMap['room_settings'] ??
+              rawDataData['room_settings'],
+        ),
+      });
+      final List<String> normalizedActions =
+          (payload['_normalized_action_types'] is List)
+          ? List<String>.from(payload['_normalized_action_types'])
+          : <String>[source];
 
-      final dynamic rawStreamId =
-          room['livestream_id'] ??
-          room['liveSteamId'] ??
-          room['stream_id'] ??
-          room['live_stream_id'] ??
-          room['id'];
-
-      final int livestreamId = _toInt(rawStreamId);
+      final int livestreamId = _eventLivestreamId(payload);
 
       if (livestreamId > 0 && !_isCurrentStream(livestreamId)) {
         liveLog('⛔ ROOM SETTINGS ignored: not current stream => $livestreamId');
@@ -103,7 +109,103 @@ extension RoomEventHandler on WebsocketController {
             'anousment',
           ]) ||
           hasRoomField(['stream_image', 'image', 'cover_image', 'thumbnail']) ||
-          hasRoomField(['room_password', 'stream_password', 'password']);
+          hasRoomField(['room_password', 'stream_password', 'password']) ||
+          hasRoomField([
+            'room_lock',
+            'is_room_locked',
+            'room_locked',
+            'password_required',
+            'has_room_password',
+          ]) ||
+          hasRoomField([
+            'hidden_room',
+            'is_hidden_room',
+            'room_hidden',
+            'hide_room',
+          ]) ||
+          hasRoomField([
+            'lock_coment',
+            'lock_comment',
+            'comment_lock',
+            'is_comment_locked',
+            'chat_lock',
+          ]) ||
+          hasRoomField([
+            'screenshort',
+            'screenshot',
+            'screen_short',
+            'screen_shot',
+          ]) ||
+          hasRoomField(['screen_records', 'screen_record', 'screen_recording']);
+
+      final fields = <String>[];
+      for (final entry in <String, List<String>>{
+        'seat_count': <String>['seat_count', 'total_seats'],
+        'room_layout': <String>['room_layout', 'layout'],
+        'room_theme': <String>['room_theme', 'theme'],
+        'room_background': <String>['room_background', 'background'],
+        'title': <String>['stream_bte', 'title'],
+        'announcement': <String>['stream_title', 'announcement', 'anousment'],
+        'stream_image': <String>[
+          'stream_image',
+          'image',
+          'cover_image',
+          'thumbnail',
+        ],
+        'room_password': <String>[
+          'room_password',
+          'stream_password',
+          'password',
+        ],
+        'room_lock': <String>[
+          'room_lock',
+          'is_room_locked',
+          'room_locked',
+          'password_required',
+          'has_room_password',
+        ],
+        'hidden_room': <String>[
+          'hidden_room',
+          'is_hidden_room',
+          'room_hidden',
+          'hide_room',
+        ],
+        'lock_coment': <String>[
+          'lock_coment',
+          'lock_comment',
+          'comment_lock',
+          'comment_locked',
+          'is_comment_locked',
+          'chat_lock',
+        ],
+        'screenshort': <String>[
+          'screenshort',
+          'screenshot',
+          'screen_short',
+          'screen_shot',
+          'screenshot_enabled',
+        ],
+        'screen_records': <String>[
+          'screen_records',
+          'screen_record',
+          'screen_recording',
+          'screen_record_enabled',
+        ],
+      }.entries) {
+        if (hasRoomField(entry.value)) fields.add(entry.key);
+      }
+      LiveRealtimeDebugLog.event('ROOM_UPDATE', <String, Object?>{
+        'room': effectiveStreamId,
+        'canonical': 'live_stream_updated',
+        'event_id': payload['event_id'],
+        'wire_action_type': payload['action_type'],
+        'wire_action': payload['action'],
+        'action_types': normalizedActions,
+      });
+      LiveRealtimeDebugLog.event('ROOM_UPDATE_FIELDS', <String, Object?>{
+        'room': effectiveStreamId,
+        'fields': fields,
+      });
 
       if (effectiveStreamId > 0 && hasRealtimeRoomUpdate) {
         final int seatCount = _toInt(room['seat_count'] ?? room['total_seats']);
@@ -144,11 +246,14 @@ extension RoomEventHandler on WebsocketController {
             'password',
           ]),
         );
-
-        try {
-          syncRoomSnapshotForLateJoin(room, source: source);
-        } catch (e) {
-          liveLog('⚠️ room_settings snapshot sync skipped => $e');
+        if (fields.contains('room_background')) {
+          LiveRealtimeDebugLog.event(
+            'ROOM_BACKGROUND_APPLIED',
+            <String, Object?>{
+              'room': effectiveStreamId,
+              'room_background': liveRoomBackground.value,
+            },
+          );
         }
 
         try {
@@ -164,10 +269,16 @@ extension RoomEventHandler on WebsocketController {
           'layout:${liveRoomLayout.value} theme:${liveRoomTheme.value} '
           'bg:${liveRoomBackground.value}',
         );
+        if (kDebugMode) {
+          debugPrint('ROOM_EDIT_PATCH room=$effectiveStreamId');
+        }
       } else {
         liveLog(
           'ℹ️ ROOM SETTINGS only safety fields received => source:$source stream:$effectiveStreamId',
         );
+        if (!source.startsWith('compatibility_refresh')) {
+          _scheduleRoomSettingsCompatibilityRefresh(effectiveStreamId);
+        }
       }
 
       liveLog(
@@ -235,82 +346,77 @@ extension RoomEventHandler on WebsocketController {
       /// If backend says no viewer, host UI must not keep stale viewer avatars.
       /// If viewerCount > 0 but no viewer objects are provided, only count/log is applied;
       /// never create fake list rows from count-only payload.
-      livestreamController.viewerState.applyState(data);
+      final int rtViewerBefore = livestreamController.liveViewerList.length;
+      final String snapshotType =
+          (data['snapshot_type'] ?? data['state_type'] ?? '')
+              .toString()
+              .toLowerCase()
+              .trim();
+      final bool authoritativeViewerSnapshot =
+          snapshotType == 'full' ||
+          _truthy(data['full_snapshot']) ||
+          _truthy(data['viewer_snapshot_authoritative']);
+      if (authoritativeViewerSnapshot) {
+        livestreamController.viewerState.applyState(data);
+        for (final userId
+            in livestreamController.viewerState.lastBlockedRestoreUserIds) {
+          LiveRealtimeDebugLog.event(
+            'STALE_VIEWER_RESTORE_BLOCKED',
+            <String, Object?>{
+              'room': _rtRoom(data),
+              'user': userId,
+              'source': 'heartbeat',
+            },
+          );
+        }
+      } else if (data.containsKey('viewers') ||
+          data.containsKey('livestream_viewers')) {
+        LiveRealtimeDebugLog.event('STALE_SNAPSHOT_IGNORED', <String, Object?>{
+          'room': _rtRoom(data),
+          'reason': 'viewer_snapshot_not_marked_full',
+        });
+      }
+      LiveRealtimeDebugLog.event('VIEWER_SNAPSHOT', <String, Object?>{
+        'room': _rtRoom(data),
+        'server_items': data['viewers'] is List
+            ? (data['viewers'] as List).length
+            : data['livestream_viewers'] is List
+            ? (data['livestream_viewers'] as List).length
+            : 0,
+        'server_count': viewerCount,
+        'local_before': rtViewerBefore,
+        'local_after': livestreamController.liveViewerList.length,
+        'reason': 'livestream_state_updated',
+      });
+      _rtState(data);
       if (viewerCount == 0) {
         newViewersJoinded.value = false;
         newJoinedUserData.value = {};
       }
 
-      /// If no caller/seat user except host, clear stale non-host call rows.
-      /// Seat 1 host row should stay because audio room broadcaster is seeded there.
+      /// This generic state event may arrive after a realtime seat join with a
+      /// stale/partial occupied_seats list. Omission is not a seat-leave event.
+      /// Explicit caller-left/kick/disconnect/room-end paths own row removal.
       if (callerCount <= 1 && data['occupied_seats'] is List) {
         final occupied = (data['occupied_seats'] as List)
             .map((e) => _seatToInt(e))
             .whereType<int>()
             .toSet();
 
-        bool currentUserRemovedByAuthoritativeState = false;
-        final Set<int> removedRemoteUserIds = <int>{};
-        final int beforeStateRemoveCount = liveCallList.length;
-
-        liveCallList.removeWhere((call) {
-          if (call is! Map) return false;
-          final callMap = Map<String, dynamic>.from(call);
+        for (final raw in liveCallList) {
+          if (raw is! Map) continue;
+          final callMap = Map<String, dynamic>.from(raw);
           final seat = _seatToInt(
             callMap['seat_no'] ?? callMap['seat'] ?? callMap['seat_number'],
           );
-          if (seat == null) return false;
-
-          final int callUserId = _callUserId(callMap);
-          final int currentUserId = _currentUserIdInt();
-          if (currentUserId > 0 &&
-              callUserId == currentUserId &&
-              _hasSelfHeartbeatSeatGuard(currentUserId)) {
-            liveLog(
-              '🛡️ live_state_update kept current user seat during heartbeat guard => user:$currentUserId seat:$seat',
-            );
-            return false;
-          }
-
-          final bool shouldRemove = !occupied.contains(seat);
-          if (shouldRemove && callUserId > 0) {
-            if (currentUserId > 0 && callUserId == currentUserId) {
-              currentUserRemovedByAuthoritativeState = true;
-            } else {
-              removedRemoteUserIds.add(callUserId);
-            }
-          }
-          return shouldRemove;
-        });
-        _refreshLiveCallListSmooth();
-        if (beforeStateRemoveCount != liveCallList.length) {
+          if (seat == null || occupied.contains(seat)) continue;
           printSeatTrace(
-            'live_state_removed_missing_seat',
+            'SEAT_STALE_UPDATE_REJECTED',
             streamId: _toInt(livestreamId),
-            beforeCount: beforeStateRemoveCount,
-            afterCount: liveCallList.length,
-            reason: 'occupied_seats_authoritative',
-            note:
-                'occupied=$occupied removedRemote=${removedRemoteUserIds.join(',')} selfRemoved=$currentUserRemovedByAuthoritativeState',
-          );
-        }
-
-        if (currentUserRemovedByAuthoritativeState) {
-          unawaited(
-            _autoMuteCurrentUserAfterSeatSignal(
-              userId: _currentUserIdInt(),
-              reason: 'authoritative_live_state_seat_missing',
-              confirmedSeatExit: true,
-            ),
-          );
-        }
-
-        for (final int removedUserId in removedRemoteUserIds) {
-          unawaited(
-            _muteRemoteCallerAfterConfirmedSeatExit(
-              userId: removedUserId,
-              reason: 'authoritative_live_state_seat_missing',
-            ),
+            userId: _callUserId(callMap),
+            seatNo: seat,
+            reason: 'occupied_seats_omission',
+            note: 'snapshotOccupied=$occupied',
           );
         }
       }
@@ -468,7 +574,18 @@ extension RoomEventHandler on WebsocketController {
       liveLog('⚠️ live_stream_updated room safety sync skipped => $e');
     }
 
-    syncRoomSnapshotForLateJoin(room, source: 'live_stream_updated');
+    final bool authoritativeSeatSnapshot =
+        _truthy(room['seat_snapshot_complete']) ||
+        _truthy(room['full_seat_snapshot']) ||
+        _truthy(room['seat_snapshot_authoritative']);
+    if (authoritativeSeatSnapshot) {
+      syncRoomSnapshotForLateJoin(
+        room,
+        source: 'authoritative_live_stream_updated',
+      );
+    } else if (kDebugMode) {
+      debugPrint('ROOM_EDIT_PATCH room=$streamId');
+    }
     syncCpSeatConnectionsFromAnyPayload(room, source: 'live_stream_updated');
   }
 
@@ -927,7 +1044,36 @@ extension RoomEventHandler on WebsocketController {
         return;
       }
 
-      homeController.showingLiveStreamList.assignAll(list);
+      final merged = <String, Map<String, dynamic>>{};
+      String streamKey(dynamic raw) {
+        if (raw is! Map) return '';
+        final map = Map<String, dynamic>.from(raw);
+        final id = map['id'] ?? map['livestream_id'];
+        final userId = map['user_id'] ?? map['room_id'];
+        return id != null
+            ? 'id:$id'
+            : userId != null
+            ? 'user:$userId'
+            : '';
+      }
+
+      for (final raw in homeController.showingLiveStreamList) {
+        if (raw is! Map) continue;
+        final map = Map<String, dynamic>.from(raw);
+        final key = streamKey(map);
+        if (key.isNotEmpty) merged[key] = map;
+      }
+      for (final raw in list) {
+        if (raw is! Map) continue;
+        final incoming = Map<String, dynamic>.from(raw);
+        final key = streamKey(incoming);
+        if (key.isEmpty) continue;
+        final old = merged[key];
+        merged[key] = old == null
+            ? incoming
+            : <String, dynamic>{...old, ...incoming};
+      }
+      homeController.showingLiveStreamList.assignAll(merged.values);
       homeController.sortLiveStreamList();
       homeController.showingLiveStreamList.refresh();
       liveLog('✅ Unified live stream list updated: ${list.length}');

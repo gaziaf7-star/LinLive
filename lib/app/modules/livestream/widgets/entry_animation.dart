@@ -8,19 +8,20 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../../constants/color_constants.dart';
 import '../../../../constants/image_helper.dart';
 import '../../../../constants/layout_constant.dart';
+import '../utils/vip_privileges.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
+
 class EntryAnimation extends StatefulWidget {
   final dynamic data;
 
   /// Entry animation sesh hole parent/controller hide korbe.
   final VoidCallback? onFinished;
 
-  const EntryAnimation({
-    Key? key,
-    required this.data,
-    this.onFinished,
-  }) : super(key: key);
+  const EntryAnimation({Key? key, required this.data, this.onFinished})
+      : super(key: key);
+
+  static Future<void> preloadVipEffect() => _VipEntryEffect.preload();
 
   @override
   State<EntryAnimation> createState() => _EntryAnimationState();
@@ -53,6 +54,8 @@ class _EntryAnimationState extends State<EntryAnimation>
 
     return root;
   }
+
+  VipPrivileges get _vip => VipPrivileges.from(_root);
 
   Map<String, dynamic> _asMap(dynamic value) {
     if (value is Map<String, dynamic>) return value;
@@ -121,11 +124,22 @@ class _EntryAnimationState extends State<EntryAnimation>
     final root = _root;
     final user = _user;
 
-    final dynamic raw = root['animation_duration_ms'] ??
-        root['duration_ms'] ??
-        root['duration'] ??
-        user['animation_duration_ms'] ??
-        user['duration_ms'];
+    // Controller-side backlog control (see _showNextQueuedEntryPresentation).
+    // When several joins are queued up, the controller shortens each queued,
+    // non-premium entry so the backlog drains instead of growing stale; this
+    // override keeps the widget's own timer in sync with that decision.
+    final dynamic overrideRaw = root['_queued_display_ms'];
+    final int? overrideParsed = int.tryParse(overrideRaw?.toString() ?? '');
+    if (overrideParsed != null && overrideParsed > 0) {
+      return overrideParsed.clamp(800, 30000).toInt();
+    }
+
+    final dynamic raw =
+        root['animation_duration_ms'] ??
+            root['duration_ms'] ??
+            root['duration'] ??
+            user['animation_duration_ms'] ??
+            user['duration_ms'];
 
     final parsed = int.tryParse(raw?.toString() ?? '');
     if (parsed == null || parsed <= 0) return 4500;
@@ -147,20 +161,20 @@ class _EntryAnimationState extends State<EntryAnimation>
       vsync: this,
     )..forward();
 
-    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
-    );
+    _fadeAnimation = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
 
-    _scaleAnimation = Tween<double>(begin: .94, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
-    );
+    _scaleAnimation = Tween<double>(
+      begin: .94,
+      end: 1,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
 
     _slideAnimation = Tween<Offset>(
       begin: const Offset(1.1, 0),
       end: Offset.zero,
-    ).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
-    );
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
 
     _startFallbackTimer();
   }
@@ -209,11 +223,13 @@ class _EntryAnimationState extends State<EntryAnimation>
     final user = _asMap(root['user']);
     final viewerData = _asMap(root['viewer_data']);
     final viewerUser = _asMap(viewerData['user']);
-    return _safeText(user['id'] ??
-        viewerUser['id'] ??
-        root['viewer_id'] ??
-        root['user_id'] ??
-        root['id']);
+    return _safeText(
+      user['id'] ??
+          viewerUser['id'] ??
+          root['viewer_id'] ??
+          root['user_id'] ??
+          root['id'],
+    );
   }
 
   @override
@@ -223,7 +239,9 @@ class _EntryAnimationState extends State<EntryAnimation>
       child: SizedBox.expand(
         child: IgnorePointer(
           ignoring: true,
-          child: _hasPremiumEntry ? _premiumFullScreenEntry() : _normalFullScreenEntry(),
+          child: _hasPremiumEntry
+              ? _premiumFullScreenEntry()
+              : _normalFullScreenEntry(),
         ),
       ),
     );
@@ -231,7 +249,9 @@ class _EntryAnimationState extends State<EntryAnimation>
 
   Widget _premiumFullScreenEntry() {
     final user = _user;
-    final name = _safeText(user['name']).isEmpty ? 'User': _safeText(user['name']);
+    final name = _safeText(user['name']).isEmpty
+        ? 'User'
+        : _safeText(user['name']);
     final entryName = _safeText(_entryAsset['name']).isEmpty
         ? 'Special Entry'
         : _safeText(_entryAsset['name']);
@@ -255,6 +275,7 @@ class _EntryAnimationState extends State<EntryAnimation>
             errorWidget: (_, __, ___) => _normalFullScreenEntry(),
           ),
         ),
+        if (_vip.entryBanner) const Positioned.fill(child: _VipEntryEffect()),
 
         Positioned(
           left: 14,
@@ -268,7 +289,10 @@ class _EntryAnimationState extends State<EntryAnimation>
                 alignment: Alignment.centerLeft,
                 child: Container(
                   constraints: BoxConstraints(maxWidth: kWeight * .82),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(60),
                     gradient: LinearGradient(
@@ -323,13 +347,18 @@ class _EntryAnimationState extends State<EntryAnimation>
 
   Widget _normalFullScreenEntry() {
     final user = _user;
-    final name = _safeText(user['name']).isEmpty ? 'User': _safeText(user['name']);
+    final name = _safeText(user['name']).isEmpty
+        ? 'User'
+        : _safeText(user['name']);
+    final vip = _vip;
+    final premiumVipEntry = vip.entryBanner;
 
     return FadeTransition(
       opacity: _fadeAnimation,
       child: Stack(
         fit: StackFit.expand,
         children: [
+          if (premiumVipEntry) const Positioned.fill(child: _VipEntryEffect()),
           Center(
             child: AnimatedBuilder(
               animation: _controller,
@@ -341,11 +370,20 @@ class _EntryAnimationState extends State<EntryAnimation>
               },
               child: Container(
                 width: kWeight * .82,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(100),
                   gradient: LinearGradient(
-                    colors: [
+                    colors: premiumVipEntry
+                        ? const [
+                      Color(0xFF3D176E),
+                      Color(0xFF9B3FBA),
+                      Color(0xFFD79B3C),
+                    ]
+                        : [
                       kAppColor.withOpacity(.96),
                       kAppColor.withOpacity(.48),
                       Colors.transparent,
@@ -371,18 +409,33 @@ class _EntryAnimationState extends State<EntryAnimation>
                     _avatar(user, size: kHeight * .052),
                     SizedBox(width: kWeight * .018),
                     Expanded(
-                      child: Text(
-                        ('$name entered the room').appTr,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.roboto(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: kHeight * .015,
-                          shadows: const [
-                            Shadow(color: Colors.black45, blurRadius: 4),
-                          ],
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (premiumVipEntry)
+                            Text(
+                              vip.vipTitle.isEmpty ? 'VIP' : vip.vipTitle,
+                              style: const TextStyle(
+                                color: Color(0xFFFFE399),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          Text(
+                            ('$name entered the room').appTr,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.roboto(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: kHeight * .015,
+                              shadows: const [
+                                Shadow(color: Colors.black45, blurRadius: 4),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -430,5 +483,68 @@ class _EntryAnimationState extends State<EntryAnimation>
     _fallbackTimer?.cancel();
     _controller.dispose();
     super.dispose();
+  }
+}
+
+class _VipEntryEffect extends StatefulWidget {
+  const _VipEntryEffect();
+
+  static const String assetPath = 'assets/audio_live/9.svga';
+  static MovieEntity? _cachedMovie;
+  static final Future<MovieEntity?> _loadingFuture = _loadMovie();
+
+  static Future<void> preload() async {
+    await _loadingFuture;
+  }
+
+  static Future<MovieEntity?> _loadMovie() async {
+    try {
+      final movie = await SVGAParser.shared.decodeFromAssets(assetPath);
+      movie.autorelease = false;
+      return _cachedMovie = movie;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  State<_VipEntryEffect> createState() => _VipEntryEffectState();
+}
+
+class _VipEntryEffectState extends State<_VipEntryEffect>
+    with SingleTickerProviderStateMixin {
+  late final SVGAAnimationController _controller;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = SVGAAnimationController(vsync: this)..isMute = true;
+    _attachMovie();
+  }
+
+  Future<void> _attachMovie() async {
+    final movie =
+        _VipEntryEffect._cachedMovie ?? await _VipEntryEffect._loadingFuture;
+    if (!mounted || movie == null) return;
+    _controller.videoItem = movie;
+    _controller.repeat();
+    setState(() => _ready = true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: RepaintBoundary(
+        child: SVGAImage(_controller, fit: BoxFit.contain),
+      ),
+    );
   }
 }

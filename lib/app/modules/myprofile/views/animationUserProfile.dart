@@ -262,10 +262,7 @@ class _LightSweepContainer2State extends State<LightSweepContainer2> {
           SizedBox(
             height: size,
             width: size,
-            child: const SVGAEasyPlayer(
-              assetsName: 'assets/svga/Frame/Agency frame.svga',
-              fit: BoxFit.contain,
-            ),
+            child: const SizedBox.shrink(),
           ),
         ],
       ),

@@ -20,6 +20,7 @@ import '../../appmenu/views/appmenu_view.dart';
 import '../../appmenu/views/widgets/game_test.dart';
 import '../../home/views/widgets/unicId.dart';
 import '../../livestream/widgets/audioText.dart';
+import '../../livestream/utils/vip_privileges.dart';
 import '../../Famaily/view/my_family_api_page.dart';
 import '../../messanger/views/chatpage_view.dart';
 import '../../myprofile/controllers/myprofile_controller.dart';
@@ -78,10 +79,25 @@ class userProfileVisit extends StatelessWidget {
       ...agency,
     };
 
-    // user_agency normally cover_images/unique_id/gift list dey na, tai User Data theke preserve.
+    // ✅ PROFILE OWNER DATA FIX:
+    // Profile-er visible identity sobsomoy `User Data` theke ashbe.
+    // `user_agency` sudhu agency/host/admin related role info provide korbe.
+    // Ete user_agency.name (e.g. King Philly) ar profile user-er actual name
+    // (e.g. Nilima) ke overwrite korte parbe na.
     for (final key in [
-      'cover_images',
+      'id',
+      'user_id',
       'unique_id',
+      'name',
+      'level',
+      'level_image',
+      'level_image_url',
+      'phone',
+      'gender',
+      'profile_image',
+      'profile_image_url',
+      'country',
+      'cover_images',
       'receive_gift_list',
       'send_gift_list',
       'base_list',
@@ -93,6 +109,13 @@ class userProfileVisit extends StatelessWidget {
       if (user.containsKey(key) && user[key] != null) {
         merged[key] = user[key];
       }
+    }
+
+    // User Data-te full URL na thakle agency-r stale profile_image_url remove kori.
+    // Tokhon profile_image path theke correct visitor image build hobe.
+    if (!user.containsKey('profile_image_url') ||
+        _safeText(user['profile_image_url']).isEmpty) {
+      merged.remove('profile_image_url');
     }
 
     return merged;
@@ -301,6 +324,12 @@ class userProfileVisit extends StatelessWidget {
     required Map<String, dynamic> rootData,
     required Map<String, dynamic> profileUser,
   }) {
+    if (!VipPrivileges.from(<String, dynamic>{
+      ...rootData,
+      'user': profileUser,
+    }).vipBadge) {
+      return const SizedBox.shrink();
+    }
     return Obx(() {
       final int profileId = _visitorVipSafeInt(profileUser['id']);
       final dynamic apiVipData = _visitorProfileVipData(
@@ -389,6 +418,10 @@ class userProfileVisit extends StatelessWidget {
       user: user,
       agency: userAgency,
     );
+    final profileVip = VipPrivileges.from(<String, dynamic>{
+      ...data,
+      'user': profileUser,
+    });
 
     // ✅ VISIT PROFILE FIX: CP data root API response theke nibe.
     // Example API key: data['cp_data']
@@ -399,8 +432,12 @@ class userProfileVisit extends StatelessWidget {
     final String level = _safeText(profileUser['level'], fallback: '0');
     final String gender = _safeText(profileUser['gender'], fallback: ('Male').appTr);
     final String country = _safeText(profileUser['country'], fallback: '');
+    // ✅ PROFILE IMAGE OWNER FIX:
+    // Visitor-er main profile image always `User Data` theke nibo.
+    // `user_agency.profile_image_url` / `profile_image` ekhane use korbo na,
+    // nahole agency owner-er image visitor profile-e overwrite hoye jete pare.
     final String profileImage = _fullUrl(
-      profileUser['profile_image_url'] ?? profileUser['profile_image'],
+      user['profile_image_url'] ?? user['profile_image'],
       fallback:
       'https://ui-avatars.com/api/?name=${Uri.encodeComponent(name)}&background=F5365C&color=ffffff&bold=true',
     );
@@ -430,7 +467,9 @@ class userProfileVisit extends StatelessWidget {
 
     return SafeArea(
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: profileVip.effectiveColorfulProfile
+            ? const Color(0xFFF6F0FF)
+            : Colors.white,
         body: SingleChildScrollView(
           padding: EdgeInsets.zero,
           child: Column(
@@ -1501,10 +1540,7 @@ class userProfileVisit extends StatelessWidget {
           SizedBox(
             height: size,
             width: size,
-            child: const SVGAEasyPlayer(
-              assetsName: 'assets/svga/Frame/Agency frame.svga',
-              fit: BoxFit.contain,
-            ),
+            child: const SizedBox.shrink(),
           ),
         ],
       ),
@@ -3626,7 +3662,7 @@ Widget _buildCallingBottomSheet(Map<String, dynamic> data) {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                 Text(
+                Text(
                   ("Guest Living").appTr,
                   style: TextStyle(
                     fontFamily: "Roboto",
@@ -3882,4 +3918,3 @@ Widget _buildCallingBottomSheet(Map<String, dynamic> data) {
     ),
   );
 }
-

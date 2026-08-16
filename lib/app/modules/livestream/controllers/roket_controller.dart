@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:collection';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart' hide Response;
 
 import '../../../../apis/api_endpoints.dart';
 import '../../auth/controllers/auth_controller.dart';
+import 'global_live_banner_queue_controller.dart';
 import '../utils/LiveTestingLogger.dart';
 
 /// Realtime + API state for the LINLIVE Rocket system.
@@ -408,6 +410,10 @@ class RocketController extends GetxController {
             'action_type': action,
             'livestream_id': launchSid,
           };
+          debugPrint(
+            '[ROCKET_LAUNCH][RECEIVED] '
+            'event_id=${normalized['event_id'] ?? normalized['launch_event_id'] ?? ''}',
+          );
           if (!_rememberEvent(_eventKey(normalized, action))) continue;
 
           final bool launchIsCurrentRoom =
@@ -572,6 +578,11 @@ class RocketController extends GetxController {
       percent = (progressCoins.value / targetCoins.value) * 100;
     }
     progressPercent.value = percent.clamp(0.0, 100.0).toDouble();
+    debugPrint(
+      '[ROCKET_RT][APPLIED] progress_coins=${progressCoins.value} '
+      'target_coins=${targetCoins.value} '
+      'percent=${progressPercent.value.toStringAsFixed(2)}',
+    );
 
     final int remaining = _int(merged['remaining_seconds']);
     if (remaining > 0 || merged.containsKey('remaining_seconds')) {
@@ -842,6 +853,7 @@ class RocketController extends GetxController {
   }
 
   void _enqueueGlobalLaunch(Map<String, dynamic> launch) {
+    if (!globalLiveBannerQueue().hasAuthenticatedSession) return;
     if (globalLaunchBannerVisible.value) {
       if (_globalLaunchQueue.length >= 20) _globalLaunchQueue.removeFirst();
       _globalLaunchQueue.addLast(Map<String, dynamic>.from(launch));
@@ -864,6 +876,12 @@ class RocketController extends GetxController {
   void hideGlobalLaunchBanner() {
     globalLaunchBannerVisible.value = false;
     finishGlobalLaunchBanner();
+  }
+
+  void clearGlobalLaunchPresentation() {
+    _globalLaunchQueue.clear();
+    globalLaunchBannerVisible.value = false;
+    globalLaunchData.clear();
   }
 
   void _ensureCountdown() {

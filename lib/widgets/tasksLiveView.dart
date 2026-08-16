@@ -21,11 +21,11 @@ class TaskLiveProfile extends StatelessWidget {
       margin: EdgeInsets.only(left: 8),
         padding: EdgeInsets.symmetric(vertical: 3, horizontal: 8),
         decoration: BoxDecoration(
-border: Border.all(color: kAppColor1),
-          borderRadius: BorderRadius.circular(5),
+
+          borderRadius: BorderRadius.circular(15),
           gradient: LinearGradient(colors: [
-            Color(0xffe6068c).withOpacity(.7),
-            Color(0xfffa21f6).withOpacity(.9),
+            Color(0xff0c0c0c).withOpacity(.4),
+            Color(0xff0c0c0c).withOpacity(.4),
           ])
         ),
         child: Row(

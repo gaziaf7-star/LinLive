@@ -9,6 +9,7 @@ import 'package:meetlivepro/app/localization/app_localizer.dart';
 
 import '../../../../apis/api_endpoints.dart';
 import '../utils/live_performance_config.dart';
+import '../utils/live_realtime_debug_log.dart';
 import 'livestream_controller.dart';
 
 /// Owns active-room configuration and its single edit API implementation.
@@ -141,23 +142,34 @@ class LiveRoomSettingsController extends GetxController {
         'room_lock',
         'is_room_locked',
         'room_locked',
+        'password_required',
+        'has_room_password',
       ], liveRoomLocked.value);
       final int commentLock = readSetting([
         'lock_coment',
+        'lock_comment',
+        'comment_lock',
         'comment_locked',
         'is_comment_locked',
+        'chat_lock',
       ], liveCommentLocked.value);
       final int hiddenRoom = readSetting([
         'hidden_room',
         'is_hidden_room',
         'room_hidden',
+        'hide_room',
       ], liveHiddenRoom.value);
       final int screenRecord = readSetting([
         'screen_records',
+        'screen_record',
+        'screen_recording',
         'screen_record_enabled',
       ], liveScreenRecordBlocked.value);
       final int screenShort = readSetting([
         'screenshort',
+        'screenshot',
+        'screen_short',
+        'screen_shot',
         'screenshot_enabled',
       ], liveScreenshotBlocked.value);
 
@@ -176,6 +188,8 @@ class LiveRoomSettingsController extends GetxController {
           'room_lock': roomLock,
           'is_room_locked': roomLock,
           'room_locked': roomLock,
+          'password_required': roomLock,
+          'has_room_password': roomLock,
           'lock_coment': commentLock,
           'comment_locked': commentLock,
           'is_comment_locked': commentLock,
@@ -526,6 +540,11 @@ class LiveRoomSettingsController extends GetxController {
           streamImage: finalStreamImage,
           streamPassword: safeRoomPassword,
         );
+        LiveRealtimeDebugLog.event('ROOM_BACKGROUND_APPLIED', <String, Object?>{
+          'room': livestreamId,
+          'room_background': roomBackground,
+          'source': 'edit_api_success_local',
+        });
 
         liveLog(
           '✅ Live room edited locally => title:$safeStreamTitle announcement:$safeAnnouncement seats:$seatCount layout:$roomLayout theme:$roomTheme bg:$roomBackground',

@@ -19,14 +19,17 @@ class LiveCallController extends GetxController {
 
   final RxMap<String, dynamic> callersData = <String, dynamic>{}.obs;
   final RxBool seatJoinLoading = false.obs;
+  final RxInt pendingSeatNo = 0.obs;
   final RxList<dynamic> callList = <dynamic>[].obs;
 
   final Map<String, Future<bool>> _acceptCallTransitions =
-      <String, Future<bool>>{};
+  <String, Future<bool>>{};
   final Map<String, Future<bool>> _rejectCallTransitions =
-      <String, Future<bool>>{};
+  <String, Future<bool>>{};
   final Set<int> _locallyDepartedCallers = <int>{};
   bool _callListFetchRunning = false;
+  int _callListFetchStreamId = 0;
+  int _callListFetchGeneration = 0;
   DateTime? _lastCallListFetchAt;
 
   bool isCallerLocallyDeparted(int userId) =>
@@ -38,13 +41,36 @@ class LiveCallController extends GetxController {
 
   /// Clears compatibility state owned by the previous room. A target-room
   /// snapshot is authoritative and may repopulate these values afterwards.
+  ///
+  /// ✅ FIX (stale old seat reappears after fast leave+rejoin): this used to
+  /// unconditionally clear _locallyDepartedCallers, including the CURRENT
+  /// user's own just-set "I deliberately left my seat" guard (see
+  /// _performRejectCall below). That guard exists specifically to protect
+  /// against a server response that still reflects the old seat assignment
+  /// for a brief window after leaving (server-side seat release lagging
+  /// behind the client's own reject call) — applyFetchedCallList checks it
+  /// to filter such a stale row out. Wiping it on every room-session reset,
+  /// even a rejoin of the very room the guard was protecting, meant the
+  /// very next warmLiveRoomStateFast() REST fetch on rejoin had nothing
+  /// left to filter the stale row with, so it reappeared and blocked
+  /// taking a new seat. Every other user's guard is still cleared exactly
+  /// as before — only the current device's own logged-in user is preserved.
   void resetRoomSessionState() {
     callersData.clear();
     callList.clear();
+    final int selfId =
+        livestreamController.authController.userProfile.value.user?.id
+            ?.toInt() ??
+            0;
+    final bool selfWasDeparted =
+        selfId > 0 && _locallyDepartedCallers.contains(selfId);
     _locallyDepartedCallers.clear();
+    if (selfWasDeparted) _locallyDepartedCallers.add(selfId);
     _acceptCallTransitions.clear();
     _rejectCallTransitions.clear();
     _callListFetchRunning = false;
+    _callListFetchStreamId = 0;
+    _callListFetchGeneration++;
     _lastCallListFetchAt = null;
   }
 
@@ -57,6 +83,7 @@ class LiveCallController extends GetxController {
   }) async {
     if (seatJoinLoading.value) return;
     seatJoinLoading.value = true;
+    pendingSeatNo.value = seatNO ?? 0;
 
     try {
       final targetSeatNo =
@@ -67,7 +94,7 @@ class LiveCallController extends GetxController {
             requestedSeatNo: seatNO,
             requestedTotalSeats: totalSeats,
           ) ??
-          0;
+              0;
       if (targetSeatNo <= 0) return;
 
       debugPrint('OUTGOING_CALL_REQUEST_START');
@@ -75,9 +102,9 @@ class LiveCallController extends GetxController {
       if (canJoinResult['can_join'] != true) {
         Fluttertoast.showToast(
           msg:
-              (canJoinResult['message'] ??
-                      ('You can not join this seat right now').appTr)
-                  .toString(),
+          (canJoinResult['message'] ??
+              ('You can not join this seat right now').appTr)
+              .toString(),
           toastLength: Toast.LENGTH_LONG,
           gravity: ToastGravity.BOTTOM,
           backgroundColor: Colors.red,
@@ -131,6 +158,9 @@ class LiveCallController extends GetxController {
           backgroundColor: Colors.red,
           textColor: Colors.white,
         );
+        if (response.statusCode == 409 || response.statusCode == 422) {
+          await tryToGetCallList(streamId: streamId, force: true);
+        }
       }
     } on DioException catch (e) {
       debugPrint('OUTGOING_CALL_REQUEST_FAILED');
@@ -156,13 +186,14 @@ class LiveCallController extends GetxController {
       );
     } finally {
       seatJoinLoading.value = false;
+      pendingSeatNo.value = 0;
     }
   }
 
   Future<Map<String, dynamic>> checkCanJoinLivestream(
-    int streamId,
-    int userId,
-  ) async {
+      int streamId,
+      int userId,
+      ) async {
     try {
       final response = await livestreamController.dio.get(
         kCheckCanJoinUrl(streamId, userId),
@@ -170,19 +201,44 @@ class LiveCallController extends GetxController {
           headers: {
             'Content-Type': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
         ),
       );
       if (response.statusCode == 200) {
+        final Map<String, dynamic> root = response.data is Map
+            ? Map<String, dynamic>.from(response.data as Map)
+            : <String, dynamic>{};
+        final Map<String, dynamic> data = root['data'] is Map
+            ? Map<String, dynamic>.from(root['data'] as Map)
+            : <String, dynamic>{};
+        final dynamic rawCanJoin =
+            root['can_join'] ?? data['can_join'] ?? root['success'] ?? true;
+        final bool canJoin =
+            rawCanJoin == true ||
+                rawCanJoin == 1 ||
+                rawCanJoin.toString().toLowerCase() == 'true' ||
+                rawCanJoin.toString() == '1';
         return <String, dynamic>{
-          'can_join': true,
-          'message': response.data['message'] ?? 'Can join livestream',
+          ...root,
+          'can_join': canJoin,
+          'message':
+          root['message'] ??
+              data['message'] ??
+              (canJoin ? 'Can join livestream' : 'Cannot join livestream'),
+          // Preserve the untouched bootstrap envelope for RTC token/channel
+          // discovery without flattening or dropping backend fields.
+          '_bootstrap_response': root,
         };
       }
+      final Map<String, dynamic> root = response.data is Map
+          ? Map<String, dynamic>.from(response.data as Map)
+          : <String, dynamic>{};
       return <String, dynamic>{
+        ...root,
         'can_join': false,
-        'message': response.data['message'] ?? 'Cannot join livestream',
+        'message': root['message'] ?? 'Cannot join livestream',
+        '_bootstrap_response': root,
       };
     } catch (e) {
       if (e is DioException) {
@@ -190,7 +246,7 @@ class LiveCallController extends GetxController {
           return <String, dynamic>{
             'can_join': false,
             'message':
-                e.response?.data['message'] ??
+            e.response?.data['message'] ??
                 'You are temporarily banned from this livestream',
             'remaining_minutes': e.response?.data['remaining_minutes'] ?? 0,
           };
@@ -217,7 +273,8 @@ class LiveCallController extends GetxController {
     required int streamId,
     bool force = false,
   }) async {
-    if (streamId <= 0 || _callListFetchRunning) return;
+    if (streamId <= 0) return;
+    if (_callListFetchRunning && _callListFetchStreamId == streamId) return;
     final now = DateTime.now();
     if (!force &&
         _lastCallListFetchAt != null &&
@@ -225,7 +282,9 @@ class LiveCallController extends GetxController {
       return;
     }
 
+    final int requestGeneration = ++_callListFetchGeneration;
     _callListFetchRunning = true;
+    _callListFetchStreamId = streamId;
     _lastCallListFetchAt = now;
     try {
       final response = await livestreamController.dio.get(
@@ -235,11 +294,15 @@ class LiveCallController extends GetxController {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
         ),
       );
       if (response.statusCode == 200 || response.statusCode == 201) {
+        if (requestGeneration != _callListFetchGeneration) {
+          liveLog('Superseded call list response ignored => stream=$streamId');
+          return;
+        }
         if (!livestreamController.acceptsRoomMutation(streamId)) {
           liveLog('Late call list ignored => stream=$streamId');
           return;
@@ -261,7 +324,10 @@ class LiveCallController extends GetxController {
     } catch (e) {
       liveLog('Call list fetch failed safely: $e');
     } finally {
-      _callListFetchRunning = false;
+      if (requestGeneration == _callListFetchGeneration) {
+        _callListFetchRunning = false;
+        _callListFetchStreamId = 0;
+      }
     }
   }
 
@@ -304,7 +370,7 @@ class LiveCallController extends GetxController {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
         ),
       );
@@ -314,8 +380,8 @@ class LiveCallController extends GetxController {
           : null;
       final accepted =
           (response.statusCode == 200 || response.statusCode == 201) &&
-          explicitSuccess != false &&
-          explicitSuccess?.toString().toLowerCase() != 'false';
+              explicitSuccess != false &&
+              explicitSuccess?.toString().toLowerCase() != 'false';
       if (!accepted) {
         _showAcceptFailure(responseData);
         return false;
@@ -394,7 +460,7 @@ class LiveCallController extends GetxController {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
         ),
       );

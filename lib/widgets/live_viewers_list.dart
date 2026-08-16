@@ -1,10 +1,12 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svga_easyplayer/flutter_svga_easyplayer.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get_core/src/get_main.dart';
 import 'package:get/get_navigation/src/extension_navigation.dart';
 
 import '../app/modules/appmenu/views/widgets/game_test.dart';
+import '../app/modules/livestream/utils/vip_privileges.dart';
 import '../constants/color_constants.dart';
 import '../constants/constants.dart';
 import '../constants/image_helper.dart';
@@ -132,8 +134,12 @@ class LiveViewersList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final visibleViewerList = viewerList.where((viewer) {
+      final vip = VipPrivileges.from(viewer);
+      return !vip.invisible || isBroadcaster;
+    }).toList(growable: false);
     return Container(
-      child: viewerList.isEmpty
+      child: visibleViewerList.isEmpty
           ? Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -156,10 +162,11 @@ class LiveViewersList extends StatelessWidget {
         ),
       )
           : ListView.builder(
-        itemCount: viewerList.length,
+        itemCount: visibleViewerList.length,
         itemBuilder: (BuildContext context, int viewerIndex) {
-          final item = _asMap(viewerList[viewerIndex]);
-          final user = _userMap(viewerList[viewerIndex]);
+          final item = _asMap(visibleViewerList[viewerIndex]);
+          final user = _userMap(visibleViewerList[viewerIndex]);
+          final vip = VipPrivileges.from(item);
           final id = _userId(item, user);
           final idInt = int.tryParse(id?.toString() ?? '0') ?? 0;
           final name = _safeText(user['name']).isEmpty ? 'User': _safeText(user['name']);
@@ -235,6 +242,28 @@ class LiveViewersList extends StatelessWidget {
                                 textColor: Colors.black.withOpacity(.7),
                                 text: name,
                               ),
+                              if (vip.vipBadge)
+                                Container(
+                                  margin: const EdgeInsets.only(top: 3),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFD76A),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    vip.vipType.isEmpty
+                                        ? 'VIP'
+                                        : vip.vipType.toUpperCase(),
+                                    style: const TextStyle(
+                                      color: Color(0xFF3A245C),
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
                               SizedBox(height: kHeight * 0.007),
                               Padding(
 
@@ -252,6 +281,12 @@ class LiveViewersList extends StatelessWidget {
                 if (isBroadcaster && onKickUser != null && idInt > 0)
                   GestureDetector(
                     onTap: () {
+                      if (!isFromPk && vip.antiKickBan) {
+                        Fluttertoast.showToast(
+                          msg: ('Protected by VIP privilege').appTr,
+                        );
+                        return;
+                      }
                       if (isFromPk) {
                         livestreamController.tryToCallLivestream(
                           streamId: livestreamController.streamId.value,
@@ -276,7 +311,11 @@ class LiveViewersList extends StatelessWidget {
                         fontWeight: FontWeight.w500,
                         fontSize: kHeight * 0.016,
                         textColor: Colors.white.withOpacity(.8),
-                        text: isFromPk ? ('PK Request').appTr: ('Kick').appTr,
+                        text: isFromPk
+                            ? ('PK Request').appTr
+                            : vip.antiKickBan
+                            ? ('Protected').appTr
+                            : ('Kick').appTr,
                       ),
                     ),
                   ),

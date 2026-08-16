@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:get/get.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -20,15 +22,20 @@ import '../../notification/views/notification_view.dart';
 import '../../messanger/views/chat_controller.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../../../services/account_block_service.dart';
+import '../../../theme/app_theme_controller.dart';
+import '../../../theme/app_theme_model.dart';
+import '../../../theme/app_theme_image_cache.dart';
+import '../../../theme/widgets/app_theme_background.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 
 import '../controllers/daily_reword_controller.dart';
 import 'daily_reword_diyalog.dart';
-const Color kAppColor1 = Color(0xFF190522);
-const Color kAppColor2 = Color(0xFF3B072F);
-const Color kAppbarColor = Color(0xFF62083E);
-const Color kAppbarColor1 = Color(0xFF190522);
+
+const Color kAppColor1 = Color(0xFFFDF8FF);
+const Color kAppColor2 = Color(0xFFFDF8FF);
+const Color kAppbarColor = Color(0xFFFDF8FF);
+const Color kAppbarColor1 = Color(0xFFFDF8FF);
 const Color kBottomSoftLight = Color(0xFFB86AA2);
 
 class BottomnavView extends StatefulWidget {
@@ -48,9 +55,12 @@ class _BottomnavViewState extends State<BottomnavView>
   bool _dailyRewardDialogScheduled = false;
   bool _dailyRewardDialogOpen = false;
   int? _dailyRewardDialogUserId;
+  Timer? _dailyRewardRetryTimer;
 
   late final ChatController _chatController;
   late final DailyRewardController _dailyRewardController;
+  late final AppThemeController _appThemeController;
+  bool _firstThemedFrameLogged = false;
 
   final List<Widget> _pages = [
     const HomeView(),
@@ -72,6 +82,9 @@ class _BottomnavViewState extends State<BottomnavView>
     _dailyRewardController = Get.isRegistered<DailyRewardController>()
         ? Get.find<DailyRewardController>()
         : Get.put(DailyRewardController(), permanent: true);
+
+    // Registered once, permanently, before runApp in main.dart.
+    _appThemeController = Get.find<AppThemeController>();
 
     _checkAndRequestPermissions();
 
@@ -97,6 +110,7 @@ class _BottomnavViewState extends State<BottomnavView>
 
     // User change hole notun user-er jonno abar local check korbe.
     if (_dailyRewardDialogUserId != userId) {
+      _dailyRewardRetryTimer?.cancel();
       _dailyRewardDialogUserId = userId;
       _dailyRewardDialogScheduled = false;
     }
@@ -111,6 +125,27 @@ class _BottomnavViewState extends State<BottomnavView>
     });
   }
 
+  void _queueDailyRewardRetry(
+      int userId, {
+        Duration delay = const Duration(seconds: 2),
+      }) {
+    _dailyRewardRetryTimer?.cancel();
+    _dailyRewardDialogScheduled = false;
+
+    _dailyRewardRetryTimer = Timer(delay, () {
+      if (!mounted || _dailyRewardDialogOpen) return;
+
+      final int currentUserId = Get.isRegistered<AuthController>()
+          ? (Get.find<AuthController>().userProfile.value.user?.id?.toInt() ??
+          0)
+          : 0;
+
+      if (currentUserId == userId && currentUserId > 0) {
+        _scheduleDailyRewardDialog(userId);
+      }
+    });
+  }
+
   Future<void> _showDailyRewardDialogAfterLogin(int userId) async {
     try {
       final SharedPreferences preferences =
@@ -119,22 +154,22 @@ class _BottomnavViewState extends State<BottomnavView>
       final String today = _todayLocalKey();
       final String? lastShownDate = preferences.getString(storageKey);
 
-      if (lastShownDate == today) return;
+      // Same user + same local date = ar show korbe na.
+      if (lastShownDate == today) {
+        _dailyRewardDialogScheduled = true;
+        return;
+      }
 
-      for (int attempt = 0; attempt < 12; attempt++) {
+      // Permission / recharge / onno startup dialog thakle wait korbe.
+      for (int attempt = 0; attempt < 20; attempt++) {
         await Future<void>.delayed(
-          Duration(milliseconds: attempt == 0 ? 850 : 450),
+          Duration(milliseconds: attempt == 0 ? 900 : 500),
         );
 
         if (!mounted || _dailyRewardDialogOpen) return;
 
         final int currentUserId = Get.isRegistered<AuthController>()
-            ? (Get.find<AuthController>()
-            .userProfile
-            .value
-            .user
-            ?.id
-            ?.toInt() ??
+            ? (Get.find<AuthController>().userProfile.value.user?.id?.toInt() ??
             0)
             : 0;
 
@@ -143,49 +178,65 @@ class _BottomnavViewState extends State<BottomnavView>
           return;
         }
 
-        if (Get.isDialogOpen ?? false) continue;
+        final bool anotherDialogOpen = Get.isDialogOpen ?? false;
+        final bool anotherBottomSheetOpen = Get.isBottomSheetOpen ?? false;
 
-        // Always fetch fresh server data immediately before opening the dialog.
-        final bool loaded =
-        await _dailyRewardController.fetchDailyRewards(force: true);
+        if (anotherDialogOpen || anotherBottomSheetOpen) {
+          continue;
+        }
+
+        // Dialog open korar age fresh server data nibe.
+        final bool loaded = await _dailyRewardController.fetchDailyRewards(
+          force: true,
+        );
+
         if (!mounted) return;
 
         if (!loaded || !_dailyRewardController.hasData) {
           debugPrint(
-            'Daily reward dialog skipped: '
+            'Daily reward data not ready: '
                 '${_dailyRewardController.errorMessage.value}',
           );
-          _dailyRewardDialogScheduled = false;
+
+          // Temporary API/network issue hole same day reward permanently miss hobe na.
+          _queueDailyRewardRetry(userId, delay: const Duration(seconds: 10));
           return;
         }
 
-        // Save only after valid API data is available. This keeps broken/empty
-        // responses from blocking the dialog for the full day.
-        await preferences.setString(storageKey, today);
-        if (!mounted) return;
-
         _dailyRewardDialogOpen = true;
+
         try {
-          await showDailyRewardDialog(
+          final dialogFuture = showDailyRewardDialog(
             context: context,
             controller: _dailyRewardController,
             onSignIn: () async {
-              final bool claimed =
-              await _dailyRewardController.claimToday();
+              final bool claimed = await _dailyRewardController.claimToday();
               return claimed;
             },
           );
+
+          // Dialog successfully invoke howar por-i today mark kori.
+          // Tai startup conflict/error hole din-er jonno vul kore block hobe na.
+          await Future<void>.delayed(const Duration(milliseconds: 180));
+          if (mounted) {
+            await preferences.setString(storageKey, today);
+          }
+
+          await dialogFuture;
         } finally {
           _dailyRewardDialogOpen = false;
         }
+
         return;
       }
 
-      _dailyRewardDialogScheduled = false;
+      // Long permission/other dialog thakleo pore nij theke abar try korbe.
+      _queueDailyRewardRetry(userId, delay: const Duration(seconds: 2));
     } catch (error, stackTrace) {
       debugPrint('Daily reward dialog check failed: $error');
       debugPrintStack(stackTrace: stackTrace);
-      _dailyRewardDialogScheduled = false;
+
+      _queueDailyRewardRetry(userId, delay: const Duration(seconds: 8));
     }
   }
 
@@ -201,6 +252,16 @@ class _BottomnavViewState extends State<BottomnavView>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_dailyRewardController.fetchDailyRewards(force: true));
+
+      final int userId = Get.isRegistered<AuthController>()
+          ? (Get.find<AuthController>().userProfile.value.user?.id?.toInt() ??
+          0)
+          : 0;
+
+      if (userId > 0) {
+        _dailyRewardDialogScheduled = false;
+        _scheduleDailyRewardDialog(userId);
+      }
     }
 
     if (!Get.isRegistered<WebsocketController>()) return;
@@ -223,6 +284,7 @@ class _BottomnavViewState extends State<BottomnavView>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _dailyRewardRetryTimer?.cancel();
 
     if (Get.isRegistered<WebsocketController>()) {
       Get.find<WebsocketController>().disconnectRechargeRealtime();
@@ -252,7 +314,9 @@ class _BottomnavViewState extends State<BottomnavView>
       icon: FontAwesomeIcons.triangleExclamation,
       iconColor: Colors.orange,
       title: ("Permission Required").appTr,
-      message: ("Camera and microphone permissions are required for live streaming.").appTr,
+      message:
+      ("Camera and microphone permissions are required for live streaming.")
+          .appTr,
       buttonText: ("Grant Permission").appTr,
       buttonColor: kAppColor,
       onConfirm: () async {
@@ -268,7 +332,9 @@ class _BottomnavViewState extends State<BottomnavView>
       icon: FontAwesomeIcons.gear,
       iconColor: Colors.red,
       title: ("Open Settings").appTr,
-      message: ("Please enable camera and microphone permissions from app settings.").appTr,
+      message:
+      ("Please enable camera and microphone permissions from app settings.")
+          .appTr,
       buttonText: ("Open Settings").appTr,
       buttonColor: Colors.red,
       onConfirm: () {
@@ -352,11 +418,11 @@ class _BottomnavViewState extends State<BottomnavView>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child:  Text(("No").appTr, style: TextStyle(color: Colors.red)),
+            child: Text(("No").appTr, style: TextStyle(color: Colors.red)),
           ),
           TextButton(
             onPressed: () => SystemNavigator.pop(),
-            child:  Text(("Yes").appTr, style: TextStyle(color: Colors.green)),
+            child: Text(("Yes").appTr, style: TextStyle(color: Colors.green)),
           ),
         ],
       ),
@@ -369,7 +435,6 @@ class _BottomnavViewState extends State<BottomnavView>
     HapticFeedback.lightImpact();
     setState(() => _selectedIndex = index);
   }
-
 
   int _safeInt(dynamic value) {
     if (value == null) return 0;
@@ -392,10 +457,7 @@ class _BottomnavViewState extends State<BottomnavView>
     return '';
   }
 
-  void _openLuckyBagLiveRoom(
-      int livestreamId,
-      Map<String, dynamic> packet,
-      ) {
+  void _openLuckyBagLiveRoom(int livestreamId, Map<String, dynamic> packet) {
     if (livestreamId <= 0) {
       Get.snackbar(
         ('Live room not found').appTr,
@@ -458,22 +520,14 @@ class _BottomnavViewState extends State<BottomnavView>
         ? Get.find<AudienceJoinController>()
         : Get.put(AudienceJoinController());
 
-    joinController.joinAsAudience(
-      channelName: channelName,
-      data: liveData,
-    );
+    joinController.joinAsAudience(channelName: channelName, data: liveData);
   }
 
   @override
   Widget build(BuildContext context) {
     return Obx(() {
       final int authenticatedUserId = Get.isRegistered<AuthController>()
-          ? (Get.find<AuthController>()
-          .userProfile
-          .value
-          .user
-          ?.id
-          ?.toInt() ??
+          ? (Get.find<AuthController>().userProfile.value.user?.id?.toInt() ??
           0)
           : 0;
 
@@ -487,6 +541,7 @@ class _BottomnavViewState extends State<BottomnavView>
         _scheduleDailyRewardDialog(authenticatedUserId);
       } else {
         // Logout hole next login-e persisted date abar check korbe.
+        _dailyRewardRetryTimer?.cancel();
         _dailyRewardDialogScheduled = false;
         _dailyRewardDialogUserId = null;
       }
@@ -500,74 +555,115 @@ class _BottomnavViewState extends State<BottomnavView>
         );
       }
 
+      final AppThemeModel? appTheme = _appThemeController.theme.value;
+      final String? footerUrl = appTheme?.footerImage;
+      if (kDebugMode && appTheme != null && !_firstThemedFrameLogged) {
+        _firstThemedFrameLogged = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          debugPrint(
+            '[APP_THEME_STARTUP] first_themed_frame='
+            '${_appThemeController.startupElapsedMilliseconds}ms',
+          );
+        });
+      }
       final bottomPadding = MediaQuery.of(context).padding.bottom;
-      final width = MediaQuery.of(context).size.width;
+      final double footerHeight = 62 + bottomPadding;
 
       return WillPopScope(
         onWillPop: _onWillPop,
         child: Scaffold(
           backgroundColor: Colors.white,
-          body: Stack(
-            children: [
-              Positioned.fill(
-                child: _pages[_selectedIndex],
-              ),
-
-            ],
+          body: _selectedIndex == 2
+              ? _pages[_selectedIndex]
+              : AppThemeBackground(
+            imageUrl: appTheme?.backgroundImage,
+            child: _pages[_selectedIndex],
           ),
-          bottomNavigationBar: Container(
-            height: 72 + bottomPadding,
-            decoration: BoxDecoration(
-              color: const Color(0xFF3B072F),
-              border: Border(
-                top: BorderSide(
-                  color: Colors.white.withOpacity(0.08),
-                  width: 0.8,
-                ),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.14),
-                  blurRadius: 12,
-                  offset: const Offset(0, -3),
-                ),
-              ],
-            ),
+          bottomNavigationBar: SizedBox(
+            height: footerHeight,
+            width: double.infinity,
             child: Stack(
+              fit: StackFit.expand,
               clipBehavior: Clip.none,
-              alignment: Alignment.bottomCenter,
               children: [
-                Positioned(
-                  left: width * 0.025,
-                  right: width * 0.025,
-                  bottom: bottomPadding,
-                  height: 62,
+                const ColoredBox(color: Color(0xFF3B072F)),
+                if (footerUrl != null)
+                  CachedNetworkImage(
+                    key: ValueKey<String>(footerUrl),
+                    imageUrl: footerUrl,
+                    cacheManager: AppThemeImageCache.manager,
+                    cacheKey: footerUrl,
+                    width: double.infinity,
+                    height: footerHeight,
+                    fit: BoxFit.fill,
+                    alignment: Alignment.center,
+                    fadeInDuration: Duration.zero,
+                    fadeOutDuration: Duration.zero,
+                    placeholder: (_, _) => const SizedBox.expand(),
+                    errorWidget: (_, url, error) {
+                      if (kDebugMode) {
+                        debugPrint('Theme footer image failed: $url $error');
+                      }
+                      return const SizedBox.expand();
+                    },
+                  ),
+                Padding(
+                  padding: EdgeInsets.only(bottom: bottomPadding),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      _buildAssetNavItem(assetPath: "assets/new/home.png", index: 0, label: ("Home").appTr),
-                      _buildAssetNavItem(assetPath: "assets/new/youtube.png", index: 1, label: ("Moments").appTr),
-                      const SizedBox(width: 60),
+                      _buildThemeNavItem(
+                        assetPath: 'assets/new/home.png',
+                        imageUrl: appTheme?.homeIcon,
+                        index: 0,
+                        label: ('Home').appTr,
+                      ),
+                      _buildThemeNavItem(
+                        assetPath: 'assets/new/youtube.png',
+                        imageUrl: appTheme?.momentIcon,
+                        index: 1,
+                        label: ('Moments').appTr,
+                      ),
+                      _buildThemeNavItem(
+                        assetPath: 'assets/new/facetime-button.png',
+                        imageUrl: appTheme?.videoIcon,
+                        index: 2,
+                        label: ('Video/Audio').appTr,
+                        center: true,
+                      ),
                       StreamBuilder<int>(
-                        stream: Get.find<AuthController>().userProfile.value.user?.id == null
+                        stream:
+                        Get.find<AuthController>()
+                            .userProfile
+                            .value
+                            .user
+                            ?.id ==
+                            null
                             ? Stream<int>.value(0)
                             : _chatController.totalUnreadCountStream,
                         initialData: 0,
                         builder: (context, snapshot) {
                           final int count = snapshot.data ?? 0;
-                          return _buildAssetNavItem(
-                            assetPath: "assets/new/notification.png",
+                          return _buildThemeNavItem(
+                            assetPath: 'assets/new/notification.png',
+                            imageUrl: appTheme?.messageIcon,
                             index: 3,
-                            label: ("Notice").appTr,
-                            badge: count > 0 ? (count > 99 ? '99+' : '$count') : null,
+                            label: ('Message').appTr,
+                            badge: count > 0
+                                ? (count > 99 ? '99+' : '$count')
+                                : null,
                           );
                         },
                       ),
-                      _buildAssetNavItem(assetPath: "assets/new/user.png", index: 4, label: ("Profile").appTr),
+                      _buildThemeNavItem(
+                        assetPath: 'assets/new/user.png',
+                        imageUrl: appTheme?.profileIcon,
+                        index: 4,
+                        label: ('Profile').appTr,
+                      ),
                     ],
                   ),
                 ),
-                Positioned(top: -18, child: _buildCenterButton()),
               ],
             ),
           ),
@@ -576,73 +672,145 @@ class _BottomnavViewState extends State<BottomnavView>
     });
   }
 
-  Widget _buildCenterButton() {
-    final bool isSelected = _selectedIndex == 2;
-    return GestureDetector(
-      onTap: () => _onItemTapped(2),
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        height: 64, width: 64,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0xFF3B072F),
-          border: Border.all(color: isSelected ? Colors.white : Colors.white.withOpacity(0.45), width: isSelected ? 3 : 2),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.18), blurRadius: 10, offset: const Offset(0, 4))],
-        ),
-        child: Center(
-          child: Container(
-            height: 52, width: 52,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: isSelected ? kAppColor : const Color(0xFF62083E)),
-            child: Center(child: Image.asset("assets/new/facetime-button.png", height: 25, width: 25, color: Colors.white)),
+  Widget _buildThemeNavItem({
+    required String assetPath,
+    required String? imageUrl,
+    required int index,
+    required String label,
+    String? badge,
+    bool center = false,
+  }) {
+    final bool isSelected = _selectedIndex == index;
+
+    // Keep normal items compact, but make the selected API image visibly
+    // larger and lift it above the footer like professional live apps.
+    final double iconSize = center ? 36 : 28;
+    final double selectedScale = center ? 1.32 : 1.55;
+    final double selectedLift = center ? -0.26 : -0.34;
+    final double normalFontSize = center ? 8.5 : 10;
+    final double selectedFontSize = center ? 11 : 13;
+
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _onItemTapped(index),
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          height: 54,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.bottomCenter,
+            children: [
+              Positioned(
+                top: center ? 0 : 4,
+                left: 0,
+                right: 0,
+                child: AnimatedSlide(
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  offset: Offset(0, isSelected ? selectedLift : 0),
+                  child: AnimatedScale(
+                    duration: const Duration(milliseconds: 280),
+                    curve: Curves.easeOutBack,
+                    scale: isSelected ? selectedScale : 1,
+                    child: Center(
+                      child: _themeNavImage(
+                        imageUrl: imageUrl,
+                        assetPath: assetPath,
+                        size: iconSize,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 3,
+                left: 2,
+                right: 2,
+                child: AnimatedDefaultTextStyle(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  style: GoogleFonts.lato(
+                    color: isSelected ? const Color(0xFFFFD83D) : Colors.white,
+                    fontSize: isSelected ? selectedFontSize : normalFontSize,
+                    fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                  ),
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.visible,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+              if (badge != null)
+                Positioned(
+                  top: 1,
+                  right: 8,
+                  child: Container(
+                    constraints: const BoxConstraints(minWidth: 18),
+                    height: 18,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFF3B5F), Color(0xFFFF8A4C)],
+                      ),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white, width: 1),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFFFF3B5F).withOpacity(0.32),
+                          blurRadius: 6,
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      badge,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 7,
+                        fontWeight: FontWeight.bold,
+                        height: 1,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildAssetNavItem({
+  Widget _themeNavImage({
+    required String? imageUrl,
     required String assetPath,
-    required int index,
-    required String label,
-    String? badge,
+    required double size,
   }) {
-    final bool isSelected = _selectedIndex == index;
-    return GestureDetector(
-      onTap: () => _onItemTapped(index),
-      behavior: HitTestBehavior.opaque,
-      child: SizedBox(
-        width: 58, height: 60,
-        child: Stack(
-          clipBehavior: Clip.none, alignment: Alignment.center,
-          children: [
-            Positioned(
-              top: 3,
-              child: Container(
-                height: 40, width: 44, padding: const EdgeInsets.all(9),
-                decoration: BoxDecoration(
-                  color: isSelected ? kAppColor : Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: isSelected ? Colors.white.withOpacity(0.28) : Colors.transparent, width: 0.8),
-                ),
-                child: Image.asset(assetPath, height: 22, width: 22, fit: BoxFit.contain, color: isSelected ? Colors.white : Colors.white.withOpacity(0.68)),
-              ),
-            ),
-            Positioned(
-              bottom: 1,
-              child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.lato(color: isSelected ? Colors.white : Colors.white.withOpacity(0.58), fontSize: 9, fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600, letterSpacing: 0.1)),
-            ),
-            if (badge != null)
-              Positioned(
-                top: 0, right: 4,
-                child: Container(
-                  constraints: const BoxConstraints(minWidth: 17), height: 17, padding: const EdgeInsets.symmetric(horizontal: 4), alignment: Alignment.center,
-                  decoration: BoxDecoration(color: kAppColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white, width: 1)),
-                  child: Text(badge, style: const TextStyle(color: Colors.white, fontSize: 7, fontWeight: FontWeight.bold, height: 1)),
-                ),
-              ),
-          ],
-        ),
-      ),
+    final fallback = Image.asset(
+      assetPath,
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+    );
+    if (imageUrl == null) return fallback;
+    return CachedNetworkImage(
+      key: ValueKey<String>(imageUrl),
+      imageUrl: imageUrl,
+      cacheManager: AppThemeImageCache.manager,
+      cacheKey: imageUrl,
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+      fadeInDuration: Duration.zero,
+      fadeOutDuration: Duration.zero,
+      placeholder: (_, _) => fallback,
+      errorWidget: (_, url, error) {
+        if (kDebugMode) {
+          debugPrint('Theme navigation image failed: $url $error');
+        }
+        return fallback;
+      },
     );
   }
 }

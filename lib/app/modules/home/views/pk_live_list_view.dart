@@ -47,7 +47,7 @@ class _PkLiveListViewState extends State<PkLiveListView> {
     /// List update hole, first page-e PK kom/na thakle next page auto load korbe.
     _liveListWorker = ever<List<dynamic>>(
       controller.showingLiveStreamList,
-      (_) => _autoLoadPkPages(),
+          (_) => _autoLoadPkPages(),
     );
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -234,9 +234,9 @@ class _PkLiveListViewState extends State<PkLiveListView> {
 
     final bool hasPkPair =
         map['sender_livestream'] != null ||
-        map['receiver_livestream'] != null ||
-        map['sender_livestream_id'] != null ||
-        map['receiver_livestream_id'] != null;
+            map['receiver_livestream'] != null ||
+            map['sender_livestream_id'] != null ||
+            map['receiver_livestream_id'] != null;
 
     return streamType == 'pk' ||
         _truthy(map['is_pk_room']) ||
@@ -248,9 +248,9 @@ class _PkLiveListViewState extends State<PkLiveListView> {
   /// one PK object-er vitore sender_livestream + receiver_livestream thake.
   /// showSide = sender hole sender card, receiver hole receiver card.
   Map<String, dynamic> _makePkRoomCardData(
-    dynamic item, {
-    required String showSide,
-  }) {
+      dynamic item, {
+        required String showSide,
+      }) {
     final Map<String, dynamic> pkData = _asMap(item);
     final Map<String, dynamic> senderLive = _asMap(pkData['sender_livestream']);
     final Map<String, dynamic> receiverLive = _asMap(
@@ -288,17 +288,17 @@ class _PkLiveListViewState extends State<PkLiveListView> {
     final Map<String, dynamic> opponentUser = _asMap(opponentLive['user']);
 
     final String mainName =
-        (mainHost['name'] ??
-                mainLive['stream_bte'] ??
-                mainUser['name'] ??
-                (isReceiverSide ? 'Opponent' : 'PK Host'))
-            .toString();
+    (mainHost['name'] ??
+        mainLive['stream_bte'] ??
+        mainUser['name'] ??
+        (isReceiverSide ? 'Opponent' : 'PK Host'))
+        .toString();
     final String opponentName =
-        (opponentHost['name'] ??
-                opponentLive['stream_bte'] ??
-                opponentUser['name'] ??
-                (isReceiverSide ? 'PK Host' : 'Opponent'))
-            .toString();
+    (opponentHost['name'] ??
+        opponentLive['stream_bte'] ??
+        opponentUser['name'] ??
+        (isReceiverSide ? 'PK Host' : 'Opponent'))
+        .toString();
 
     final dynamic currentScore = isReceiverSide
         ? (pkData['receiver_score'] ?? 0)
@@ -310,12 +310,12 @@ class _PkLiveListViewState extends State<PkLiveListView> {
     final String pkAgoraChannel = _resolveRealPkChannel(pkData);
 
     final String normalRoomId =
-        (mainLive['room_id'] ??
-                mainLive['channel_name'] ??
-                mainLive['user_id'] ??
-                '')
-            .toString()
-            .trim();
+    (mainLive['room_id'] ??
+        mainLive['channel_name'] ??
+        mainLive['user_id'] ??
+        '')
+        .toString()
+        .trim();
 
     final bool pkChannelReady = _isRealPkAgoraChannel(pkAgoraChannel);
     if (!pkChannelReady) {
@@ -336,7 +336,7 @@ class _PkLiveListViewState extends State<PkLiveListView> {
       'room_id': pkChannelReady ? pkAgoraChannel : normalRoomId,
       'normal_room_id': normalRoomId,
       'user_id':
-          mainLive['user_id'] ??
+      mainLive['user_id'] ??
           (isReceiverSide
               ? pkData['receiver_host_id']
               : pkData['sender_host_id']),
@@ -402,27 +402,27 @@ class _PkLiveListViewState extends State<PkLiveListView> {
 
       /// Image fallback support for old card.
       'host_profile_image':
-          mainLive['host_profile_image'] ??
+      mainLive['host_profile_image'] ??
           mainHost['profile_image'] ??
           pkData['host_profile_image'],
       'host_image':
-          mainLive['host_image'] ??
+      mainLive['host_image'] ??
           mainHost['profile_image'] ??
           pkData['host_image'],
       'broadcaster_profile_image':
-          mainLive['broadcaster_profile_image'] ??
+      mainLive['broadcaster_profile_image'] ??
           mainHost['profile_image'] ??
           pkData['broadcaster_profile_image'],
       'display_profile_image':
-          mainLive['display_profile_image'] ??
+      mainLive['display_profile_image'] ??
           mainHost['profile_image'] ??
           pkData['display_profile_image'],
       'display_image':
-          mainLive['display_image'] ??
+      mainLive['display_image'] ??
           mainHost['profile_image'] ??
           pkData['display_image'],
       'thumbnail_image':
-          mainLive['thumbnail_image'] ??
+      mainLive['thumbnail_image'] ??
           mainLive['stream_image'] ??
           mainHost['profile_image'] ??
           pkData['thumbnail_image'],
@@ -433,9 +433,9 @@ class _PkLiveListViewState extends State<PkLiveListView> {
 
       /// Call/view support.
       'livestream_callers':
-          mainLive['livestream_callers'] ?? pkData['livestream_callers'] ?? [],
+      mainLive['livestream_callers'] ?? pkData['livestream_callers'] ?? [],
       'viewer_count':
-          mainLive['viewer_count'] ??
+      mainLive['viewer_count'] ??
           pkData['viewer_count'] ??
           opponentLive['viewer_count'] ??
           0,
@@ -526,8 +526,8 @@ class _PkLiveListViewState extends State<PkLiveListView> {
   Widget _buildEmptyOrSearching() {
     final bool searching =
         controller.liveHasMore.value ||
-        controller.isLoadingMoreLive.value ||
-        _autoPagingPk;
+            controller.isLoadingMoreLive.value ||
+            _autoPagingPk;
 
     return ListView(
       controller: _scrollController,
@@ -581,69 +581,63 @@ class _PkLiveListViewState extends State<PkLiveListView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [   Color(0xFF3B072F),
-              Color(0xFF3B072F),],
-          ),
-        ),
+        color: Colors.transparent,
         child: CustomRefreshIndicator(
           onRefresh: _refreshPkLives,
           builder:
               (
-                BuildContext context,
-                Widget child,
-                IndicatorController refreshController,
+              BuildContext context,
+              Widget child,
+              IndicatorController refreshController,
               ) {
-                return Stack(
-                  children: [
-                    child,
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: AnimatedBuilder(
-                        animation: refreshController,
-                        builder: (context, _) {
-                          return SizedBox(
-                            height: refreshController.value * 80,
-                            child: Center(
-                              child: refreshController.isIdle
-                                  ? const SizedBox()
-                                  : Container(
-                                      decoration: BoxDecoration(
-                                        color: kAppColor,
-                                        borderRadius: BorderRadius.circular(50),
-                                      ),
-                                      child: Transform.scale(
-                                        scale: refreshController.value.clamp(
-                                          0.0,
-                                          1.0,
-                                        ),
-                                        child: ClipRRect(
-                                          borderRadius: BorderRadius.circular(
-                                            50,
-                                          ),
-                                          child: Image.asset(
-                                            appLogo,
-                                            width: 40,
-                                            height: 40,
-                                            fit: BoxFit.cover,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
+            return Stack(
+              children: [
+                child,
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: AnimatedBuilder(
+                    animation: refreshController,
+                    builder: (context, _) {
+                      return SizedBox(
+                        height: refreshController.value * 80,
+                        child: Center(
+                          child: refreshController.isIdle
+                              ? const SizedBox()
+                              : Container(
+                            decoration: BoxDecoration(
+                              color: kAppColor,
+                              borderRadius: BorderRadius.circular(50),
                             ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                );
-              },
+                            child: Transform.scale(
+                              scale: refreshController.value.clamp(
+                                0.0,
+                                1.0,
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(
+                                  50,
+                                ),
+                                child: Image.asset(
+                                  appLogo,
+                                  width: 40,
+                                  height: 40,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
           child: Padding(
             padding: const EdgeInsets.all(8.0),
             child: Obx(() {

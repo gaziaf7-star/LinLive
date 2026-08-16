@@ -67,7 +67,7 @@ class LiveCleanupService {
             ? 'seat'
             : 'audience'} '
         'action=${wasBroadcaster
-            ? 'close_live'
+            ? 'leave_room'
             : wasSeatUser
             ? 'release_seat'
             : 'leave_viewer'}',
@@ -87,16 +87,13 @@ class LiveCleanupService {
       if (oldStreamId <= 0) return;
       if (wasBroadcaster) {
         if (wasPermanentRoom) {
-          await livestreamController.closePermanentRoom(
+          await livestreamController.leavePermanentRoom(
             livestreamId: oldStreamId,
-            navigateToEnd: false,
-          );
-        } else {
-          await livestreamController.tryToRemoveLivestream(
-            streamId: oldStreamId,
-            navigateToEnd: false,
           );
         }
+        debugPrint(
+          '[LIVE_LEAVE][SUCCESS] room=$oldStreamId remove_livestream=false',
+        );
       } else if (userId > 0) {
         await Future.wait<void>([
           if (wasSeatUser)

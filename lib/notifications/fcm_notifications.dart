@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui' show RootIsolateToken;
 
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:dio/dio.dart';
@@ -321,7 +322,11 @@ Future<void> messageNotification({required Map message}) async {
     payload: jsonEncode(_stringMap(data)),
   );
 
-  FlutterBackgroundService().invoke('stopCallRing');
+  // flutter_background_service_android is a UI-isolate API. Background FCM
+  // handlers run in a secondary isolate and must not construct/invoke it.
+  if (RootIsolateToken.instance != null) {
+    FlutterBackgroundService().invoke('stopCallRing');
+  }
 }
 
 Future<void> handleNotificationTap(Map<String, dynamic> rawData) async {

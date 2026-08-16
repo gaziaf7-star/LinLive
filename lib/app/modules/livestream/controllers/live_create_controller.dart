@@ -10,6 +10,7 @@ import 'package:get/get_state_manager/src/simple/get_controllers.dart';
 
 import '../../../../apis/api_endpoints.dart';
 import 'package:meetlivepro/app/localization/app_localizer.dart';
+import '../../../services/agora_service.dart';
 import '../utils/live_performance_config.dart';
 import 'livestream_controller.dart';
 
@@ -58,6 +59,26 @@ class LiveCreateController extends GetxController {
     livestreamController.isCreatingLive.value = true;
     debugPrint('LIVE_CREATE_START => type=$streamType');
 
+    // ✅ FIX: audience joins already warm up the Agora engine in the
+    // background the instant a join starts (_warmAudioEngineForFastJoin),
+    // so by the time the room actually needs it, engine creation is already
+    // done. The create/host flow never did this — the engine only started
+    // initializing once the whole create+token round trip finished and
+    // AudioLiveView mounted, adding that full engine-startup cost onto the
+    // critical path. This fires the identical, already-idempotent warmup in
+    // parallel with the create API call below, only for audio rooms (video
+    // rooms configure their engine differently and must not get an
+    // audio-only warmup).
+    if (streamType.trim().toLowerCase() == 'audio') {
+      Future.microtask(() async {
+        try {
+          await AgoraService().initializeAudioEngine();
+        } catch (e) {
+          liveLog('⚠️ Agora audio warmup (create flow) skipped safely => $e');
+        }
+      });
+    }
+
     final selectedSeatCount =
         seatCountValue ?? livestreamController.seatCount.value;
 
@@ -102,7 +123,7 @@ class LiveCreateController extends GetxController {
       liveLog('➡️ Room background: $roomBackground');
       liveLog(
         '➡️ Password provided: '
-        '${roomPassword != null && roomPassword.trim().isNotEmpty}',
+            '${roomPassword != null && roomPassword.trim().isNotEmpty}',
       );
       liveLog('➡️ Selected image path: $pickedImagePath');
 
@@ -145,7 +166,7 @@ class LiveCreateController extends GetxController {
           headers: {
             'Accept': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
           sendTimeout: const Duration(seconds: 30),
           receiveTimeout: const Duration(seconds: 30),
@@ -164,7 +185,7 @@ class LiveCreateController extends GetxController {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'Authorization':
-                'Bearer ${livestreamController.authController.userProfile.value.token}',
+            'Bearer ${livestreamController.authController.userProfile.value.token}',
           },
           sendTimeout: const Duration(seconds: 30),
           receiveTimeout: const Duration(seconds: 30),
@@ -200,12 +221,15 @@ class LiveCreateController extends GetxController {
 
             liveLog(
               '📥 Response progress: $progress% '
-              '($received/$total bytes)',
+                  '($received/$total bytes)',
             );
           }
         },
       );
       timing('create_api_done');
+      if (kDebugMode) {
+        debugPrint('[LIVE_CREATE][API_DONE] status=${response.statusCode}');
+      }
 
       liveLog('==================================================');
       liveLog('✅ CREATE LIVE API RESPONSE RECEIVED');
@@ -227,7 +251,7 @@ class LiveCreateController extends GetxController {
         Get.snackbar(
           ('Error').appTr,
           ('Failed to create live stream. '
-                  'Status code: ${response.statusCode}')
+              'Status code: ${response.statusCode}')
               .appTr,
           snackPosition: SnackPosition.BOTTOM,
           backgroundColor: Colors.red,
@@ -243,7 +267,6 @@ class LiveCreateController extends GetxController {
         response.data,
       );
 
-      liveLog('✅ Normalized response: $responseMap');
       liveLog('✅ Normalized response keys: ${responseMap.keys.toList()}');
 
       final live = livestreamController.mapCreateValue(
@@ -273,7 +296,7 @@ class LiveCreateController extends GetxController {
       responseMap['livestreamdata'] = live;
 
       liveLog('📺 Final livestream data: $live');
-      liveLog('📺 Final response map: $responseMap');
+      liveLog('📺 Final response prepared; sensitive values not logged');
 
       liveLog('🚪 Opening permanent room as host...');
       liveLog('➡️ Requested user ID: $userId');
@@ -322,7 +345,7 @@ class LiveCreateController extends GetxController {
       liveLog('❌ Request path: ${e.requestOptions.path}');
       liveLog(
         '❌ Request content type: '
-        '${e.requestOptions.contentType}',
+            '${e.requestOptions.contentType}',
       );
 
       final safeHeaders = Map<String, dynamic>.from(e.requestOptions.headers);
@@ -348,7 +371,7 @@ class LiveCreateController extends GetxController {
 
         liveLog(
           '❌ Multipart files: '
-          '${formData.files.map((file) {
+              '${formData.files.map((file) {
             return {'field': file.key, 'filename': file.value.filename, 'contentType': file.value.contentType.toString()};
           }).toList()}',
         );
@@ -361,7 +384,7 @@ class LiveCreateController extends GetxController {
       liveLog('❌ Response headers: ${e.response?.headers.map}');
       liveLog(
         '❌ Response data type: '
-        '${e.response?.data.runtimeType}',
+            '${e.response?.data.runtimeType}',
       );
       liveLog('❌ Create error response received');
       liveLog('❌ Stack trace:\n$stackTrace');
@@ -374,9 +397,9 @@ class LiveCreateController extends GetxController {
       if (errorData is Map) {
         message =
             (errorData['message'] ??
-                    errorData['error'] ??
-                    errorData['errors'] ??
-                    'Server error occurred.')
+                errorData['error'] ??
+                errorData['errors'] ??
+                'Server error occurred.')
                 .toString();
       } else if (errorData != null) {
         message = errorData.toString();

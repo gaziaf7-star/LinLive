@@ -48,7 +48,7 @@ class _PopularLiveListViewState extends State<PopularLiveListView> {
     /// তাহলে next page auto load করে video খুঁজবে।
     _liveListWorker = ever<List<dynamic>>(
       controller.showingLiveStreamList,
-      (_) => _autoLoadVideoPages(),
+          (_) => _autoLoadVideoPages(),
     );
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -183,9 +183,9 @@ class _PopularLiveListViewState extends State<PopularLiveListView> {
         item['stream_type']?.toString().toLowerCase().trim() ?? '';
     final hasPair =
         item['sender_livestream'] != null ||
-        item['receiver_livestream'] != null ||
-        item['sender_livestream_id'] != null ||
-        item['receiver_livestream_id'] != null;
+            item['receiver_livestream'] != null ||
+            item['sender_livestream_id'] != null ||
+            item['receiver_livestream_id'] != null;
 
     return streamType == 'pk' ||
         item['is_pk_room'] == true ||
@@ -248,10 +248,10 @@ class _PopularLiveListViewState extends State<PopularLiveListView> {
           .trim();
       final bool isPkRunningNormalLive =
           pkStatus == 'running' ||
-          live['is_pk_room'] == true ||
-          live['is_real_pk_room'] == true ||
-          live['is_pk'] == 1 ||
-          live['is_pk'] == true;
+              live['is_pk_room'] == true ||
+              live['is_real_pk_room'] == true ||
+              live['is_pk'] == 1 ||
+              live['is_pk'] == true;
 
       // ✅ PK running live video tab-e show korbo na.
       // PK tab theke join korle real pk_ channel jabe. Video tab theke join korle
@@ -282,13 +282,13 @@ class _PopularLiveListViewState extends State<PopularLiveListView> {
             'pk_id': pk['pk_id'] ?? pk['id'],
             'pk_show_side': side,
             'sender_livestream_id':
-                pk['sender_livestream_id'] ?? senderLive['id'],
+            pk['sender_livestream_id'] ?? senderLive['id'],
             'receiver_livestream_id':
-                pk['receiver_livestream_id'] ?? receiverLive['id'],
+            pk['receiver_livestream_id'] ?? receiverLive['id'],
             'pk_sender_livestream_id':
-                pk['sender_livestream_id'] ?? senderLive['id'],
+            pk['sender_livestream_id'] ?? senderLive['id'],
             'pk_receiver_livestream_id':
-                pk['receiver_livestream_id'] ?? receiverLive['id'],
+            pk['receiver_livestream_id'] ?? receiverLive['id'],
             'sender_host_id': pk['sender_host_id'],
             'receiver_host_id': pk['receiver_host_id'],
             'sender_score': pk['sender_score'] ?? 0,
@@ -404,8 +404,8 @@ class _PopularLiveListViewState extends State<PopularLiveListView> {
   Widget _buildEmptyOrSearching() {
     final bool searching =
         controller.liveHasMore.value ||
-        controller.isLoadingMoreLive.value ||
-        _autoPagingVideo;
+            controller.isLoadingMoreLive.value ||
+            _autoPagingVideo;
 
     return ListView(
       controller: _scrollController,
@@ -459,62 +459,57 @@ class _PopularLiveListViewState extends State<PopularLiveListView> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF3B072F), Color(0xFF3B072F)],
-          ),
-        ),
+        color: Colors.transparent,
         child: CustomRefreshIndicator(
           onRefresh: _refreshVideoLives,
           builder:
               (
-                BuildContext context,
-                Widget child,
-                IndicatorController refreshController,
+              BuildContext context,
+              Widget child,
+              IndicatorController refreshController,
               ) {
-                return Stack(
-                  children: [
-                    child,
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: AnimatedBuilder(
-                        animation: refreshController,
-                        builder: (context, _) {
-                          return SizedBox(
-                            height: refreshController.value * 80,
-                            child: Center(
-                              child: refreshController.isIdle
-                                  ? const SizedBox()
-                                  : Container(
-                                      decoration: BoxDecoration(
-                                        color: kAppColor,
-                                        borderRadius: BorderRadius.circular(50),
-                                      ),
-                                      child: Transform.scale(
-                                        scale: refreshController.value.clamp(
-                                          0.0,
-                                          1.0,
-                                        ),
-                                        child: Image.asset(
-                                          appLogo,
-                                          width: 40,
-                                          height: 40,
-                                        ),
-                                      ),
-                                    ),
+            return Stack(
+              children: [
+                child,
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: AnimatedBuilder(
+                    animation: refreshController,
+                    builder: (context, _) {
+                      return SizedBox(
+                        height: refreshController.value * 80,
+                        child: Center(
+                          child: refreshController.isIdle
+                              ? const SizedBox()
+                              : Container(
+                            decoration: BoxDecoration(
+                              color: kAppColor,
+                              borderRadius: BorderRadius.circular(50),
                             ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                );
-              },
+                            child: Transform.scale(
+                              scale: refreshController.value.clamp(
+                                0.0,
+                                1.0,
+                              ),
+                              child: Image.asset(
+                                appLogo,
+                                width: 40,
+                                height: 40,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
           child: Padding(
             padding: const EdgeInsets.all(8.0),
             child: Obx(() {

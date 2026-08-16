@@ -6,6 +6,8 @@ import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get.dart';
+import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 
 import '../../../../apis/api_endpoints.dart';
@@ -32,9 +34,17 @@ class LiveMusicController extends GetxController {
   final musicRepeat = true.obs;
   final musicSeeking = false.obs;
   final recentLiveMusics = <Map<String, String>>[].obs;
+  final localMusics = <Map<String, dynamic>>[].obs;
+  final musicPlaylist = <Map<String, dynamic>>[].obs;
+  final currentMusicIndex = (-1).obs;
+  final localMusicLoading = false.obs;
+  final localMusicPermissionDenied = false.obs;
+  static const MethodChannel _localAudioChannel =
+      MethodChannel('ezilive/local_audio');
   Timer? _musicProgressTimer;
   bool _musicActionRunning = false;
   int _musicOperationSequence = 0;
+  bool _handlingCompletion = false;
 
   bool _isOperationCurrent(int operation, int roomGeneration) =>
       operation == _musicOperationSequence &&
@@ -51,6 +61,89 @@ class LiveMusicController extends GetxController {
     final minutes = totalSeconds ~/ 60;
     final seconds = totalSeconds % 60;
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> loadLocalMusics({bool force = false}) async {
+    if (localMusicLoading.value || (localMusics.isNotEmpty && !force)) return;
+    localMusicLoading.value = true;
+    localMusicPermissionDenied.value = false;
+    try {
+      PermissionStatus permission;
+      if (Platform.isAndroid) {
+        permission = await Permission.audio.request();
+        if (permission.isDenied || permission.isPermanentlyDenied) {
+          // permission_handler maps audio to the correct platform permission;
+          // older Android versions may expose it through storage instead.
+          permission = await Permission.storage.request();
+        }
+        if (!permission.isGranted) {
+          localMusicPermissionDenied.value = true;
+          return;
+        }
+      }
+      final raw = await _localAudioChannel.invokeListMethod<dynamic>('getAudioFiles');
+      final unique = <String, Map<String, dynamic>>{};
+      for (final item in raw ?? const <dynamic>[]) {
+        if (item is! Map) continue;
+        final song = Map<String, dynamic>.from(item);
+        final path = (song['path'] ?? '').toString().trim();
+        if (path.isEmpty) continue;
+        unique[path] = song;
+      }
+      localMusics.assignAll(unique.values);
+    } on PlatformException catch (e) {
+      localMusicPermissionDenied.value = e.code == 'permission_denied';
+      liveLog('Local music query failed: $e');
+    } finally {
+      localMusicLoading.value = false;
+    }
+  }
+
+  Future<void> selectLocalMusic({
+    required RtcEngine? rtcEngine,
+    required Map<String, dynamic> music,
+  }) async {
+    if (rtcEngine == null) return;
+    final path = (music['path'] ?? '').toString();
+    if (path.isEmpty) return;
+    final existing = musicPlaylist.indexWhere((e) => e['path'] == path);
+    if (existing < 0) musicPlaylist.add(Map<String, dynamic>.from(music));
+    currentMusicIndex.value = existing < 0 ? musicPlaylist.length - 1 : existing;
+    await _playPlaylistIndex(rtcEngine, currentMusicIndex.value);
+  }
+
+  Future<void> _playPlaylistIndex(RtcEngine rtcEngine, int index) async {
+    if (index < 0 || index >= musicPlaylist.length) return;
+    currentMusicIndex.value = index;
+    final music = musicPlaylist[index];
+    await startLiveMusic(
+      rtcEngine: rtcEngine,
+      path: (music['path'] ?? '').toString(),
+      name: (music['title'] ?? music['name'] ?? 'Unknown Music').toString(),
+      status: liveMusicStatus.value == 'stopped' ? 'playing' : 'changed',
+    );
+  }
+
+  Future<void> playNextLiveMusic({required RtcEngine? rtcEngine}) async {
+    if (rtcEngine == null || musicPlaylist.isEmpty) return;
+    final next = currentMusicIndex.value + 1;
+    if (next < musicPlaylist.length) {
+      await _playPlaylistIndex(rtcEngine, next);
+    } else if (musicRepeat.value) {
+      await _playPlaylistIndex(rtcEngine, 0);
+    } else {
+      await stopLiveMusic(rtcEngine: rtcEngine);
+    }
+  }
+
+  Future<void> playPreviousLiveMusic({required RtcEngine? rtcEngine}) async {
+    if (rtcEngine == null || musicPlaylist.isEmpty) return;
+    final previous = currentMusicIndex.value - 1;
+    await _playPlaylistIndex(rtcEngine, previous >= 0 ? previous : musicPlaylist.length - 1);
+  }
+
+  Future<void> playPlaylistMusic({required RtcEngine? rtcEngine, required int index}) async {
+    if (rtcEngine != null) await _playPlaylistIndex(rtcEngine, index);
   }
 
   bool get isLiveMusicPlaying =>
@@ -85,9 +178,10 @@ class LiveMusicController extends GetxController {
       await engine.adjustRecordingSignalVolume(micMuted ? 0 : 100);
 
       /// Local playout + audience publish volume stable rakha.
-      await engine.adjustAudioMixingVolume(80);
-      await engine.adjustAudioMixingPlayoutVolume(80);
-      await engine.adjustAudioMixingPublishVolume(80);
+      final volume = musicVolume.value.clamp(0, 100);
+      await engine.adjustAudioMixingVolume(volume);
+      await engine.adjustAudioMixingPlayoutVolume(volume);
+      await engine.adjustAudioMixingPublishVolume(volume);
 
       liveLog('🎙️ Mic muted=$micMuted, music still publishing to audience');
     } catch (e) {
@@ -306,7 +400,8 @@ class LiveMusicController extends GetxController {
       await rtcEngine.startAudioMixing(
         filePath: cleanPath,
         loopback: false,
-        cycle: musicRepeat.value ? -1 : 1,
+        // Queue completion owns repeat/auto-next; Agora must finish this file.
+        cycle: 1,
         startPos: 0,
       );
 
@@ -412,6 +507,15 @@ class LiveMusicController extends GetxController {
         if (_isOperationCurrent(trackedOperation, trackedRoomGeneration) &&
             position >= 0) {
           musicPositionMs.value = position;
+          final duration = musicDurationMs.value;
+          if (duration > 0 && position >= duration - 500 && !_handlingCompletion) {
+            _handlingCompletion = true;
+            try {
+              await playNextLiveMusic(rtcEngine: rtcEngine);
+            } finally {
+              _handlingCompletion = false;
+            }
+          }
         }
       } catch (_) {}
     });
@@ -456,6 +560,8 @@ class LiveMusicController extends GetxController {
     musicVolume.value = safeVolume;
     try {
       await rtcEngine?.adjustAudioMixingVolume(safeVolume);
+      await rtcEngine?.adjustAudioMixingPlayoutVolume(safeVolume);
+      await rtcEngine?.adjustAudioMixingPublishVolume(safeVolume);
     } catch (e) {
       liveLog('❌ setLiveMusicVolume error: $e');
     }

@@ -1,9 +1,9 @@
-
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:custom_refresh_indicator/custom_refresh_indicator.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svga_easyplayer/flutter_svga_easyplayer.dart';
 
@@ -12,6 +12,7 @@ import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:meetlivepro/app/modules/appmenu/views/widgets/Flower.dart';
 import 'package:meetlivepro/app/modules/appmenu/views/widgets/FlowingList.dart';
+import 'package:meetlivepro/app/modules/appmenu/views/widgets/base_medal_view.dart';
 import 'package:meetlivepro/app/modules/appmenu/views/widgets/game_test.dart';
 import 'package:meetlivepro/app/modules/appmenu/views/widgets/managerDashbord.dart';
 import 'package:meetlivepro/app/modules/appmenu/views/widgets/menuiconPage.dart';
@@ -19,15 +20,14 @@ import 'package:meetlivepro/app/modules/appmenu/views/widgets/secoundCard.dart';
 import 'package:meetlivepro/app/modules/appmenu/views/widgets/vipcarddesign.dart'
     hide kAppColor2;
 
+
 import '../../../../apis/api_endpoints.dart';
 import '../../../../constants/color_constants.dart';
 import '../../../../constants/constants.dart';
 import '../../../../constants/image_const/image_conost.dart';
 import '../../../../constants/image_helper.dart';
 import '../../../../constants/layout_constant.dart';
-import '../../../../widgets/after/Castom_appmenuCard.dart';
 import '../../Cp/views/cp_view.dart';
-
 
 import '../../InvitePage/view/invite_view.dart';
 
@@ -45,6 +45,7 @@ import '../../setting/views/setting_view.dart';
 import '../../setting/views/widgets/about_page.dart';
 
 import '../../svip/views/svip_view.dart';
+import '../../svip/controllers/svip_controller.dart';
 
 import '../../verified/controllers/verified_controller.dart';
 import '../../withdraw/views/lanelpage.dart';
@@ -71,8 +72,6 @@ bool _canShowRechargeInviteByCoins() {
   return _safeUserCoins() >= 10;
 }
 
-
-
 // data.vip_level.title_image_url => card image
 // ===============================================================
 
@@ -89,8 +88,6 @@ int _currentAuthUserId() {
 
   return int.tryParse(rawId?.toString().trim() ?? '') ?? 0;
 }
-
-
 
 int _safeAuthProfileCount(dynamic value) {
   if (value == null) return 0;
@@ -125,10 +122,46 @@ int _authTotalFollowing() {
 
   final values = <dynamic>[];
 
-  try { values.add(user.totalFollowing); } catch (_) {}
-  try { values.add(user.totalFollowings); } catch (_) {}
-  try { values.add(user.followingCount); } catch (_) {}
-  try { values.add(user.total_following); } catch (_) {}
+  try {
+    values.add(user.totalFollowing);
+  } catch (_) {}
+  try {
+    values.add(user.totalFollowings);
+  } catch (_) {}
+  try {
+    values.add(user.followingCount);
+  } catch (_) {}
+  try {
+    values.add(user.total_following);
+  } catch (_) {}
+
+  for (final value in values) {
+    final count = _safeAuthProfileCount(value);
+    if (count > 0) return count;
+  }
+
+  return 0;
+}
+
+
+int _authTotalVisitors() {
+  final dynamic user = authController.userProfile.value.user;
+  if (user == null) return 0;
+
+  final values = <dynamic>[];
+
+  try {
+    values.add(user.totalVisitors);
+  } catch (_) {}
+  try {
+    values.add(user.visitorCount);
+  } catch (_) {}
+  try {
+    values.add(user.totalVisitor);
+  } catch (_) {}
+  try {
+    values.add(user.profileVisitors);
+  } catch (_) {}
 
   for (final value in values) {
     final count = _safeAuthProfileCount(value);
@@ -171,10 +204,11 @@ bool _isVipActiveForMenu(dynamic value) {
   final String status = (map['status'] ?? '').toString().trim().toLowerCase();
   final dynamic rawActive = map['is_active'];
 
-  final bool isActive = rawActive == true ||
-      rawActive == 1 ||
-      rawActive?.toString().trim().toLowerCase() == 'true' ||
-      status == 'active';
+  final bool isActive =
+      rawActive == true ||
+          rawActive == 1 ||
+          rawActive?.toString().trim().toLowerCase() == 'true' ||
+          status == 'active';
 
   if (!isActive || map['vip_level'] is! Map) {
     return false;
@@ -224,7 +258,8 @@ String _vipMenuTitle(dynamic vipData) {
   if (!_isVipActiveForMenu(vipData)) return 'VIP'.appTr;
 
   final Map<String, dynamic> level = _vipLevelForMenu(vipData);
-  final String title = (level['title'] ??
+  final String title =
+  (level['title'] ??
       level['name'] ??
       (vipData as Map)['vip_type'] ??
       'VIP'.appTr)
@@ -238,10 +273,7 @@ String _vipMenuTitle(dynamic vipData) {
 // ✅ VIP WORK: card validity dynamic
 // Main: API er "day" show korbe. Example: day: 7 => 7 Days
 // Fallback: remaining_days
-String _vipMenuValidity(
-    Map<String, dynamic>? vipData, {
-      bool loading = false,
-    }) {
+String _vipMenuValidity(Map<String, dynamic>? vipData, {bool loading = false}) {
   if (loading && vipData == null) {
     return 'Loading...'.appTr;
   }
@@ -281,14 +313,14 @@ String _vipMenuTitleImage(dynamic vipData) {
   );
 }
 
-
 // Active VIP na thakle profile row-te kono fake/default VIP image show korbe na.
 String _activeVipProfileTitleImage(dynamic vipData) {
   if (!_isVipActiveForMenu(vipData)) return '';
 
   final Map<String, dynamic> level = _vipLevelForMenu(vipData);
 
-  final String rawPath = (level['title_image_url'] ??
+  final String rawPath =
+  (level['title_image_url'] ??
       level['title_image'] ??
       level['badge_image_url'] ??
       level['badge_image'] ??
@@ -305,14 +337,16 @@ Widget _currentVipTitleImageBadge() {
   return Obx(() {
     final int userId = _currentAuthUserId();
 
-    final Map<String, dynamic>? cachedVip =
-    userId > 0 ? homeController.currentVipForUser(userId) : null;
+    final Map<String, dynamic>? cachedVip = userId > 0
+        ? homeController.currentVipForUser(userId)
+        : null;
 
     final Map<String, dynamic>? currentVip =
         homeController.vipCurrentData.value;
 
-    final Map<String, dynamic>? vipData = cachedVip ??
-        (_vipDataBelongsToUser(currentVip, userId) ? currentVip : null);
+    final Map<String, dynamic>? vipData =
+        cachedVip ??
+            (_vipDataBelongsToUser(currentVip, userId) ? currentVip : null);
 
     final String imagePath = _activeVipProfileTitleImage(vipData);
 
@@ -326,10 +360,7 @@ Widget _currentVipTitleImageBadge() {
     Widget imageWidget;
 
     if (imagePath.toLowerCase().endsWith('.svga')) {
-      imageWidget = SVGAEasyPlayer(
-        resUrl: imagePath,
-        fit: BoxFit.contain,
-      );
+      imageWidget = SVGAEasyPlayer(resUrl: imagePath, fit: BoxFit.contain);
     } else if (imagePath.startsWith('http://') ||
         imagePath.startsWith('https://')) {
       imageWidget = CachedNetworkImage(
@@ -365,7 +396,6 @@ Widget _currentVipTitleImageBadge() {
 // ===============================================================
 // ✅ VIP MENU CARD DYNAMIC SYSTEM - END
 // ===============================================================
-
 
 class AppmenuView extends StatefulWidget {
   const AppmenuView({super.key});
@@ -432,11 +462,20 @@ class _AppmenuViewState extends State<AppmenuView>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    print('Token ${authController.userProfile.value.token}');
+    if (kDebugMode) {
+      final String token =
+          authController.userProfile.value.token?.toString().trim() ?? '';
+      debugPrint(
+        'App menu auth: token_present=${token.isNotEmpty} '
+            'token_length=${token}',
+      );
+    }
     return Scaffold(
+      backgroundColor: Colors.transparent,
       body: CustomRefreshIndicator(
         onRefresh: _refreshPage,
-        builder: (
+        builder:
+            (
             BuildContext context,
             Widget child,
             IndicatorController refreshController,
@@ -468,8 +507,10 @@ class _AppmenuViewState extends State<AppmenuView>
                       return const SizedBox.shrink();
                     }
 
-                    final double value =
-                    refreshController.value.clamp(0.0, 1.0);
+                    final double value = refreshController.value.clamp(
+                      0.0,
+                      1.0,
+                    );
 
                     return SizedBox(
                       height: value * 80,
@@ -495,27 +536,24 @@ class _AppmenuViewState extends State<AppmenuView>
         child: Stack(
           fit: StackFit.expand,
           children: [
+            // Existing app background image remains visible at the top.
+            // Lower area softly fades into the warm white reference background.
             const Positioned.fill(
               child: IgnorePointer(
-                child: RepaintBoundary(
-                  child: _AnimatedLoveWaveBackground(),
-                ),
-              ),
-            ),
-            const Positioned.fill(
-              child: IgnorePointer(
-                child: RepaintBoundary(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0x14000000),
-                          Color(0x22000000),
-                          Color(0x44000000),
-                        ],
-                      ),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: [0.00, 0.18, 0.31, 0.43, 0.58, 1.00],
+                      colors: [
+                        Colors.transparent,
+                        Color(0x18FFFFFF),
+                        Color(0x76FFFDF8),
+                        Color(0xE8FFFDF8),
+                        Color(0xFFFFFDF8),
+                        Color(0xFFFFFDF8),
+                      ],
                     ),
                   ),
                 ),
@@ -555,82 +593,101 @@ class _AppmenuViewState extends State<AppmenuView>
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(height: kHeight * 0.07),
-            RepaintBoundary(
-              child: Obx(_profileInfoHeaderCard),
-            ),
-            SizedBox(height: kHeight * 0.02),
+            SizedBox(height: kHeight * .060),
+            RepaintBoundary(child: Obx(_profileInfoHeaderCard)),
+            SizedBox(height: kHeight * .006),
           ],
         );
 
       case 1:
         return RepaintBoundary(
           child: Obx(
-                () => Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: [
-                InkWell(
-                  onTap: () => Get.to(FollowinfList()),
-                  child: _statTile(
-                    '${_authTotalFollowing()}',
-                    'Following'.appTr,
+                () => Padding(
+              padding: EdgeInsets.symmetric(horizontal: kWeight * .045),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => Get.to(FollowinfList()),
+                      child: _statTile(
+                        '${_authTotalFollowing()}',
+                        'Follow'.appTr,
+                      ),
+                    ),
                   ),
-                ),
-                InkWell(
-                  onTap: () {
-                    Get.to(
-                      Follower(),
-                      transition: Transition.rightToLeft,
-                    );
-                  },
-                  child: _statTile(
-                    '${_authTotalFollowers()}',
-                    'Followers'.appTr,
+                  Expanded(
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () {
+                        Get.to(Follower(), transition: Transition.rightToLeft);
+                      },
+                      child: _statTile(
+                        '${_authTotalFollowers()}',
+                        'Fans'.appTr,
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                  Expanded(
+                    child: _statTile(
+                      '${_authTotalVisitors()}',
+                      'Visitor'.appTr,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
 
       case 2:
         return Padding(
-          padding: EdgeInsets.only(top: kHeight * 0.025),
+          padding: EdgeInsets.only(top: kHeight * .022),
           child: RepaintBoundary(
             child: Obx(() {
               final int userId = _currentAuthUserId();
 
-              final Map<String, dynamic>? cachedVip =
-              userId > 0 ? homeController.currentVipForUser(userId) : null;
+              final Map<String, dynamic>? cachedVip = userId > 0
+                  ? homeController.currentVipForUser(userId)
+                  : null;
 
               final Map<String, dynamic>? currentVip =
                   homeController.vipCurrentData.value;
 
-              final Map<String, dynamic>? vipData = cachedVip ??
-                  (_vipDataBelongsToUser(currentVip, userId)
-                      ? currentVip
-                      : null);
+              final Map<String, dynamic>? vipData =
+                  cachedVip ??
+                      (_vipDataBelongsToUser(currentVip, userId)
+                          ? currentVip
+                          : null);
 
-              final bool isLoading = userId > 0 &&
-                  (homeController.userCurrentVipLoadingIds.contains(userId) ||
-                      homeController.vipCurrentLoading.value);
+              final bool isLoading =
+                  userId > 0 &&
+                      (homeController.userCurrentVipLoadingIds.contains(userId) ||
+                          homeController.vipCurrentLoading.value);
 
               return InkWell(
+                borderRadius: BorderRadius.circular(20),
                 onTap: () {
-                  Get.to(
-                    SvipView(),
-                    transition: Transition.rightToLeft,
-                  );
+                  Get.to(SvipView(), transition: Transition.rightToLeft);
                 },
                 child: premiumVipValidityCard(
                   kHeight: kHeight,
                   kWeight: kWeight,
                   title: _vipMenuTitle(vipData),
-                  validity: _vipMenuValidity(
-                    vipData,
-                    loading: isLoading,
-                  ),
+                  validity: _vipMenuValidity(vipData, loading: isLoading),
                   imagePath: _vipMenuTitleImage(vipData),
+                  onTapVip: () {
+                    Get.to(
+                      SvipView(mode: VipSectionMode.vip),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
+                  onTapSvip: () {
+                    Get.to(
+                      SvipView(mode: VipSectionMode.svip),
+                      transition: Transition.rightToLeft,
+                    );
+                  },
                 ),
               );
             }),
@@ -639,28 +696,50 @@ class _AppmenuViewState extends State<AppmenuView>
 
       case 3:
         return Padding(
-          padding: EdgeInsets.only(top: kHeight * 0.02),
+          padding: EdgeInsets.fromLTRB(
+            kWeight * .03,
+            kHeight * .018,
+            kWeight * .03,
+            0,
+          ),
           child: RepaintBoundary(
-            child: Column(
-              children: [
-                Padding(
-                  padding:
-                  EdgeInsets.symmetric(horizontal: kWeight * 0.03),
-                  child: premiumShortcutMenu(
+            child: Container(
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(horizontal: 15),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(.97),
+                borderRadius: BorderRadius.circular(22),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(.020),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'General Tools'.appTr,
+                    style: GoogleFonts.poppins(
+                      color: const Color(0xFF26272B),
+                      fontSize: (kHeight * .020).clamp(16.0, 19.0).toDouble(),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  SizedBox(height: kHeight * .016),
+                  premiumShortcutMenu(
                     kHeight: kHeight,
                     kWeight: kWeight,
                   ),
-                ),
-                SizedBox(height: kHeight * 0.01),
-                Padding(
-                  padding:
-                  EdgeInsets.symmetric(horizontal: kWeight * 0.03),
-                  child: secoundPremiumShortcutMenu(
+                  SizedBox(height: kHeight * .006),
+                  secoundPremiumShortcutMenu(
                     kHeight: kHeight,
                     kWeight: kWeight,
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
@@ -668,234 +747,230 @@ class _AppmenuViewState extends State<AppmenuView>
       case 4:
         return Padding(
           padding: EdgeInsets.fromLTRB(
-            kWeight * 0.04,
-            kHeight * 0.025,
-            kWeight * 0.04,
+            kWeight * .03,
+            kHeight * .018,
+            kWeight * .03,
             0,
           ),
-          child: Column(
-            children: [
-              Obx(() {
-                final bool isReseller = authController
-                    .userProfile.value.user?.reselerType
-                    ?.toString()
-                    .toLowerCase() ==
-                    'reseller';
+          child: Container(
+            width: double.infinity,
+            padding: EdgeInsets.symmetric(
+              horizontal: kWeight * .018,
+              vertical: kHeight * .006,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(.98),
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(.018),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                Obx(() {
+                  final bool isReseller =
+                      authController.userProfile.value.user?.reselerType
+                          ?.toString()
+                          .toLowerCase() ==
+                          'reseller';
 
-                if (!isReseller) {
-                  return const SizedBox.shrink();
-                }
+                  if (!isReseller) {
+                    return const SizedBox.shrink();
+                  }
 
-                return _menuCardWithGap(
-                  castomCard(
-                    onPress: () {
+                  return _referenceMenuRow(
+                    text: 'Coin Seller'.appTr,
+                    image: 'assets/newaudio/coinSeller.png',
+                    onTap: () {
                       Get.to(
                         Reselerview(),
                         transition: Transition.rightToLeft,
                       );
                     },
-                    height: kHeight * 0.03,
-                    imageWidth: kHeight * 0.03,
-                    imagePadding: EdgeInsets.only(
-                      left: kWeight * 0.013,
-                      right: kWeight * 0.025,
-                    ),
-                    bacgroundColor: const Color(0xfffff0d4),
-                    text: 'Coin Seller'.appTr,
-                    image: 'assets/newaudio/coinSeller.png',
-                  ),
-                );
-              }),
-              _menuCardWithGap(
-                castomCard(
-                  onPress: homeController.showEarningData,
-                  height: kHeight * 0.031,
-                  imageWidth: kHeight * 0.031,
-                  imagePadding: EdgeInsets.only(
-                    left: kWeight * 0.015,
-                    right: kWeight * 0.025,
-                  ),
-                  bacgroundColor: const Color(0xfffff0d4),
-                  text: 'Earnings'.appTr,
-                  image: 'assets/images/earnings.png',
-                ),
-              ),
-              _menuCardWithGap(
-                castomCard(
-                  onPress: () {
+                  );
+                }),
+                // _referenceMenuRow(
+                //   text: 'Earnings'.appTr,
+                //   image: 'assets/images/earnings.png',
+                //   onTap: homeController.showEarningData,
+                // ),
+                _referenceMenuRow(
+                  text: 'Record'.appTr,
+                  image: 'assets/newaudio/record.png',
+                  onTap: () {
                     Get.to(
                       RecordView(),
                       transition: Transition.rightToLeft,
                     );
                   },
-                  height: kHeight * 0.032,
-                  imageWidth: kHeight * 0.032,
-                  imagePadding: EdgeInsets.only(
-                    left: kWeight * 0.01,
-                    right: kWeight * 0.025,
-                  ),
-                  bacgroundColor: const Color(0xfffff0d4),
-                  text: 'Record'.appTr,
-                  image: 'assets/newaudio/record.png',
                 ),
-              ),
-              _menuCardWithGap(
-                castomCard(
-                  onPress: () {
+                _referenceMenuRow(
+                  text: 'My Item'.appTr,
+                  image: 'assets/newaudio/myIteam.png',
+                  onTap: () {
                     Get.to(
                       Backpack(),
                       transition: Transition.rightToLeft,
                     );
                   },
-                  height: kHeight * 0.032,
-                  imageWidth: kHeight * 0.032,
-                  imagePadding: EdgeInsets.only(
-                    left: kWeight * 0.013,
-                    right: kWeight * 0.025,
-                  ),
-                  bacgroundColor: const Color(0xfffff0d4),
-                  text: 'My Item'.appTr,
-                  image: 'assets/newaudio/myIteam.png',
                 ),
-              ),
-              // Verified option Agency, Host, ebong normal user sobar jonno visible.
-              // Creator option-er Host restriction alada shortcut menu-te handle kora hocche.
-              _menuCardWithGap(
-                castomCard(
-                  onPress: homeController.showHostStatusList,
-                  height: kHeight * 0.033,
-                  imageWidth: kHeight * 0.033,
-                  imagePadding: EdgeInsets.only(
-                    left: kWeight * 0.01,
-                    right: kWeight * 0.025,
-                  ),
-                  bacgroundColor: const Color(0xfffff0d4),
+                _referenceMenuRow(
                   text: 'Verified'.appTr,
                   image: 'assets/newaudio/hostt.png',
+                  onTap: homeController.showHostStatusList,
                 ),
-              ),
-              Obx(() {
-                if (!_canShowRechargeInviteByCoins()) {
-                  return const SizedBox.shrink();
-                }
+                Obx(() {
+                  if (!_canShowRechargeInviteByCoins()) {
+                    return const SizedBox.shrink();
+                  }
 
-                return _menuCardWithGap(
-                  castomCard(
-                    onPress: () {
+                  return _referenceMenuRow(
+                    text: 'Invite'.appTr,
+                    image: 'assets/newaudio/inv.png',
+                    onTap: () {
                       Get.to(
                         InviteEarnPage(),
                         transition: Transition.rightToLeft,
                       );
                     },
-                    height: kHeight * 0.032,
-                    imageWidth: kHeight * 0.032,
-                    imagePadding: EdgeInsets.only(
-                      left: kWeight * 0.015,
-                      right: kWeight * 0.025,
-                    ),
-                    bacgroundColor: const Color(0xfffff0d4),
-                    text: 'Invite'.appTr,
-                    image: 'assets/newaudio/inv.png',
-                  ),
-                );
-              }),
-              _menuCardWithGap(
-                castomCard(
-                  onPress: () {
+                  );
+                }),
+                _referenceMenuRow(
+                  text: 'My Level'.appTr,
+                  image: 'assets/images/lv.png',
+                  onTap: () {
                     Get.to(
                       MyLevelPage(),
                       transition: Transition.rightToLeft,
                     );
                   },
-                  height: kHeight * 0.03,
-                  imageWidth: kHeight * 0.03,
-                  imagePadding: EdgeInsets.only(
-                    left: kWeight * 0.016,
-                    right: kWeight * 0.025,
-                  ),
-                  bacgroundColor: const Color(0xfffff0d4),
-                  text: 'My Level'.appTr,
-                  image: 'assets/images/lv.png',
                 ),
-              ),
-              _menuCardWithGap(
-                castomCard(
-                  onPress: () {
+                _referenceMenuRow(
+                  text: 'About Us'.appTr,
+                  image: 'assets/newaudio/about.png',
+                  onTap: () {
                     Get.to(
                       AboutUsPage(),
                       transition: Transition.rightToLeft,
                     );
                   },
-                  height: kHeight * 0.035,
-                  imageWidth: kHeight * 0.035,
-                  imagePadding: EdgeInsets.only(
-                    left: kWeight * 0.012,
-                    right: kWeight * 0.025,
-                  ),
-                  bacgroundColor: const Color(0xfffff0d4),
-                  text: 'About Us'.appTr,
-                  image: 'assets/newaudio/about.png',
                 ),
-              ),
-              RepaintBoundary(
-                child: castomCard(
-                  onPress: () {
+                _referenceMenuRow(
+                  text: 'Settings'.appTr,
+                  image: 'assets/newaudio/seettings.png',
+                  onTap: () {
                     Get.to(
                       SettingView(),
                       transition: Transition.rightToLeft,
                     );
                   },
-                  height: kHeight * 0.032,
-                  imageWidth: kHeight * 0.032,
-                  imagePadding: EdgeInsets.only(
-                    left: kWeight * 0.016,
-                    right: kWeight * 0.025,
-                  ),
-                  bacgroundColor: const Color(0xfffff0d4),
-                  text: 'Settings'.appTr,
-                  image: 'assets/newaudio/seettings.png',
+                  showDivider: false,
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
 
       default:
-        return SizedBox(height: kHeight * 0.07);
+        return SizedBox(height: kHeight * .07);
     }
   }
 
-  Widget _menuCardWithGap(Widget card) {
-    return RepaintBoundary(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          card,
-          SizedBox(height: kHeight * 0.02),
-        ],
-      ),
+  Widget _referenceMenuRow({
+    required String text,
+    required String image,
+    required VoidCallback onTap,
+    bool showDivider = true,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: SizedBox(
+              height: (kHeight * .060).clamp(49.0, 58.0).toDouble(),
+              child: Row(
+                children: [
+                  SizedBox(width: kWeight * .022),
+                  SizedBox(
+                    width: kHeight * .030,
+                    height: kHeight * .030,
+                    child: Image.asset(
+                      image,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.circle_outlined,
+                        color: Color(0xFF55575C),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: kWeight * .021),
+                  Expanded(
+                    child: Text(
+                      text,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(
+                        color: const Color(0xFF2B2C30),
+                        fontSize:
+                        (kHeight * .0162).clamp(13.0, 15.5).toDouble(),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    color: const Color(0xFFA2A4A8),
+                    size: kHeight * .020,
+                  ),
+                  SizedBox(width: kWeight * .024),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (showDivider)
+          Divider(
+            height: 1,
+            thickness: .55,
+            indent: kWeight * .078,
+            endIndent: kWeight * .018,
+            color: const Color(0xFFF1F1F1),
+          ),
+      ],
     );
   }
 
   Widget _statTile(String value, String label) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: EdgeInsets.symmetric(
+        horizontal: kWeight * .018,
+        vertical: kHeight * .008,
+      ),
       child: Column(
         children: [
           Text(
             value,
             style: GoogleFonts.poppins(
-              fontSize: Get.height * 0.02,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+              fontSize: (Get.height * .020).clamp(16.0, 20.0).toDouble(),
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF8B4D23),
             ),
           ),
+          SizedBox(height: kHeight * .002),
           Text(
             label,
             style: GoogleFonts.poppins(
-              fontSize: Get.height * 0.017,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
+              fontSize: (Get.height * .0155).clamp(12.0, 15.0).toDouble(),
+              fontWeight: FontWeight.w500,
+              color: const Color(0xFF6B4936),
             ),
           ),
         ],
@@ -938,10 +1013,7 @@ Widget premiumGlassCard({required Widget child, double radius = 28}) {
             const Color(0xff6A4CFF).withOpacity(0.20),
           ],
         ),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.55),
-          width: 1,
-        ),
+        border: Border.all(color: Colors.white.withOpacity(0.55), width: 1),
         boxShadow: [
           BoxShadow(
             color: const Color(0xff8A4CF7).withOpacity(0.24),
@@ -954,7 +1026,6 @@ Widget premiumGlassCard({required Widget child, double radius = 28}) {
     ),
   );
 }
-
 
 bool _isRegionalIndicator(int rune) {
   return rune >= 0x1F1E6 && rune <= 0x1F1FF;
@@ -1314,9 +1385,9 @@ Widget _countryFlagNameChip(String? country) {
       vertical: kHeight * 0.0028,
     ),
     decoration: BoxDecoration(
-      color: Colors.white.withOpacity(.16),
+      color: Colors.white.withOpacity(.58),
       borderRadius: BorderRadius.circular(30),
-      border: Border.all(color: Colors.white.withOpacity(.22), width: .7),
+      border: Border.all(color: const Color(0x33A77B4E), width: .7),
     ),
     child: Row(
       mainAxisSize: MainAxisSize.min,
@@ -1373,23 +1444,36 @@ Widget _baseBadgeItem(dynamic item) {
     return const SizedBox.shrink();
   }
 
-  return Container(
-    width: kWeight * 0.325,
-    height: kHeight * 0.050,
-    alignment: Alignment.center,
-    child: RepaintBoundary(
-      child: CachedNetworkImage(
-        imageUrl: imageUrl,
-        width: kWeight * 0.315,
-        height: kHeight * 0.085,
-        fit: BoxFit.cover,
+  return Material(
+    color: Colors.transparent,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () {
+        Get.to(
+              () => const BaseMedalView(),
+          transition: Transition.rightToLeft,
+          duration: const Duration(milliseconds: 220),
+        );
+      },
+      child: Container(
+        width: kWeight * 0.325,
+        height: kHeight * 0.050,
         alignment: Alignment.center,
-        fadeInDuration: Duration.zero,
-        fadeOutDuration: Duration.zero,
-        placeholderFadeInDuration: Duration.zero,
-        memCacheWidth: 300,
-        placeholder: (context, url) => const SizedBox.shrink(),
-        errorWidget: (context, url, error) => const SizedBox.shrink(),
+        child: RepaintBoundary(
+          child: CachedNetworkImage(
+            imageUrl: imageUrl,
+            width: kWeight * 0.315,
+            height: kHeight * 0.085,
+            fit: BoxFit.cover,
+            alignment: Alignment.center,
+            fadeInDuration: Duration.zero,
+            fadeOutDuration: Duration.zero,
+            placeholderFadeInDuration: Duration.zero,
+            memCacheWidth: 300,
+            placeholder: (context, url) => const SizedBox.shrink(),
+            errorWidget: (context, url, error) => const SizedBox.shrink(),
+          ),
+        ),
       ),
     ),
   );
@@ -1410,57 +1494,66 @@ Widget _profileInfoHeaderCard() {
   final frameUrl = '$baseUrl/$framePath';
 
   final name = user?.name ?? 'User'.appTr;
-  final shortName = name.length > 12 ? '${name.substring(0, 12)}..' : name;
+  final shortName = name.length > 16 ? '${name.substring(0, 16)}..' : name;
 
   return InkWell(
+    borderRadius: BorderRadius.circular(18),
     onTap: () => Get.to(MyProfileView()),
     child: Container(
       width: double.infinity,
-      constraints: BoxConstraints(minHeight: kHeight * 0.12),
-      padding: EdgeInsets.symmetric(
-        horizontal: kWeight * 0.025,
-        vertical: kHeight * 0.006,
+      constraints: BoxConstraints(minHeight: kHeight * .135),
+      padding: EdgeInsets.fromLTRB(
+        kWeight * .045,
+        kHeight * .006,
+        kWeight * .035,
+        kHeight * .006,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           SizedBox(
-            height: kHeight * 0.13,
-            width: kHeight * 0.13,
+            height: kHeight * .125,
+            width: kHeight * .125,
             child: Stack(
               alignment: Alignment.center,
               children: [
                 Container(
-                  height: kHeight * 0.085,
-                  width: kHeight * 0.085,
-                  decoration: const BoxDecoration(
+                  height: kHeight * .086,
+                  width: kHeight * .086,
+                  decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white,
+                    color: Colors.white.withOpacity(.96),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(.95),
+                      width: 2,
+                    ),
                   ),
-                  child: ClipOval(
-                    child: CachedNetworkImage(
-                      imageUrl: ImageHelper.getImageUrl(profileImage),
-                      fit: BoxFit.cover,
-                      fadeInDuration: Duration.zero,
-                      fadeOutDuration: Duration.zero,
-                      placeholderFadeInDuration: Duration.zero,
-                      memCacheWidth: 180,
-                      memCacheHeight: 180,
-                      placeholder: (c, u) => const SizedBox.shrink(),
-                      errorWidget: (c, u, e) => const Icon(
-                        Icons.person,
-                        size: 34,
-                        color: Colors.grey,
-                      ),
+                  clipBehavior: Clip.antiAlias,
+                  child: CachedNetworkImage(
+                    imageUrl: ImageHelper.getImageUrl(profileImage),
+                    fit: BoxFit.cover,
+                    fadeInDuration: Duration.zero,
+                    fadeOutDuration: Duration.zero,
+                    placeholderFadeInDuration: Duration.zero,
+                    memCacheWidth: 180,
+                    memCacheHeight: 180,
+                    placeholder: (c, u) => const SizedBox.shrink(),
+                    errorWidget: (c, u, e) => const Icon(
+                      Icons.person,
+                      size: 36,
+                      color: Color(0xFFB7B7B7),
                     ),
                   ),
                 ),
                 if (hasUserFrame)
                   SizedBox(
-                    height: kHeight * 0.15,
-                    width: kHeight * 0.15,
+                    height: kHeight * .145,
+                    width: kHeight * .145,
                     child: framePath.toLowerCase().endsWith('.svga')
-                        ? SVGAEasyPlayer(resUrl: frameUrl, fit: BoxFit.cover)
+                        ? SVGAEasyPlayer(
+                      resUrl: frameUrl,
+                      fit: BoxFit.cover,
+                    )
                         : CachedNetworkImage(
                       imageUrl: frameUrl,
                       fit: BoxFit.cover,
@@ -1470,15 +1563,14 @@ Widget _profileInfoHeaderCard() {
                       memCacheWidth: 320,
                       memCacheHeight: 320,
                       placeholder: (c, u) => const SizedBox.shrink(),
-                      errorWidget: (c, u, e) => const SizedBox.shrink(),
+                      errorWidget: (c, u, e) =>
+                      const SizedBox.shrink(),
                     ),
                   ),
               ],
             ),
           ),
-
-          SizedBox(width: kWeight * 0.018),
-
+          SizedBox(width: kWeight * .018),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1486,422 +1578,124 @@ Widget _profileInfoHeaderCard() {
               children: [
                 Row(
                   children: [
-                    GradientShimmerTextaudio(
-                      text: shortName.toUpperCase(),
-                      fontSize: kHeight * 0.022,
-                      fontWeight: FontWeight.w500,
+                    Flexible(
+                      child: Text(
+                        shortName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(
+                          color: const Color(0xFF27282C),
+                          fontSize: (kHeight * .0215).clamp(17.0, 21.0).toDouble(),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
-                    SizedBox(width: kWeight * 0.018),
+                    SizedBox(width: kWeight * .012),
                     Container(
-                      padding: EdgeInsets.all(kHeight * 0.0045),
+                      width: kHeight * .024,
+                      height: kHeight * .024,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(20),
-                        color:
-                        user?.gender?.toString().toLowerCase() == 'female'
-                            ? const Color(0xffff5fb7)
-                            : const Color(0xff31b6ff),
+                        shape: BoxShape.circle,
+                        color: user?.gender?.toString().toLowerCase() == 'female'
+                            ? const Color(0xFFFF75B8)
+                            : const Color(0xFF62B8FF),
                       ),
                       child: Icon(
                         user?.gender?.toString().toLowerCase() == 'female'
                             ? Icons.female
                             : Icons.male,
                         color: Colors.white,
-                        size: kHeight * 0.017,
+                        size: kHeight * .0155,
                       ),
                     ),
-                    SizedBox(width: kWeight * 0.018),
+                    SizedBox(width: kWeight * .010),
                     _countryFlagNameChip(user?.country?.toString()),
                   ],
                 ),
-
-                SizedBox(height: kHeight * 0.007),
-
+                SizedBox(height: kHeight * .006),
                 Row(
                   children: [
-                    authController.userProfile.value.user?.uniqueId == null
-                        ? Row(
-                      children: [
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: kWeight * 0.011,
-                            vertical: kHeight * 0.002,
-                          ),
-                          decoration: BoxDecoration(
-                            color: kAppColor2,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            'ID'.appTr,
-                            style: GoogleFonts.poppins(
-                              fontSize: kHeight * 0.014,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: kWeight * .010,
+                        vertical: kHeight * .0015,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD3A452),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        'ID'.appTr,
+                        style: GoogleFonts.poppins(
+                          fontSize: (kHeight * .0115).clamp(9.0, 11.0).toDouble(),
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
                         ),
-                        SizedBox(width: kWeight * 0.012),
-                        Text(
-                          '${user?.userId ?? ''}',
-                          style: GoogleFonts.poppins(
-                            fontSize: kHeight * 0.0145,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                        SizedBox(width: kWeight * 0.012),
-                        GestureDetector(
-                          onTap: () {
-                            Clipboard.setData(
-                              ClipboardData(
-                                text: '${user?.userId ?? ''}',
-                              ),
-                            );
-                            Fluttertoast.showToast(
-                              msg: ("ID copied").appTr,
-                              toastLength: Toast.LENGTH_SHORT,
-                              gravity: ToastGravity.BOTTOM,
-                              backgroundColor: Colors.black87,
-                              textColor: Colors.white,
-                              fontSize: 13.0,
-                            );
-                          },
-                          child: Icon(
-                            Icons.copy,
-                            size: kHeight * 0.016,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    )
-                        : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: kWeight * 0.011,
-                            vertical: kHeight * 0.002,
-                          ),
-                          decoration: BoxDecoration(
-                            color: kAppColor2,
-                            borderRadius: BorderRadius.circular(4),
-                            boxShadow: [
-                              BoxShadow(
-                                color: kAppColor2.withOpacity(.45),
-                                blurRadius: 10,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Text(
-                            'ID'.appTr,
-                            style: GoogleFonts.poppins(
-                              fontSize: kHeight * 0.016,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-
-                        SizedBox(width: kWeight * 0.015),
-
-                        ShimmerUserId1(
-                          user: user,
-                          kHeight: kHeight,
-                          kWeight: kWeight,
-                        ),
-
-                        SizedBox(width: kWeight * 0.015),
-
-                        GestureDetector(
-                          onTap: () {
-                            Clipboard.setData(
-                              ClipboardData(
-                                text:
-                                '${authController.userProfile.value.user?.userId ?? ''}',
-                              ),
-                            );
-                          },
-                          child: Icon(
-                            Icons.copy,
-                            size: kHeight * 0.019,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-
-                    SizedBox(width: kWeight * 0.06),
+                    SizedBox(width: kWeight * .010),
+                    Flexible(
+                      child: Text(
+                        '${user?.uniqueId ?? user?.userId ?? ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(
+                          fontSize:
+                          (kHeight * .014).clamp(11.0, 13.5).toDouble(),
+                          fontWeight: FontWeight.w500,
+                          color: const Color(0xFFFFEA02),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: kWeight * .008),
+                    GestureDetector(
+                      onTap: () {
+                        Clipboard.setData(
+                          ClipboardData(
+                            text:
+                            '${authController.userProfile.value.user?.userId ?? ''}',
+                          ),
+                        );
+                        Fluttertoast.showToast(
+                          msg: ('ID copied').appTr,
+                          toastLength: Toast.LENGTH_SHORT,
+                          gravity: ToastGravity.BOTTOM,
+                          backgroundColor: Colors.black87,
+                          textColor: Colors.white,
+                          fontSize: 13,
+                        );
+                      },
+                      child: Icon(
+                        Icons.copy_rounded,
+                        size: kHeight * .016,
+                        color: const Color(0xFFFFEA02),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: kHeight * .005),
+                Row(
+                  children: [
+                    SizedBox(width: kWeight * .047),
                     LevelFrame(
                       level: '${authController.userProfile.value.user!.level}',
                     ),
-                    SizedBox(width: kWeight * 0.03),
-                    _currentVipTitleImageBadge(),
+                    SizedBox(width: kWeight * .014),
+                    Flexible(child: _currentVipTitleImageBadge()),
                   ],
                 ),
-
-                SizedBox(height: kHeight * 0.007),
-
+                SizedBox(height: kHeight * .003),
                 _profileBaseBadgesRow(),
               ],
             ),
           ),
-
-
+          Icon(
+            Icons.arrow_forward_ios_rounded,
+            color: const Color(0xFFFFEA02),
+            size: kHeight * .026,
+          ),
         ],
       ),
     ),
   );
-}
-class _AnimatedLoveWaveBackground extends StatelessWidget {
-  const _AnimatedLoveWaveBackground();
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRect(
-      child: Stack(
-        children: [
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF190522),
-                  Color(0xFF3B072F),
-                  Color(0xFF62083E),
-                  Color(0xFF8E083B),
-                  Color(0xFFCC0534),
-                ],
-                stops: [0.0, 0.26, 0.55, 0.78, 1.0],
-              ),
-            ),
-          ),
-          const Positioned.fill(
-            child: CustomPaint(
-              painter: _LoveWavePainter(progress: 0),
-            ),
-          ),
-          Positioned(
-            top: 70,
-            left: 10,
-            child: _blurGlow(
-              size: 130,
-              colors: const [
-                Color(0x45FFFFFF),
-                Color(0x00FFFFFF),
-              ],
-            ),
-          ),
-          Positioned(
-            top: 220,
-            right: 20,
-            child: _blurGlow(
-              size: 110,
-              colors: const [
-                Color(0x38FFD1E0),
-                Color(0x00FFD1E0),
-              ],
-            ),
-          ),
-          Positioned(
-            bottom: 180,
-            right: 60,
-            child: _blurGlow(
-              size: 90,
-              colors: const [
-                Color(0x25FFFFFF),
-                Color(0x00FFFFFF),
-              ],
-            ),
-          ),
-          const _StaticLove(leftFactor: 0.10, topFactor: 0.78, size: 16),
-          const _StaticLove(leftFactor: 0.22, topFactor: 0.66, size: 13),
-          const _StaticLove(leftFactor: 0.31, topFactor: 0.84, size: 18),
-          const _StaticLove(leftFactor: 0.46, topFactor: 0.74, size: 15),
-          const _StaticLove(leftFactor: 0.58, topFactor: 0.62, size: 12),
-          const _StaticLove(leftFactor: 0.70, topFactor: 0.88, size: 17),
-          const _StaticLove(leftFactor: 0.82, topFactor: 0.72, size: 14),
-          const _StaticLove(leftFactor: 0.90, topFactor: 0.58, size: 11),
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.white.withOpacity(0.04),
-                    Colors.transparent,
-                    Colors.black.withOpacity(0.16),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            top: -50,
-            right: -30,
-            child: _blurGlow(
-              size: 170,
-              colors: const [
-                Color(0x55FF8FB1),
-                Color(0x00FF8FB1),
-              ],
-            ),
-          ),
-          Positioned(
-            bottom: 90,
-            left: -50,
-            child: _blurGlow(
-              size: 180,
-              colors: const [
-                Color(0x40D35B89),
-                Color(0x00D35B89),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-Widget _blurGlow({required double size, required List<Color> colors}) {
-  return IgnorePointer(
-    child: RepaintBoundary(
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(colors: colors),
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-class _StaticLove extends StatelessWidget {
-  final double leftFactor;
-  final double topFactor;
-  final double size;
-
-  const _StaticLove({
-    required this.leftFactor,
-    required this.topFactor,
-    required this.size,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final media = MediaQuery.of(context).size;
-
-    return Positioned(
-      left: media.width * leftFactor,
-      top: media.height * topFactor,
-      child: IgnorePointer(
-        child: Container(
-          padding: EdgeInsets.all(size * 0.32),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.white.withOpacity(0.06),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.10),
-              width: 0.7,
-            ),
-          ),
-          child: Icon(
-            Icons.favorite_rounded,
-            size: size,
-            color: const Color(0xFFFFD3E0).withOpacity(0.32),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _LoveWavePainter extends CustomPainter {
-  final double progress;
-
-  const _LoveWavePainter({required this.progress});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    _drawWave(
-      canvas,
-      size,
-      yBase: size.height * 0.73,
-      amplitude: 16,
-      frequency: 1.65,
-      shift: progress * math.pi * 2,
-      colors: const [
-        Color(0x2BFFFFFF),
-        Color(0x0AFFFFFF),
-      ],
-    );
-
-    _drawWave(
-      canvas,
-      size,
-      yBase: size.height * 0.80,
-      amplitude: 22,
-      frequency: 1.28,
-      shift: -(progress * math.pi * 2 * 1.2),
-      colors: const [
-        Color(0x30FFB7D1),
-        Color(0x0FCC0534),
-      ],
-    );
-
-    _drawWave(
-      canvas,
-      size,
-      yBase: size.height * 0.88,
-      amplitude: 28,
-      frequency: 1.05,
-      shift: progress * math.pi * 2 * 0.8,
-      colors: const [
-        Color(0x42FFFFFF),
-        Color(0x14FFFFFF),
-      ],
-    );
-  }
-
-  void _drawWave(
-      Canvas canvas,
-      Size size, {
-        required double yBase,
-        required double amplitude,
-        required double frequency,
-        required double shift,
-        required List<Color> colors,
-      }) {
-    final path = Path()..moveTo(0, yBase);
-    for (double x = 0; x <= size.width; x++) {
-      final y = yBase +
-          math.sin((x / size.width * frequency * math.pi * 2) + shift) *
-              amplitude;
-      path.lineTo(x, y);
-    }
-    path
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-
-    final paint = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: colors,
-      ).createShader(Rect.fromLTWH(0, yBase - amplitude, size.width, size.height));
-
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _LoveWavePainter oldDelegate) {
-    return false;
-  }
 }

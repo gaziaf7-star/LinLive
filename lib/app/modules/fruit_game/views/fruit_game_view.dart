@@ -26,6 +26,7 @@ class FruitGameView extends StatefulWidget {
 
 class _FruitGameViewState extends State<FruitGameView> {
   StreamController<int> controller = StreamController<int>.broadcast();
+  final List<Worker> _controllerWorkers = <Worker>[];
   final fruitController = Get.put(FruitGameController());
   AuthController authController = Get.find();
   List items = [];
@@ -78,17 +79,17 @@ class _FruitGameViewState extends State<FruitGameView> {
   // Controller observers will handle WebSocket events
   void setupControllerObservers() {
     // Listen to winner number changes
-    ever(fruitController.winnerNumber, (winnerNum) {
+    _controllerWorkers.add(ever(fruitController.winnerNumber, (winnerNum) {
       controller.add(winnerNum);
       if (mounted) {
         setState(() {});
       }
-    });
+    }));
 
     // Listen to remaining time changes
     DateTime? lastResetTime; // Class এর top এ declare করুন
 
-    ever(fruitController.remainingTime, (int time) {
+    _controllerWorkers.add(ever(fruitController.remainingTime, (int time) {
       switch (time) {
         case 20: // New round start (Backend থেকে automatically আসবে)
           if (lastResetTime != null) {
@@ -132,22 +133,22 @@ class _FruitGameViewState extends State<FruitGameView> {
           print("⏱️ remainingTime: $time"); // সব time value দেখতে পারবেন
           break;
       }
-    });
+    }));
     // Listen to bet amounts changes
-    ever(fruitController.amount1, (amount) {
+    _controllerWorkers.add(ever(fruitController.amount1, (amount) {
       if (mounted) setState(() {});
-    });
-    ever(fruitController.amount2, (amount) {
+    }));
+    _controllerWorkers.add(ever(fruitController.amount2, (amount) {
       if (mounted) setState(() {});
-    });
-    ever(fruitController.amount3, (amount) {
+    }));
+    _controllerWorkers.add(ever(fruitController.amount3, (amount) {
       if (mounted) setState(() {});
-    });
+    }));
 
     // Listen to users list changes
-    ever(fruitController.activeUsers, (usersList) {
+    _controllerWorkers.add(ever(fruitController.activeUsers, (usersList) {
       if (mounted) setState(() {});
-    });
+    }));
   }
 
   final AudioPlayer audioPlayer = AudioPlayer();
@@ -178,6 +179,10 @@ class _FruitGameViewState extends State<FruitGameView> {
 
   @override
   void dispose() {
+    for (final Worker worker in _controllerWorkers) {
+      worker.dispose();
+    }
+    _controllerWorkers.clear();
     fruitController.stopBgm();
     // Leave fruit game via API
     fruitController.leaveGame(

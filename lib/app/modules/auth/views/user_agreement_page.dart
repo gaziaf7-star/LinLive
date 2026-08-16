@@ -38,7 +38,7 @@ class UserAgreementPage extends StatelessWidget {
             children: <Widget>[
               _centerTitle(('$_appName – TERMS OF SERVICE').appTr),
               const SizedBox(height: 8),
-              _centerSubTitle(('Last Updated: August 10, 2026').appTr),
+              _centerSubTitle(('Last Updated: August 16, 2026').appTr),
               const SizedBox(height: 20),
               _paragraph(
                 ('These Terms of Service ("Terms") govern access to and use of the $_appName mobile application, website, and related services provided by $_operator. By creating an account or using the service, you agree to these Terms, our Privacy Policy, and our Community Guidelines.').appTr,

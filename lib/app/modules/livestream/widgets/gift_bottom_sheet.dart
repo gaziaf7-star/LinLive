@@ -8,7 +8,8 @@ import 'package:flutter_svga_easyplayer/flutter_svga_easyplayer.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:meetlivepro/app/modules/home/views/widgets/tabbarshemmer.dart' hide kAppColor2, kAppColor1;
+import 'package:meetlivepro/app/modules/home/views/widgets/tabbarshemmer.dart'
+    hide kAppColor2, kAppColor1;
 
 import '../../../../constants/color_constants.dart';
 import '../../../../constants/image_helper.dart';
@@ -16,8 +17,10 @@ import '../../../../constants/layout_constant.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../controllers/livestream_controller.dart';
 import '../socket/websocket_controller.dart';
+import 'vip_required_prompt.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
+
 /// Play Store safe mode.
 /// true = Lucky gift / cashback / recharge text hidden.
 /// false = internal/private build-e old lucky/recharge UI show korte parben.
@@ -44,6 +47,22 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
 
   final RxList<int> selectedLocalReceiverIds = <int>[].obs;
   final Rxn<Map<String, dynamic>> selectedGift = Rxn<Map<String, dynamic>>();
+
+  /// ✅ FIX (first send of any gift takes 8-10s, repeat sends are instant):
+  /// SVGAEasyPlayer's useCache genuinely caches an SVGA after it has been
+  /// loaded once — confirmed by the second send of the same gift always
+  /// being instant — but nothing ever loaded a gift's SVGA before the user
+  /// actually tapped send. _precacheGiftImages() explicitly skips SVGA URLs
+  /// (see `_isSvga(image)` below), so every gift's animated version paid
+  /// its full first-time network fetch + decode cost right at send time,
+  /// with the gift-display safety-timer's ~8s floor covering that wait.
+  /// These two fields drive an invisible, zero-size SVGAEasyPlayer per
+  /// not-yet-cached gift (see _svgaPreloadLayer/_preloadGiftSvgaAnimations)
+  /// so the same caching that already works for a second send happens
+  /// quietly in the background as soon as the gift icon/panel is reachable,
+  /// well before the user ever taps send.
+  final Set<String> _preloadedGiftSvgaUrls = <String>{};
+  final List<String> _activeSvgaPreloadUrls = <String>[];
 
   /// Send amount / quantity UI value.
   /// Custom এ user number দিলে Send button এর left পাশে show হবে।
@@ -86,6 +105,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
       _syncDefaultReceiver();
       livestreamController.selectedGiftCategoryIndex.value = -1;
       _precacheGiftImages();
+      _preloadGiftSvgaAnimations();
     });
   }
 
@@ -97,6 +117,75 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
       if (image.isEmpty || _isSvga(image)) continue;
       precacheImage(CachedNetworkImageProvider(image), context);
     }
+  }
+
+  /// ✅ FIX: companion to _precacheGiftImages, for the SVGA gifts that
+  /// function explicitly skips. Warms SVGAEasyPlayer's own cache for the
+  /// most likely-to-be-sent gifts (first 10, matching typical "popular
+  /// gifts first" catalog ordering) by quietly mounting an invisible,
+  /// zero-size player for each one. Capped at 10 concurrent so this does
+  /// not itself create a burst of simultaneous network fetches. Already-
+  /// preloaded URLs are skipped so reopening the panel doesn't re-trigger
+  /// finished downloads.
+  void _preloadGiftSvgaAnimations() {
+    final gifts = _allGiftList().take(10).toList();
+    final List<String> toPreload = [];
+
+    for (final gift in gifts) {
+      final image = _giftImage(gift);
+      if (image.isEmpty || !_isSvga(image)) continue;
+      if (_preloadedGiftSvgaUrls.contains(image)) continue;
+      toPreload.add(image);
+    }
+
+    if (toPreload.isEmpty || !mounted) return;
+
+    setState(() {
+      _activeSvgaPreloadUrls
+        ..clear()
+        ..addAll(toPreload);
+    });
+  }
+
+  /// Called by each invisible preload player once its SVGA has actually
+  /// finished loading and playing through once — at that point
+  /// SVGAEasyPlayer's own cache already holds the decoded file, so it is
+  /// safe to unmount this warm-up instance.
+  void _onGiftSvgaPreloaded(String url) {
+    _preloadedGiftSvgaUrls.add(url);
+    if (!mounted) return;
+    setState(() {
+      _activeSvgaPreloadUrls.remove(url);
+    });
+  }
+
+  /// Zero-size, non-interactive SVGA players whose only purpose is to
+  /// trigger SVGAEasyPlayer's own network fetch + decode + cache for gifts
+  /// the user has not sent yet, so the first real send is as fast as a
+  /// repeat send already is today.
+  Widget _svgaPreloadLayer() {
+    if (_activeSvgaPreloadUrls.isEmpty) return const SizedBox.shrink();
+
+    return Offstage(
+      offstage: true,
+      child: SizedBox(
+        width: 1,
+        height: 1,
+        child: Stack(
+          children: _activeSvgaPreloadUrls
+              .map(
+                (url) => SVGAEasyPlayer(
+              key: ValueKey('gift_svga_preload_$url'),
+              resUrl: url,
+              loops: 0,
+              useCache: true,
+              onFinished: () => _onGiftSvgaPreloaded(url),
+            ),
+          )
+              .toList(growable: false),
+        ),
+      ),
+    );
   }
 
   Map<String, dynamic> _asMap(dynamic value) {
@@ -177,12 +266,26 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
 
     return category.contains('lucky') ||
         pretty.contains('lucky') ||
-        (backCoin != null && backCoin.toString() != 'null' && backCoin.toString() != '0') ||
+        (backCoin != null &&
+            backCoin.toString() != 'null' &&
+            backCoin.toString() != '0') ||
         (luckyRatio != null && luckyRatio.toString() != 'null') ||
         (luckyCoin != null && luckyCoin.toString() != 'null') ||
         isLucky == true ||
         isLucky.toString() == '1';
   }
+
+  bool _isVipGift(Map<String, dynamic> gift) {
+    final category = _categoryName(gift).toLowerCase();
+    final raw = gift['is_vip'] ?? gift['vip_only'] ?? gift['requires_vip'];
+    return category.contains('vip') ||
+        raw == true ||
+        raw == 1 ||
+        raw?.toString().toLowerCase() == 'true' ||
+        raw?.toString() == '1';
+  }
+
+  bool get _canUseVipGifts => livestreamController.currentVipPrivileges.vipGift;
 
   bool _shouldShowGift(Map<String, dynamic> gift) {
     final bool isLucky = _isLuckyGift(gift);
@@ -246,8 +349,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
       'Face',
       'Love',
       'Funny',
-      if (!kPlayStoreSafeMode && _canShowLuckyGift)
-        'Lucky',
+      if (!kPlayStoreSafeMode && _canShowLuckyGift) 'Lucky',
       ('Custom').appTr,
       ('CP').appTr,
       ('Country').appTr,
@@ -318,11 +420,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
 
       added.add(id.toString());
 
-      receivers.add({
-        ...user,
-        'id': id,
-        'seat_no': seatNo,
-      });
+      receivers.add({...user, 'id': id, 'seat_no': seatNo});
     }
 
     final host = _hostUser();
@@ -337,8 +435,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
           .toString()
           .toLowerCase();
 
-      final int seatNo =
-          int.tryParse('${call['seat_no'] ?? 0}') ?? 0;
+      final int seatNo = int.tryParse('${call['seat_no'] ?? 0}') ?? 0;
 
       if (seatNo <= 0 ||
           !const <String>{
@@ -404,14 +501,22 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
       return;
     }
 
+    if (_isVipGift(gift) && !_canUseVipGifts) {
+      await showVipRequired(('VIP Gift').appTr);
+      return;
+    }
+
     if (_isLuckyGift(gift) && (kPlayStoreSafeMode || !_canShowLuckyGift)) {
-      Fluttertoast.showToast(msg: ('This gift is not available right now').appTr);
+      Fluttertoast.showToast(
+        msg: ('This gift is not available right now').appTr,
+      );
       selectedGift.value = null;
       return;
     }
 
     final giftId = int.tryParse('${gift['id'] ?? 0}') ?? 0;
-    final giftPrice = int.tryParse('${gift['coin'] ?? gift['price'] ?? 0}') ?? 0;
+    final giftPrice =
+        int.tryParse('${gift['coin'] ?? gift['price'] ?? 0}') ?? 0;
 
     if (giftId == 0) {
       Fluttertoast.showToast(msg: ('Gift not found').appTr);
@@ -429,7 +534,8 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     if (giftPrice > 0 && myCoins < giftPrice) {
       Fluttertoast.showToast(
         msg: kPlayStoreSafeMode
-            ? ('Insufficient balance').appTr: ('Insufficient balance. Please recharge!').appTr,
+            ? ('Insufficient balance').appTr
+            : ('Insufficient balance. Please recharge!').appTr,
         backgroundColor: Colors.white,
         textColor: Colors.red,
         gravity: ToastGravity.BOTTOM,
@@ -447,8 +553,8 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     /// Calling the async method here executes its optimistic/local animation
     /// synchronously until the first network await. Therefore the gift is
     /// already queued before the bottom sheet closing animation starts.
-    final Future<Map<String, dynamic>?> sendFuture =
-    livestreamController.tryToSendGift(
+    final Future<Map<String, dynamic>?> sendFuture = livestreamController
+        .tryToSendGift(
       receiverId: receivers.first,
       giftId: giftId,
       giftPrice: giftPrice,
@@ -475,7 +581,6 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     );
   }
 
-
   void _syncDefaultReceiver() {
     final receivers = _receiverList();
     final ids = _allReceiverIds(receivers);
@@ -497,11 +602,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
       gradient: const LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [
-          Color(0xff07142d),
-          Color(0xff07122a),
-          Color(0xff061126),
-        ],
+        colors: [Color(0xff07142d), Color(0xff07122a), Color(0xff061126)],
       ),
       boxShadow: [
         BoxShadow(
@@ -596,7 +697,8 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                         : CachedNetworkImage(
                       imageUrl: image,
                       fit: BoxFit.cover,
-                      placeholder: (_, __) => Container(color: Colors.white10),
+                      placeholder: (_, __) =>
+                          Container(color: Colors.white10),
                       errorWidget: (_, __, ___) => Container(
                         color: Colors.white12,
                         child: Icon(
@@ -614,18 +716,30 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
                   height: isSmallScreen ? 17 : 19,
-                  constraints: BoxConstraints(minWidth: isSmallScreen ? 17 : 19),
+                  constraints: BoxConstraints(
+                    minWidth: isSmallScreen ? 17 : 19,
+                  ),
                   padding: const EdgeInsets.symmetric(horizontal: 5),
                   decoration: BoxDecoration(
-                    shape: seatNo == null ? BoxShape.circle : BoxShape.rectangle,
-                    borderRadius: seatNo == null ? null : BorderRadius.circular(30),
+                    shape: seatNo == null
+                        ? BoxShape.circle
+                        : BoxShape.rectangle,
+                    borderRadius: seatNo == null
+                        ? null
+                        : BorderRadius.circular(30),
                     gradient: selected
                         ? const LinearGradient(colors: [kAppColor2, kAppColor1])
-                        : const LinearGradient(colors: [Color(0xff2ddcff), Color(0xff5c7cff)]),
-                    border: Border.all(color: Colors.white.withOpacity(.55), width: 1),
+                        : const LinearGradient(
+                      colors: [Color(0xff2ddcff), Color(0xff5c7cff)],
+                    ),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(.55),
+                      width: 1,
+                    ),
                     boxShadow: [
                       BoxShadow(
-                        color: (selected ? kAppColor2 : const Color(0xff3aa8ff)).withOpacity(.40),
+                        color: (selected ? kAppColor2 : const Color(0xff3aa8ff))
+                            .withOpacity(.40),
                         blurRadius: 8,
                       ),
                     ],
@@ -663,8 +777,10 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
 
-
-        padding: EdgeInsets.symmetric(horizontal: kWeight*0.02,vertical: kHeight*0.005),
+        padding: EdgeInsets.symmetric(
+          horizontal: kWeight * 0.02,
+          vertical: kHeight * 0.005,
+        ),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(100),
           gradient: active
@@ -701,15 +817,15 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: Colors.white, size: kHeight*0.02),
-            SizedBox(width:kWeight*0.005),
+            Icon(icon, color: Colors.white, size: kHeight * 0.02),
+            SizedBox(width: kWeight * 0.005),
             Text(
               text,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: GoogleFonts.poppins(
                 color: Colors.white,
-                fontSize: kHeight*.016,
+                fontSize: kHeight * .016,
                 fontWeight: FontWeight.w500,
                 height: 1,
               ),
@@ -724,7 +840,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     final ids = _allReceiverIds(receivers);
 
     return Padding(
-      padding: EdgeInsetsGeometry.symmetric(horizontal: kWeight*0.02),
+      padding: EdgeInsetsGeometry.symmetric(horizontal: kWeight * 0.02),
       child: Row(
         children: [
           Expanded(
@@ -743,16 +859,18 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                 physics: const BouncingScrollPhysics(),
                 scrollDirection: Axis.horizontal,
                 itemCount: receivers.length,
-                separatorBuilder: (_, __) => SizedBox(width: isSmallScreen ? 7 : 10),
+                separatorBuilder: (_, __) =>
+                    SizedBox(width: isSmallScreen ? 7 : 10),
                 itemBuilder: (_, index) => _avatar(receivers[index]),
               ),
             ),
           ),
           SizedBox(width: isSmallScreen ? 8 : 13),
           Obx(() {
-            final allSelected = ids.isNotEmpty &&
-                selectedLocalReceiverIds.length == ids.length &&
-                ids.every((id) => selectedLocalReceiverIds.contains(id));
+            final allSelected =
+                ids.isNotEmpty &&
+                    selectedLocalReceiverIds.length == ids.length &&
+                    ids.every((id) => selectedLocalReceiverIds.contains(id));
 
             return _premiumPill(
               icon: Icons.mic_rounded,
@@ -774,7 +892,6 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
               },
             );
           }),
-
         ],
       ),
     );
@@ -783,7 +900,8 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
   Widget _categoryTabs() {
     return Obx(() {
       final categories = _giftCategories();
-      final selectedIndex = livestreamController.selectedGiftCategoryIndex.value;
+      final selectedIndex =
+          livestreamController.selectedGiftCategoryIndex.value;
 
       if (categories.isEmpty) return const SizedBox.shrink();
 
@@ -796,9 +914,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
           0,
         ),
         decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(color: Colors.white.withOpacity(.08)),
-          ),
+          border: Border(top: BorderSide(color: Colors.white.withOpacity(.08))),
         ),
         child: Row(
           children: [
@@ -812,7 +928,8 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                   return GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: () {
-                      livestreamController.selectedGiftCategoryIndex.value = index;
+                      livestreamController.selectedGiftCategoryIndex.value =
+                          index;
                       selectedGift.value = null;
                     },
                     child: AnimatedContainer(
@@ -825,8 +942,10 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                           Text(
                             categories[index],
                             style: GoogleFonts.roboto(
-                              color: selected ? kAppColor2 : Colors.white.withOpacity(.68),
-                              fontSize: kHeight*0.018,
+                              color: selected
+                                  ? kAppColor2
+                                  : Colors.white.withOpacity(.68),
+                              fontSize: kHeight * 0.018,
                               fontWeight: FontWeight.w500,
                               height: 1,
                               shadows: selected
@@ -846,7 +965,9 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                             width: selected ? 24 : 0,
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(50),
-                              gradient: const LinearGradient(colors: [kAppColor2, kAppColor1]),
+                              gradient: const LinearGradient(
+                                colors: [kAppColor2, kAppColor1],
+                              ),
                               boxShadow: [
                                 if (selected)
                                   BoxShadow(
@@ -863,7 +984,6 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                 },
               ),
             ),
-
           ],
         ),
       );
@@ -884,7 +1004,9 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
         width: isSmallScreen ? 16 : 18,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          gradient: LinearGradient(colors: [color.withOpacity(.95), color.withOpacity(.62)]),
+          gradient: LinearGradient(
+            colors: [color.withOpacity(.95), color.withOpacity(.62)],
+          ),
           border: Border.all(color: Colors.white.withOpacity(.55), width: 1),
           boxShadow: [BoxShadow(color: color.withOpacity(.40), blurRadius: 10)],
         ),
@@ -981,9 +1103,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
       child: SizedBox(
         height: boxSize,
         width: boxSize,
-        child: RepaintBoundary(
-          child: buildRawImage(),
-        ),
+        child: RepaintBoundary(child: buildRawImage()),
       ),
     );
   }
@@ -994,16 +1114,23 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     final name = (gift['name'] ?? ('Gift').appTr).toString();
     final coin = _formatCoins(gift['coin'] ?? gift['price'] ?? 0);
     final isLucky = _isLuckyGift(gift);
-
     return Obx(() {
+      livestreamController.currentVipRevision.value;
+      final isVipLocked = _isVipGift(gift) && !_canUseVipGifts;
       final selectedId = int.tryParse('${selectedGift.value?['id'] ?? 0}') ?? 0;
       final selected = selectedId == giftId;
 
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
+          if (isVipLocked) {
+            showVipRequired(('VIP Gift').appTr);
+            return;
+          }
           if (isLucky && (kPlayStoreSafeMode || !_canShowLuckyGift)) {
-            Fluttertoast.showToast(msg: ('This gift is not available right now').appTr);
+            Fluttertoast.showToast(
+              msg: ('This gift is not available right now').appTr,
+            );
             return;
           }
           // Freeze the complete selected object. The send flow now uses this
@@ -1041,9 +1168,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Expanded(
-                        child: _giftImageBox(image),
-                      ),
+                      Expanded(child: _giftImageBox(image)),
                       SizedBox(height: isSmallScreen ? 7 : 9),
                       Text(
                         name,
@@ -1073,14 +1198,13 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               gradient: const LinearGradient(
-                                colors: [
-                                  Color(0xfffff15f),
-                                  Color(0xffff9d00),
-                                ],
+                                colors: [Color(0xfffff15f), Color(0xffff9d00)],
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: const Color(0xffffb400).withOpacity(.35),
+                                  color: const Color(
+                                    0xffffb400,
+                                  ).withOpacity(.35),
                                   blurRadius: 8,
                                 ),
                               ],
@@ -1116,6 +1240,23 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                       top: 7,
                       right: 7,
                     ),
+                  if (isVipLocked)
+                    Positioned(
+                      top: 5,
+                      right: 5,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Color(0xDD251645),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.lock_rounded,
+                          color: Color(0xFFFFD76A),
+                          size: 14,
+                        ),
+                      ),
+                    ),
                   if (!kPlayStoreSafeMode &&
                       _canShowLuckyGift &&
                       gift['back_coin'] != null &&
@@ -1135,7 +1276,6 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     });
   }
 
-
   Widget _selectedCustomAmountChip() {
     return Obx(() {
       final value = selectedSendAmount.value.trim();
@@ -1153,10 +1293,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
           color: kAppColor2,
-          border: Border.all(
-            color: Colors.white.withOpacity(.32),
-            width: 1,
-          ),
+          border: Border.all(color: Colors.white.withOpacity(.32), width: 1),
           boxShadow: [
             BoxShadow(
               color: kAppColor2.withOpacity(.35),
@@ -1193,15 +1330,9 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
             gradient: const LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [
-                Color(0xff07142d),
-                Color(0xff061126),
-              ],
+              colors: [Color(0xff07142d), Color(0xff061126)],
             ),
-            border: Border.all(
-              color: Colors.white24,
-              width: 1,
-            ),
+            border: Border.all(color: Colors.white24, width: 1),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(.45),
@@ -1293,10 +1424,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(
-                      color: kAppColor2,
-                      width: 1.4,
-                    ),
+                    borderSide: const BorderSide(color: kAppColor2, width: 1.4),
                   ),
                 ),
                 onSubmitted: (_) => _saveCustomAmount(),
@@ -1409,9 +1537,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
               const Color(0xff061126).withOpacity(.92),
             ],
           ),
-          border: Border(
-            top: BorderSide(color: Colors.white.withOpacity(.08)),
-          ),
+          border: Border(top: BorderSide(color: Colors.white.withOpacity(.08))),
         ),
         child: Row(
           children: [
@@ -1419,7 +1545,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
               child: Row(
                 children: [
                   Image.asset(
-                    'assets/images/diamond-removebg-preview.png',
+                    'assets/icons/coin.png',
                     height: isSmallScreen ? 21 : 24,
                     width: isSmallScreen ? 21 : 24,
                     fit: BoxFit.contain,
@@ -1475,8 +1601,6 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
               ),
             ),
 
-
-
             Flexible(
               fit: FlexFit.loose,
               child: SingleChildScrollView(
@@ -1531,13 +1655,13 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                     ),
 
                     SizedBox(width: isSmallScreen ? 8 : 10),
+
                     /// Custom/selected number will show left side of Send.
                     _selectedCustomAmountChip(),
 
                     Obx(() {
                       final gift = selectedGift.value;
-                      final giftId =
-                          int.tryParse('${gift?['id'] ?? 0}') ?? 0;
+                      final giftId = int.tryParse('${gift?['id'] ?? 0}') ?? 0;
 
                       return GestureDetector(
                         behavior: HitTestBehavior.opaque,
@@ -1558,10 +1682,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                                 kAppColor1.withOpacity(.64),
                                 kAppColor2.withOpacity(.64),
                               ]
-                                  : [
-                                kAppColor2,
-                                kAppColor1,
-                              ],
+                                  : [kAppColor2, kAppColor1],
                             ),
                             border: Border.all(
                               color: Colors.white.withOpacity(.25),
@@ -1614,11 +1735,10 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     _syncDefaultReceiver();
 
     Get.bottomSheet(
-
       SafeArea(
         top: false,
         child: Container(
-          height: kHeight*0.49,
+          height: kHeight * 0.49,
           width: Get.width,
           clipBehavior: Clip.antiAlias,
           decoration: _premiumSheetDecoration(),
@@ -1657,7 +1777,8 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                     ),
                     physics: const BouncingScrollPhysics(),
                     itemCount: gifts.length,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    gridDelegate:
+                    SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 4,
                       mainAxisSpacing: .3,
                       crossAxisSpacing: .5,
@@ -1686,21 +1807,31 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     return SizedBox(
       height: kHeight * 0.06,
       width: kHeight * 0.06,
-      child: InkWell(
-        onTap: () async {
-          if (livestreamController.giftList.isEmpty) {
-            await livestreamController.fetchGiftList();
-          }
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          InkWell(
+            onTap: () async {
+              if (livestreamController.giftList.isEmpty) {
+                await livestreamController.fetchGiftList();
+              }
 
-          selectedGift.value = null;
-          _syncDefaultReceiver();
-          _precacheGiftImages();
-          _openSheet();
-        },
-        child: SVGAEasyPlayer(
-          assetsName: 'assets/newaudio/gift_icon.svga',
-          fit: BoxFit.cover,
-        ),
+              selectedGift.value = null;
+              _syncDefaultReceiver();
+              _precacheGiftImages();
+              _preloadGiftSvgaAnimations();
+              _openSheet();
+            },
+            child: SVGAEasyPlayer(
+              assetsName: 'assets/newaudio/gift_icon.svga',
+              fit: BoxFit.cover,
+            ),
+          ),
+          // ✅ FIX: see _preloadGiftSvgaAnimations. Invisible, takes no
+          // layout space, only warms SVGAEasyPlayer's cache in the
+          // background.
+          _svgaPreloadLayer(),
+        ],
       ),
     );
   }

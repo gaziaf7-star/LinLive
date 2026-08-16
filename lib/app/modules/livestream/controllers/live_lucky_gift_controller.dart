@@ -25,7 +25,7 @@ class LiveLuckyGiftController extends GetxController {
   int _animationSerial = 0;
   Timer? _resultHideTimer;
 
-  static const int _maxTickerItems = 20;
+  static const int _maxTickerItems = 10;
 
   void debugPrint(String title, dynamic value) {
     // Large Lucky payload logging intentionally remains disabled in production.
@@ -190,7 +190,6 @@ class LiveLuckyGiftController extends GetxController {
       };
 
       luckyGiftOverlayData.value = normalized;
-      luckyGiftOverlayData.refresh();
       luckyGiftResult.value = normalized;
       luckyGiftResultVisible.value = true;
       luckyGiftOverlayVisible.value = false;
@@ -202,7 +201,6 @@ class LiveLuckyGiftController extends GetxController {
         if (overflow > 0) {
           luckyGiftTickerQueue.removeRange(0, overflow);
         }
-        luckyGiftTickerQueue.refresh();
       }
 
       // A Lucky burst used to allocate one delayed callback per result. Only

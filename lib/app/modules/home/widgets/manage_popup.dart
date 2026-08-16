@@ -8,6 +8,7 @@ import '../../../../constants/color_constants.dart';
 import '../../../../constants/constants.dart';
 import '../../../../constants/layout_constant.dart';
 import '../../../../constants/image_helper.dart';
+import '../../livestream/utils/vip_privileges.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 class ManagePopup extends StatelessWidget {
@@ -76,6 +77,10 @@ class ManagePopup extends StatelessWidget {
   }
 
   void _blockUser() {
+    if (VipPrivileges.from(userAllData).antiBlock) {
+      _toast(('Protected by VIP privilege').appTr);
+      return;
+    }
     if (_targetUserId == 0) {
       _toast(('Invalid user').appTr);
       return;
@@ -352,6 +357,7 @@ class ManagePopup extends StatelessWidget {
     final bool targetIsHost = _isTargetHostUser(userId);
     final bool targetIsRoomAdmin = _isTargetRoomAdmin();
     final bool currentUserOnlyRoomAdmin = !isBroadcaster && isGuardianUser;
+    final targetVip = VipPrivileges.from(userAllData);
 
     final bool canMuteTarget =
         canModerate && !isCurrentUser && !targetIsHost && onMuteMic != null;
@@ -362,10 +368,12 @@ class ManagePopup extends StatelessWidget {
             !isCurrentUser &&
             !targetIsHost &&
             !(currentUserOnlyRoomAdmin && targetIsRoomAdmin) &&
+            !targetVip.antiKickBan &&
             onKickOut != null;
     final bool canRoomBlockTarget = canModerate &&
         !isCurrentUser &&
         !targetIsHost &&
+        !targetVip.antiKickBan &&
         onAddToRoomBlacklist != null;
 
     /// ✅ Only real host can set/remove admin.
@@ -558,9 +566,15 @@ class ManagePopup extends StatelessWidget {
                   if (!isCurrentUser)
                     _buildOption(
                       icon: Icons.block_rounded,
-                      title: ('Block user').appTr,
-                      danger: true,
-                      onTap: _blockUser,
+                      title: targetVip.antiBlock
+                          ? ('Protected by VIP privilege').appTr
+                          : ('Block user').appTr,
+                      danger: !targetVip.antiBlock,
+                      onTap: targetVip.antiBlock
+                          ? () => _toast(
+                                ('Protected by VIP privilege').appTr,
+                              )
+                          : _blockUser,
                     ),
                   if (!isCurrentUser)
                     _buildOption(
@@ -662,6 +676,32 @@ class ManagePopup extends StatelessWidget {
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: Colors.red.shade700,
+                    ),
+                  ),
+                ),
+              ],
+
+              if (canModerate &&
+                  !isCurrentUser &&
+                  !targetIsHost &&
+                  targetVip.antiKickBan) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 11,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFD76A).withOpacity(.14),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Text(
+                    ('Protected by VIP privilege').appTr,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFF6A4A00),
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),

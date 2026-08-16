@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -747,6 +748,12 @@ class _LiveSearchViewState extends State<LiveSearchView>
 
   List<dynamic> _liveResults({bool exactOnly = false}) {
     final q = _query.trim();
+
+    // Reference screen shows "No data" until a search is submitted.
+    if (q.isEmpty && _selectedCountryKey == 'all') {
+      return <dynamic>[];
+    }
+
     final source = List<dynamic>.from(controller.showingLiveStreamList);
     final scored = <_ScoredLive>[];
 
@@ -773,7 +780,9 @@ class _LiveSearchViewState extends State<LiveSearchView>
   List<dynamic> _userResults() {
     final q = _query.trim();
     final source = List<dynamic>.from(controller.allUserData);
-    if (q.isEmpty) return source.take(40).toList();
+    // Reference design starts with an empty state.
+    // Results appear only after the user presses Search / submits a query.
+    if (q.isEmpty) return <dynamic>[];
 
     final parts = _normalize(q).split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
     final scored = <_ScoredLive>[];
@@ -806,90 +815,132 @@ class _LiveSearchViewState extends State<LiveSearchView>
   }
 
   Widget _searchBar() {
-    final bool hasAnyText = _draftQuery.trim().isNotEmpty || _query.trim().isNotEmpty;
+    final bool hasAnyText =
+        _draftQuery.trim().isNotEmpty || _query.trim().isNotEmpty;
+    final double width = MediaQuery.sizeOf(context).width;
+    final bool compact = width < 360;
+    final double rowHeight = (width * .115).clamp(48.0, 58.0).toDouble();
+    final double backSize = (width * .085).clamp(34.0, 42.0).toDouble();
 
-    return Container(
-      margin: EdgeInsets.fromLTRB(kWeight * 0.04, 12, kWeight * 0.04, 10),
-      padding: const EdgeInsets.fromLTRB(12, 0, 7, 0),
-      height: 54,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(.12),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        (width * .035).clamp(12.0, 18.0).toDouble(),
+        12,
+        (width * .035).clamp(12.0, 18.0).toDouble(),
+        6,
       ),
-      child: Row(
-        children: [
-          Icon(Icons.search_rounded, color: kAppColor1, size: 23),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              autofocus: true,
-              textInputAction: TextInputAction.search,
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                color: Colors.black87,
-                fontWeight: FontWeight.w600,
-              ),
-              decoration: InputDecoration(
-                hintText: ('Live name, BTE, room ID, user ID').appTr,
-                hintStyle: GoogleFonts.poppins(
-                  fontSize: 12.2,
-                  color: Colors.grey.shade500,
-                  fontWeight: FontWeight.w500,
-                ),
-                border: InputBorder.none,
-              ),
-              onChanged: _onSearchChanged,
-              onSubmitted: _runSearch,
-            ),
-          ),
-          if (hasAnyText)
-            InkWell(
-              key: const ValueKey('clear'),
-              borderRadius: BorderRadius.circular(20),
-              onTap: _clearSearch,
-              child: Padding(
-                padding: const EdgeInsets.all(5),
-                child: Icon(Icons.close_rounded, color: Colors.grey.shade600, size: 20),
-              ),
-            ),
-          const SizedBox(width: 4),
-          Material(
-            color: kAppColor1,
-            borderRadius: BorderRadius.circular(16),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(16),
-              onTap: () => _runSearch(),
-              child: Container(
-                height: 40,
-                padding: const EdgeInsets.symmetric(horizontal: 13),
-                alignment: Alignment.center,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 17),
-                    const SizedBox(width: 4),
-                    Text(
-                      ('Search').appTr,
-                      style: GoogleFonts.poppins(
-                        color: Colors.white,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                      ),
+      child: SizedBox(
+        height: rowHeight,
+        child: Row(
+          children: [
+            SizedBox(
+              width: backSize,
+              height: backSize,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(backSize / 2),
+                  onTap: Get.back,
+                  child: const Center(
+                    child: Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      color: Color(0xFF27282C),
+                      size: 26,
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+            SizedBox(width: compact ? 5 : 8),
+            Expanded(
+              child: Container(
+                height: rowHeight,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF4F4F4),
+                  borderRadius: BorderRadius.circular(rowHeight / 2),
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  autofocus: false,
+                  textInputAction: TextInputAction.search,
+                  textAlignVertical: TextAlignVertical.center,
+                  style: GoogleFonts.poppins(
+                    fontSize: compact ? 14.5 : 16,
+                    color: const Color(0xFF333438),
+                    fontWeight: FontWeight.w500,
+                  ),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: ('enter content').appTr,
+                    hintStyle: GoogleFonts.poppins(
+                      fontSize: compact ? 14.5 : 16,
+                      color: const Color(0xFF9A9A9C),
+                      fontWeight: FontWeight.w400,
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.only(
+                      left: compact ? 18 : 22,
+                      right: hasAnyText ? 42 : 18,
+                      top: 16,
+                      bottom: 16,
+                    ),
+                    suffixIcon: hasAnyText
+                        ? IconButton(
+                      splashRadius: 18,
+                      onPressed: _clearSearch,
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        size: 20,
+                        color: Color(0xFF9A9A9C),
+                      ),
+                    )
+                        : null,
+                  ),
+                  onChanged: _onSearchChanged,
+                  onSubmitted: _runSearch,
+                ),
+              ),
+            ),
+            SizedBox(width: compact ? 7 : 10),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(rowHeight / 2),
+                onTap: () => _runSearch(),
+                child: Container(
+                  height: rowHeight,
+                  constraints: BoxConstraints(
+                    minWidth: compact ? 82 : 94,
+                  ),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 14 : 18,
+                  ),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [
+                        Color(0xFFFFD51C),
+                        Color(0xFFFFC915),
+                      ],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
+                    borderRadius: BorderRadius.circular(rowHeight / 2),
+                  ),
+                  child: Text(
+                    ('search').appTr,
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontSize: compact ? 15 : 16.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1214,73 +1265,83 @@ class _LiveSearchViewState extends State<LiveSearchView>
   }
 
   Widget _tabs(int liveCount, int userCount) {
-    return Container(
-      margin: EdgeInsets.symmetric(horizontal: kWeight * 0.04),
-      padding: const EdgeInsets.all(5),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(.14),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(.12)),
-      ),
-      child: TabBar(
-        controller: _tabController,
-        indicator: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-        indicatorSize: TabBarIndicatorSize.tab,
-        dividerColor: Colors.transparent,
-        labelColor: kAppColor1,
-        unselectedLabelColor: Colors.white,
-        labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w800, fontSize: 13),
-        unselectedLabelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 13),
-        tabs: [
-          Tab(text: ('Live ($liveCount)').appTr),
-          Tab(text: ('Users ($userCount)').appTr),
-        ],
+    final double width = MediaQuery.sizeOf(context).width;
+    final double tabWidth = (width * .28).clamp(180.0, 240.0).toDouble();
+
+    return Center(
+      child: SizedBox(
+        width: tabWidth,
+        height: 56,
+        child: TabBar(
+          controller: _tabController,
+          indicatorSize: TabBarIndicatorSize.label,
+          dividerColor: Colors.transparent,
+          splashFactory: NoSplash.splashFactory,
+          overlayColor: MaterialStateProperty.all(Colors.transparent),
+          labelPadding: const EdgeInsets.symmetric(horizontal: 10),
+          labelColor: const Color(0xFF2F3033),
+          unselectedLabelColor: const Color(0xFF9C9C9E),
+          labelStyle: GoogleFonts.poppins(
+            fontSize: 19,
+            fontWeight: FontWeight.w700,
+          ),
+          unselectedLabelStyle: GoogleFonts.poppins(
+            fontSize: 19,
+            fontWeight: FontWeight.w600,
+          ),
+          indicator: const UnderlineTabIndicator(
+            borderSide: BorderSide(
+              color: Color(0xFFFFD51C),
+              width: 3.2,
+            ),
+            insets: EdgeInsets.symmetric(horizontal: 16),
+          ),
+          tabs: [
+            Tab(text: ('User').appTr),
+            Tab(text: ('Room').appTr),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _emptyState({required String title, required String subtitle}) {
-    return Center(
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: kWeight * 0.10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              height: 72,
-              width: 72,
-              decoration: BoxDecoration(shape: BoxShape.circle, color: kAppColor1.withOpacity(.08)),
-              child: Icon(Icons.search_off_rounded, size: 38, color: kAppColor1.withOpacity(.85)),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.black87),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.grey.shade600),
-            ),
-            if ((_query.trim().isNotEmpty || _selectedCountryKey != 'all') && controller.canLoadMoreLive) ...[
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kAppColor1,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
+  Widget _emptyState({
+    required String title,
+    required String subtitle,
+  }) {
+    final double width = MediaQuery.sizeOf(context).width;
+    final double artWidth = (width * .56).clamp(205.0, 310.0).toDouble();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double availableHeight = constraints.maxHeight;
+        final double topSpace =
+        (availableHeight * .30).clamp(110.0, 280.0).toDouble();
+
+        return SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: SizedBox(
+            width: double.infinity,
+            height: availableHeight > 0 ? availableHeight : 520,
+            child: Column(
+              children: [
+                SizedBox(height: topSpace),
+                _ReferenceEmptyArtwork(width: artWidth),
+                const SizedBox(height: 28),
+                Text(
+                  ('No data').appTr,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w400,
+                    color: const Color(0xFFAFC7DF),
+                  ),
                 ),
-                onPressed: () => _ensureSearchLoadedEnough(_query, countryKey: _selectedCountryKey),
-                icon: const Icon(Icons.refresh_rounded),
-                label:  Text(('Search more live pages').appTr),
-              ),
-            ],
-          ],
-        ),
-      ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1401,68 +1462,171 @@ class _LiveSearchViewState extends State<LiveSearchView>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: kAppColor1,
-        surfaceTintColor: kAppColor1,
-        leading: IconButton(
-          onPressed: Get.back,
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
-        ),
-        title: Text(
-          ('Search Live').appTr,
-          style: GoogleFonts.poppins(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
-        ),
-        centerTitle: true,
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark.copyWith(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarColor: Colors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
       ),
-      body: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: kAppColor1,
-              borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(22),
-                bottomRight: Radius.circular(22),
-              ),
-              boxShadow: [
-                BoxShadow(color: kAppColor1.withOpacity(.18), blurRadius: 16, offset: const Offset(0, 8)),
-              ],
-            ),
-            child: SafeArea(
-              top: false,
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Column(
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        resizeToAvoidBottomInset: true,
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              _searchBar(),
+              const SizedBox(height: 22),
+              Obx(() {
+                final liveCount = _liveResults().length;
+                final userCount = _userResults().length;
+                return _tabs(liveCount, userCount);
+              }),
+              const SizedBox(height: 8),
+              Expanded(
+                child: TabBarView(
+                  controller: _tabController,
+                  physics: const BouncingScrollPhysics(),
                   children: [
-                    _searchBar(),
-                    Obx(() {
-                      final liveCount = _liveResults().length;
-                      final userCount = _userResults().length;
-                      return Column(
-                        children: [
-                          _countrySelector(),
-                          const SizedBox(height: 8),
-                          _quickInfo(liveCount, userCount),
-                          _tabs(liveCount, userCount),
-                        ],
-                      );
-                    }),
+                    _userTab(),
+                    _liveTab(),
                   ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+}
+
+class _ReferenceEmptyArtwork extends StatelessWidget {
+  final double width;
+
+  const _ReferenceEmptyArtwork({required this.width});
+
+  @override
+  Widget build(BuildContext context) {
+    final double h = width * .78;
+
+    return SizedBox(
+      width: width,
+      height: h,
+      child: Stack(
+        alignment: Alignment.bottomCenter,
+        children: [
+          Positioned(
+            left: width * .10,
+            bottom: h * .06,
+            child: Container(
+              width: width * .80,
+              height: h * .12,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F7FC),
+                borderRadius: BorderRadius.circular(width),
+              ),
+            ),
+          ),
+          Positioned(
+            left: width * .08,
+            top: h * .10,
+            child: _softCloud(width * .22, width * .075),
+          ),
+          Positioned(
+            right: width * .11,
+            top: h * .02,
+            child: _softCloud(width * .18, width * .062),
+          ),
+          Positioned(
+            right: width * .24,
+            top: h * .21,
+            child: Container(
+              width: width * .22,
+              height: width * .18,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF4FC),
+                borderRadius: BorderRadius.circular(width * .09),
+                border: Border.all(
+                  color: const Color(0xFFDDECF7),
+                  width: 1,
+                ),
+              ),
+              child: Center(
+                child: Text(
+                  '•••',
+                  style: TextStyle(
+                    color: const Color(0xFFC7DEEE),
+                    fontSize: width * .055,
+                    letterSpacing: 2,
+                    height: 1,
+                  ),
                 ),
               ),
             ),
           ),
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              color: Colors.white,
-              child: TabBarView(
-                controller: _tabController,
-                children: [_liveTab(), _userTab()],
+          Positioned(
+            left: width * .23,
+            bottom: h * .12,
+            child: SizedBox(
+              width: width * .54,
+              height: h * .40,
+              child: CustomPaint(
+                painter: _EmptyBoxPainter(),
+              ),
+            ),
+          ),
+          Positioned(
+            right: width * .08,
+            bottom: h * .09,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _tree(width * .022, h * .13),
+                SizedBox(width: width * .012),
+                _tree(width * .026, h * .17),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _softCloud(double width, double height) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFFEEF6FC),
+        borderRadius: BorderRadius.circular(height),
+      ),
+    );
+  }
+
+  static Widget _tree(double w, double h) {
+    return SizedBox(
+      width: w * 2.4,
+      height: h,
+      child: Stack(
+        alignment: Alignment.bottomCenter,
+        children: [
+          Container(
+            width: 1.2,
+            height: h * .55,
+            color: const Color(0xFFD9E8F5),
+          ),
+          Positioned(
+            top: 0,
+            child: ClipPath(
+              clipper: _TriangleClipper(),
+              child: Container(
+                width: w * 2.4,
+                height: h * .68,
+                color: const Color(0xFFDCEAF6),
               ),
             ),
           ),
@@ -1470,6 +1634,76 @@ class _LiveSearchViewState extends State<LiveSearchView>
       ),
     );
   }
+}
+
+class _EmptyBoxPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint fill = Paint()
+      ..color = const Color(0xFFE7F1F9)
+      ..style = PaintingStyle.fill;
+    final Paint fillLight = Paint()
+      ..color = const Color(0xFFEDF6FC)
+      ..style = PaintingStyle.fill;
+    final Paint line = Paint()
+      ..color = const Color(0xFFD7E7F4)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.1;
+
+    final double w = size.width;
+    final double h = size.height;
+
+    final Path body = Path()
+      ..moveTo(w * .20, h * .38)
+      ..lineTo(w * .50, h * .22)
+      ..lineTo(w * .80, h * .38)
+      ..lineTo(w * .72, h * .88)
+      ..lineTo(w * .28, h * .88)
+      ..close();
+    canvas.drawPath(body, fill);
+    canvas.drawPath(body, line);
+
+    final Path leftFlap = Path()
+      ..moveTo(w * .20, h * .38)
+      ..lineTo(w * .50, h * .22)
+      ..lineTo(w * .43, h * .52)
+      ..lineTo(w * .10, h * .62)
+      ..close();
+    canvas.drawPath(leftFlap, fillLight);
+    canvas.drawPath(leftFlap, line);
+
+    final Path rightFlap = Path()
+      ..moveTo(w * .50, h * .22)
+      ..lineTo(w * .80, h * .38)
+      ..lineTo(w * .90, h * .62)
+      ..lineTo(w * .57, h * .52)
+      ..close();
+    canvas.drawPath(rightFlap, fillLight);
+    canvas.drawPath(rightFlap, line);
+
+    canvas.drawLine(
+      Offset(w * .50, h * .22),
+      Offset(w * .50, h * .80),
+      line,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _TriangleClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    return Path()
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
 class _ScoredLive {
