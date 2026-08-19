@@ -7916,14 +7916,26 @@ class _AudioLiveViewState extends State<AudioLiveView>
                         ),
                       ],
                     ),
-                    // ✅ FIX: previously ClipOval + BoxFit.cover cropped the
-                    // emoji to fill a square box and then clipped the result
-                    // to a circle, cutting off its edges/corners — this is
-                    // why host emoji reactions showed cut off while regular
-                    // seat emoji (which already used BoxFit.contain with no
-                    // clip, see _seatImogiOverlay) displayed fully. Matching
-                    // that same correct pattern here.
-                    child: CachedNetworkImage(
+                    // ✅ FIX (1/2): previously ClipOval + BoxFit.cover cropped
+                    // the emoji to fill a square box and then clipped the
+                    // result to a circle, cutting off its edges/corners —
+                    // this is why host emoji reactions showed cut off while
+                    // regular seat emoji (which already used BoxFit.contain
+                    // with no clip, see _seatImogiOverlay) displayed fully.
+                    // Matching that same correct pattern here.
+                    //
+                    // ✅ FIX (2/2): CachedNetworkImage cannot decode .svga
+                    // (a vector animation format) — an animated emoji asset
+                    // either failed to load or showed only a static preview
+                    // frame instead of playing its full animation. Route
+                    // .svga URLs to SVGAEasyPlayer instead.
+                    child: image.toLowerCase().endsWith('.svga')
+                        ? SVGAEasyPlayer(
+                      key: ValueKey(image),
+                      resUrl: image,
+                      fit: BoxFit.contain,
+                    )
+                        : CachedNetworkImage(
                       imageUrl: image,
                       fit: BoxFit.contain,
                       errorWidget: (_, __, ___) => const SizedBox.shrink(),

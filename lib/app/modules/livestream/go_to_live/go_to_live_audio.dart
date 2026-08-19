@@ -14,11 +14,17 @@ import 'package:meetlivepro/app/modules/appmenu/views/widgets/vipcarddesign.dart
 import '../../../../constants/constants.dart';
 import '../../../../constants/image_helper.dart';
 import '../../../../constants/layout_constant.dart';
+import '../../auth/controllers/auth_controller.dart';
 import '../controllers/livestream_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
 class GotoAudioLiveView extends StatefulWidget {
-  const GotoAudioLiveView({super.key});
+  final VoidCallback? onClose;
+
+  const GotoAudioLiveView({
+    super.key,
+    this.onClose,
+  });
 
   @override
   State<GotoAudioLiveView> createState() => _GotoAudioLiveViewState();
@@ -26,6 +32,7 @@ class GotoAudioLiveView extends StatefulWidget {
 
 class _GotoAudioLiveViewState extends State<GotoAudioLiveView> {
   final LivestreamController livestreamController = Get.find();
+  final AuthController authController = Get.find<AuthController>();
 
   final TextEditingController titleController = TextEditingController();
   final TextEditingController announcementController = TextEditingController();
@@ -318,142 +325,245 @@ class _GotoAudioLiveViewState extends State<GotoAudioLiveView> {
             ),
           ),
         ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              SizedBox(height: h * 0.014),
-
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: w * 0.045),
-                child: _TopLiveInfoCard(
-                  titleController: titleController,
-                  announcementText: announcementText,
-                  onAnnouncementTap: _openAnnouncementSheet,
-                  livestreamController: livestreamController,
-                  selectedMood: selectedMood,
-                  onMoodSelect: (index) {
-                    setState(() => selectedMood = index);
-                  },
-                ),
-              ),
-
-              SizedBox(height: h * 0.06),
-
-              Obx(() {
-                return _SeatArea(
-                  seatCount: livestreamController.seatCount.value,
-                  layoutType: selectedLayout,
-                  onSeatTap: _openSeatBottomSheet,
-                );
-              }),
-
-              SizedBox(height: h * 0.01),
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: w * 0.08),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _BottomMenuItem(
-                      icon: Icons.event_seat,
-                      title: ("Seats").appTr,
-                      onTap: _openSeatBottomSheet,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.white.withOpacity(.05),
+                        Colors.transparent,
+                        Colors.black.withOpacity(.10),
+                      ],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
                     ),
-                    _BottomMenuItem(
-                      icon: Icons.card_giftcard,
-                      title: ("Theme").appTr,
-                      onTap: _openThemeSheet,
-                    ),
-
-                  ],
-                ),
-              ),
-
-              SizedBox(height: h * 0.02),
-
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: w * 0.045),
-                child: GestureDetector(
-                  onTap: () async {
-                    if (kDebugMode) {
-                      debugPrint(
-                        'create_tap=${DateTime.now().microsecondsSinceEpoch}',
-                      );
-                    }
-                    FocusScope.of(context).unfocus();
-
-                    final user = authController.userProfile.value.user;
-                    final String liveTitle = titleController.text.trim().isEmpty
-                        ? (user?.name?.toString().trim().isNotEmpty == true
-                        ? user!.name.toString().trim()
-                        : 'Live Room')
-                        : titleController.text.trim();
-
-                    final bool micReady = await _ensureMicrophonePermissionBeforeCreate();
-                    if (!micReady) return;
-
-                    livestreamController.mute.value = false;
-
-                    // GotoAudioLiveView theke call korar somoy:
-                    if (livestreamController.isCreatingLive.value) return;
-
-                    await livestreamController.tryToCreateLivestream(
-                      streamTitle: liveTitle,
-                      anousment: announcementText.trim(),
-                      streamType: 'audio',
-                      userId: authController.userProfile.value.user!.id!.toInt(),
-
-                      seatCountValue: livestreamController.seatCount.value,
-                      roomLayout: selectedLayout,
-                      roomTheme: _getBackgroundId() >= 0 ? 0 : _getThemeId(),
-                      roomBackground: _getBackgroundId(),
-                      streamImageFile: livestreamController.audioImage.value.trim().isEmpty
-                          ? null
-                          : File(livestreamController.audioImage.value.trim()),
-                    );
-                  },
-                  child: Container(
-                    height: h * 0.050,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(30),
-                      border: Border.all(color: Colors.white.withOpacity(.7)),
-                      gradient: const LinearGradient(
-                        colors: [kAppColor2, kAppColor1],
-                      ),
-                    ),
-                    alignment: Alignment.center,
-                    child: Obx(() {
-                      final loading = livestreamController.isCreatingLive.value;
-                      return AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 180),
-                        child: loading
-                            ? const SizedBox(
-                          key: ValueKey('live-loading'),
-                          height: 22,
-                          width: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.4,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                            : Text(
-                          ("Go Live").appTr,
-                          key: const ValueKey('go-live-text'),
-                          style: GoogleFonts.poppins(
-                            color: Colors.white,
-                            fontSize: h * 0.016,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      );
-                    }),
                   ),
                 ),
               ),
+            ),
+            SafeArea(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      w * .04,
+                      h * .006,
+                      w * .025,
+                      0,
+                    ),
+                    child: Row(
+                      children: [
+                        const Spacer(),
+                        InkWell(
+                          onTap: () {
+                            final close = widget.onClose;
+                            if (close != null) {
+                              close();
+                            } else {
+                              Get.back();
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(28),
+                          child: Container(
+                            height: h * .046,
+                            width: h * .046,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(.10),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withOpacity(.10),
+                              ),
+                            ),
+                            alignment: Alignment.center,
+                            child: Icon(
+                              Icons.close_rounded,
+                              color: Colors.white,
+                              size: h * .032,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: h * .012),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: w * .04),
+                    child: _TopLiveInfoCard(
+                      titleController: titleController,
+                      announcementText: announcementText,
+                      onAnnouncementTap: _openAnnouncementSheet,
+                      livestreamController: livestreamController,
+                      selectedMood: selectedMood,
+                      onMoodSelect: (index) {
+                        setState(() => selectedMood = index);
+                      },
+                    ),
+                  ),
+                  SizedBox(height: h * .020),
+                  Expanded(
+                    child: Center(
+                      child: Obx(() {
+                        return _SeatArea(
+                          seatCount: livestreamController.seatCount.value,
+                          layoutType: selectedLayout,
+                          onSeatTap: _openSeatBottomSheet,
+                        );
+                      }),
+                    ),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: w * .035),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _BottomMenuItem(
+                            icon: Icons.event_seat_rounded,
+                            title: ('Seats').appTr,
+                            onTap: _openSeatBottomSheet,
+                          ),
+                        ),
+                        Expanded(
+                          child: _BottomMenuItem(
+                            icon: Icons.checkroom_rounded,
+                            title: ('Theme').appTr,
+                            onTap: _openThemeSheet,
+                          ),
+                        ),
+                        Expanded(
+                          child: _BottomMenuItem(
+                            icon: Icons.tune_rounded,
+                            title: ('Mixer').appTr,
+                            onTap: () {},
+                          ),
+                        ),
+                        Expanded(
+                          child: _BottomMenuItem(
+                            icon: Icons.school_outlined,
+                            title: ('Academy').appTr,
+                            onTap: () {},
+                          ),
+                        ),
+                        Expanded(
+                          child: _BottomMenuItem(
+                            icon: Icons.settings_outlined,
+                            title: ('Settings').appTr,
+                            onTap: _openThemeSheet,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: h * .026),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: w * .115),
+                    child: GestureDetector(
+                      onTap: () async {
+                        if (kDebugMode) {
+                          debugPrint(
+                            'create_tap=${DateTime.now().microsecondsSinceEpoch}',
+                          );
+                        }
 
-              SizedBox(height: h * 0.016),
-            ],
-          ),
+                        FocusScope.of(context).unfocus();
+
+                        final user = authController.userProfile.value.user;
+                        final String liveTitle =
+                        titleController.text.trim().isEmpty
+                            ? (user?.name?.toString().trim().isNotEmpty ==
+                            true
+                            ? user!.name.toString().trim()
+                            : 'Live Room')
+                            : titleController.text.trim();
+
+                        final bool micReady =
+                        await _ensureMicrophonePermissionBeforeCreate();
+                        if (!micReady) return;
+
+                        livestreamController.mute.value = false;
+                        if (livestreamController.isCreatingLive.value) return;
+
+                        await livestreamController.tryToCreateLivestream(
+                          streamTitle: liveTitle,
+                          anousment: announcementText.trim(),
+                          streamType: 'audio',
+                          userId: authController
+                              .userProfile.value.user!.id!
+                              .toInt(),
+                          seatCountValue:
+                          livestreamController.seatCount.value,
+                          roomLayout: selectedLayout,
+                          roomTheme:
+                          _getBackgroundId() >= 0 ? 0 : _getThemeId(),
+                          roomBackground: _getBackgroundId(),
+                          streamImageFile: livestreamController
+                              .audioImage.value
+                              .trim()
+                              .isEmpty
+                              ? null
+                              : File(
+                            livestreamController.audioImage.value.trim(),
+                          ),
+                        );
+                      },
+                      child: Container(
+                        height: h * .062,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(40),
+                          gradient: const LinearGradient(
+                            colors: [
+                              Color(0xFF16DED8),
+                              Color(0xFF49C8F4),
+                            ],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color:
+                              const Color(0xFF20DCE4).withOpacity(.28),
+                              blurRadius: 20,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        alignment: Alignment.center,
+                        child: Obx(() {
+                          final loading =
+                              livestreamController.isCreatingLive.value;
+
+                          return AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            child: loading
+                                ? const SizedBox(
+                              key: ValueKey('audio-live-loading'),
+                              height: 23,
+                              width: 23,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: Colors.white,
+                              ),
+                            )
+                                : Text(
+                              ('Go LIVE').appTr,
+                              key: const ValueKey('audio-go-live'),
+                              style: GoogleFonts.poppins(
+                                color: Colors.white,
+                                fontSize: h * .020,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: h * .095),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -941,85 +1051,131 @@ class _TopLiveInfoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final h = kHeight;
     final w = kWeight;
+    final AuthController authController = Get.find<AuthController>();
 
     final moods = [
-      {"title": "Chat", "icon": Icons.chat_bubble, "color": const Color(0xff22d5e6)},
-      {"title": "Dating", "icon": Icons.whatshot, "color": const Color(0xffff4b3e)},
-      {"title": "Games", "icon": Icons.videogame_asset, "color": const Color(0xff2b2d42)},
-      {"title": "Interests", "icon": Icons.interests, "color": const Color(0xffffc928)},
-      {"title": "Emotional", "icon": Icons.favorite, "color": const Color(0xffff1fb8)},
+      {
+        'title': 'Chat',
+        'icon': Icons.chat_bubble_rounded,
+        'color': const Color(0xFF61E2E5),
+      },
+      {
+        'title': 'Dating',
+        'icon': Icons.sentiment_very_satisfied_rounded,
+        'color': const Color(0xFFFF6CD8),
+      },
+      {
+        'title': 'Games',
+        'icon': Icons.sports_esports_rounded,
+        'color': const Color(0xFF7DA3FF),
+      },
+      {
+        'title': 'Interests',
+        'icon': Icons.auto_stories_rounded,
+        'color': const Color(0xFFFFD65A),
+      },
+      {
+        'title': 'Emotional',
+        'icon': Icons.favorite_rounded,
+        'color': const Color(0xFFFF7CA7),
+      },
     ];
 
     return Container(
-      height: h * 0.145,
-      padding: EdgeInsets.all(w * 0.025),
+      padding: EdgeInsets.all(w * .025),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(.16),
-        borderRadius: BorderRadius.circular(6),
+        color: Colors.black.withOpacity(.15),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: Colors.white.withOpacity(.09),
+        ),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               GestureDetector(
                 onTap: () => livestreamController.audioimagePicker(),
                 child: Obx(() {
-                  final localImg = livestreamController.audioImage.value;
+                  final localImg = livestreamController.audioImage.value.trim();
+                  final profileUrl = ImageHelper.getImageUrl(
+                    authController.userProfile.value.user?.profileImage,
+                  );
 
                   return ClipRRect(
-                    borderRadius: BorderRadius.circular(5),
+                    borderRadius: BorderRadius.circular(14),
                     child: localImg.isEmpty
                         ? CachedNetworkImage(
-                      imageUrl: ImageHelper.getImageUrl(
-                        authController.userProfile.value.user?.profileImage,
-                      ),
-                      height: h * 0.09,
-                      width: h * 0.09,
+                      imageUrl: profileUrl,
+                      height: h * .078,
+                      width: h * .078,
                       fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(
+                        height: h * .078,
+                        width: h * .078,
+                        color: Colors.white.withOpacity(.10),
+                        alignment: Alignment.center,
+                        child: const CupertinoActivityIndicator(
+                          color: Colors.white,
+                        ),
+                      ),
+                      errorWidget: (_, __, ___) => Container(
+                        height: h * .078,
+                        width: h * .078,
+                        color: Colors.white.withOpacity(.10),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.person_rounded,
+                          color: Colors.white,
+                          size: h * .035,
+                        ),
+                      ),
                     )
                         : Image.file(
                       File(localImg),
-                      height: h * 0.067,
-                      width: h * 0.067,
+                      height: h * .078,
+                      width: h * .078,
                       fit: BoxFit.cover,
                     ),
                   );
                 }),
               ),
-              SizedBox(width: w * 0.025),
+              SizedBox(width: w * .028),
               Expanded(
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _InputLine(
                       controller: titleController,
-                      hint: "Add a title",
+                      hint: 'Typing-Only Safe Chat',
                     ),
-                    SizedBox(height: h * 0.006),
+                    SizedBox(height: h * .005),
                     GestureDetector(
                       onTap: onAnnouncementTap,
-                      child: Container(
-                        height: h * 0.030,
-                        alignment: Alignment.centerLeft,
+                      behavior: HitTestBehavior.opaque,
+                      child: SizedBox(
+                        height: h * .030,
                         child: Row(
                           children: [
                             Icon(
                               CupertinoIcons.speaker_2_fill,
                               color: Colors.white,
-                              size: h * 0.015,
+                              size: h * .017,
                             ),
-                            SizedBox(width: h * 0.006),
+                            SizedBox(width: w * .014),
                             Expanded(
                               child: Text(
                                 announcementText.trim().isEmpty
-                                    ? ("Announcement (optional)").appTr: announcementText.trim(),
+                                    ? ('Announcement').appTr
+                                    : announcementText.trim(),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: GoogleFonts.poppins(
-                                  color: Colors.white.withOpacity(.78),
-                                  fontSize: h * 0.0115,
-                                  fontStyle: announcementText.trim().isEmpty
-                                      ? FontStyle.italic
-                                      : FontStyle.normal,
+                                  color: Colors.white.withOpacity(.90),
+                                  fontSize: h * .014,
+                                  fontWeight: FontWeight.w400,
                                 ),
                               ),
                             ),
@@ -1032,7 +1188,63 @@ class _TopLiveInfoCard extends StatelessWidget {
               ),
             ],
           ),
+          SizedBox(height: h * .015),
+          Row(
+            children: List.generate(moods.length, (index) {
+              final mood = moods[index];
+              final bool active = selectedMood == index;
+              final Color moodColor = mood['color'] as Color;
 
+              return Expanded(
+                child: InkWell(
+                  onTap: () => onMoodSelect(index),
+                  borderRadius: BorderRadius.circular(13),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        height: h * .043,
+                        margin: EdgeInsets.symmetric(horizontal: w * .004),
+                        decoration: BoxDecoration(
+                          color: active
+                              ? Colors.white.withOpacity(.15)
+                              : Colors.white.withOpacity(.08),
+                          borderRadius: BorderRadius.circular(13),
+                          border: Border.all(
+                            color: active
+                                ? Colors.white.withOpacity(.45)
+                                : Colors.transparent,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          mood['icon'] as IconData,
+                          color: active
+                              ? moodColor
+                              : Colors.white.withOpacity(.80),
+                          size: h * .023,
+                        ),
+                      ),
+                      SizedBox(height: h * .005),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          (mood['title'] as String).appTr,
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontSize: h * .0117,
+                            fontWeight:
+                            active ? FontWeight.w600 : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ),
         ],
       ),
     );

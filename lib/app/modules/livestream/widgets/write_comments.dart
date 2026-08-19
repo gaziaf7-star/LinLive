@@ -75,10 +75,18 @@ class WriteCommentSection extends StatefulWidget {
   final String streamType;
   final RxMap broadcasterData;
 
+  /// Video LIVE-only controls supplied by PopularLiveView. Keeping these as
+  /// callbacks/widgets avoids duplicating Agora filter or PK request logic in
+  /// this shared comment bar (which is also used by Audio LIVE).
+  final VoidCallback? onVideoFilterTap;
+  final Widget? videoPkButton;
+
   WriteCommentSection({
     required this.rtcEngine,
     required this.streamType,
     required this.broadcasterData,
+    this.onVideoFilterTap,
+    this.videoPkButton,
   });
 
   @override
@@ -369,7 +377,7 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
     final canModerate = livestreamController.canModerateLive == true;
     debugPrint(
       '[COMMENT][SEND_TAP] text_length=${text.length} locked=$locked '
-      'can_moderate=$canModerate sending=$_sendingComment',
+          'can_moderate=$canModerate sending=$_sendingComment',
     );
     debugPrint('[COMMENT][UI_HANDLER_ENTER]');
 
@@ -458,7 +466,7 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
     final bool canModerate = livestreamController.canModerateLive == true;
     debugPrint(
       '[COMMENT][SEND_TAP] text_length=${text.length} locked=$locked '
-      'can_moderate=$canModerate sending=$_sendingComment',
+          'can_moderate=$canModerate sending=$_sendingComment',
     );
     debugPrint('[COMMENT][UI_HANDLER_ENTER]');
 
@@ -889,7 +897,13 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
       child: Padding(
         padding: EdgeInsets.only(bottom: 0, left: 10, right: 10, top: 5),
         child: Padding(
-          padding: const EdgeInsets.only(bottom: 8.0),
+          // Video LIVE controls are lifted slightly above the very bottom.
+          // Audio LIVE keeps the existing position unchanged.
+          padding: EdgeInsets.only(
+            bottom: widget.streamType == "popular"
+                ? kHeight * 0.022
+                : 8.0,
+          ),
           child: SingleChildScrollView(
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1108,6 +1122,8 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
                       ),
                     ),
                   )
+                      : widget.streamType == "popular"
+                      ? _buildVideoLiveBottomActions()
                       : Row(
                     key: ValueKey(2),
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -1133,6 +1149,16 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
                         image: 'assets/newaudio/happy-face.png',
                         color: Color(0xffffffff).withOpacity(.2),
                       ),
+                      widget.streamType == "popular" &&
+                          widget.onVideoFilterTap != null &&
+                          livestreamController.broadcasterId.value ==
+                              authController.userProfile.value.user?.id
+                          ? Padding(
+                        padding: EdgeInsets.only(right: kWeight * 0.006),
+                        child: _buildVideoFilterBottomButton(),
+                      )
+                          : const SizedBox.shrink(),
+
                       widget.streamType == "popular" && _canManageCalls
                           ? InkWell(
                         borderRadius: BorderRadius.circular(50),
@@ -1141,32 +1167,20 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
                           widget.rtcEngine,
                         ),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 9,
-                          ),
+                          width: 42,
+                          height: 42,
+                          alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(50),
+                            color: Colors.black.withOpacity(.18),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: Colors.white.withOpacity(.10),
+                            ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.call_rounded,
-                                size: 17,
-                                color: Color(0xffF80230),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                'Call List'.appTr,
-                                style: const TextStyle(
-                                  color: Color(0xffF80230),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ],
+                          child: const Icon(
+                            Icons.call_rounded,
+                            size: 21,
+                            color: Colors.white,
                           ),
                         ),
                       )
@@ -1424,7 +1438,17 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
                             : 'assets/frame/sound.png',
                       ),
 
-                      SizedBox(width: kWeight * 0.01),
+                      SizedBox(width: kWeight * 0.008),
+
+                      widget.streamType == "popular" &&
+                          widget.videoPkButton != null &&
+                          livestreamController.broadcasterId.value ==
+                              authController.userProfile.value.user?.id
+                          ? Padding(
+                        padding: EdgeInsets.only(right: kWeight * 0.006),
+                        child: widget.videoPkButton!,
+                      )
+                          : const SizedBox.shrink(),
 
                       buildGiftButton(),
                       SizedBox(width: kWeight * 0.01),
@@ -1467,6 +1491,475 @@ class _WriteCommentSectionState extends State<WriteCommentSection> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+
+  bool get _isCurrentVideoHost {
+    if (widget.streamType != 'popular') return false;
+
+    final int myId = authController.userProfile.value.user?.id?.toInt() ?? 0;
+    if (myId <= 0) return false;
+
+    final int broadcasterId =
+        int.tryParse(livestreamController.broadcasterId.value.toString()) ?? 0;
+
+    if (broadcasterId > 0) {
+      return broadcasterId == myId;
+    }
+
+    final dynamic broadUser = widget.broadcasterData['user'];
+    if (broadUser is Map) {
+      final int ownerId =
+          int.tryParse((broadUser['id'] ?? broadUser['user_id'] ?? 0).toString()) ??
+              0;
+      if (ownerId > 0) {
+        return ownerId == myId;
+      }
+    }
+
+    return livestreamController.isBroadcaster.value;
+  }
+
+  Widget _buildVideoLiveBottomActions() {
+    return Row(
+      key: const ValueKey('video-live-compact-actions'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Existing full More menu.
+        EntertainmentToolsWidget(
+          rtcEngine: widget.rtcEngine,
+          streamType: widget.streamType,
+          isBroadcaster: livestreamController.isBroadcaster.value,
+        ),
+
+        SizedBox(width: kWeight * 0.008),
+
+        // PK beside More.
+        if (_isCurrentVideoHost && widget.videoPkButton != null) ...[
+          widget.videoPkButton!,
+          SizedBox(width: kWeight * 0.008),
+        ],
+
+        // Call beside PK.
+        if (_canManageCalls) ...[
+          _buildCompactVideoCallButton(),
+          SizedBox(width: kWeight * 0.008),
+        ],
+
+        // Second More. Filter/Camera/Mute/Sound are inside.
+        if (_isCurrentVideoHost) _buildVideoQuickMoreButton(),
+      ],
+    );
+  }
+
+  Widget _buildCompactVideoCallButton() {
+    return Obx(() {
+      final int pending = websocketController.pendingCall.length;
+
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(50),
+            onTap: () => showCallBottomSheet(
+              context,
+              widget.rtcEngine,
+            ),
+            child: Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(.30),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withOpacity(.16),
+                  width: 1,
+                ),
+              ),
+              child: const Icon(
+                Icons.call_rounded,
+                size: 20,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          if (pending > 0)
+            Positioned(
+              right: -2,
+              top: -3,
+              child: Container(
+                constraints: const BoxConstraints(
+                  minWidth: 17,
+                  minHeight: 17,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 4,
+                  vertical: 2,
+                ),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: const Color(0xffF80230),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: Colors.white,
+                    width: 1.2,
+                  ),
+                ),
+                child: Text(
+                  pending > 9 ? '9+' : '$pending',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 8,
+                    height: 1,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+    });
+  }
+
+  Widget _buildVideoQuickMoreButton() {
+    return InkWell(
+      onTap: _openVideoQuickControlsSheet,
+      borderRadius: BorderRadius.circular(50),
+      child: Container(
+        width: 40,
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(.30),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: Colors.white.withOpacity(.16),
+            width: 1,
+          ),
+        ),
+        child: const Icon(
+          Icons.more_horiz_rounded,
+          color: Colors.white,
+          size: 23,
+        ),
+      ),
+    );
+  }
+
+  bool _hostAudioIsOn() {
+    final int userId =
+        authController.userProfile.value.user?.id?.toInt() ?? 0;
+    if (userId <= 0) return true;
+
+    final bool hasKnownMute =
+    websocketController.audioMutedUserMap.containsKey(userId);
+
+    if (hasKnownMute) {
+      return websocketController.audioMutedUserMap[userId] != true;
+    }
+
+    if (livestreamController.mute.value == true) {
+      return false;
+    }
+
+    final int hostCallIndex =
+    websocketController.liveCallList.indexWhere((call) {
+      if (call is! Map) return false;
+
+      final dynamic user = call['user'];
+      final dynamic callerId = call['caller_id'];
+      final dynamic callUserId = user is Map ? user['id'] : null;
+
+      return callerId.toString() == userId.toString() ||
+          callUserId.toString() == userId.toString();
+    });
+
+    if (hostCallIndex == -1) return true;
+
+    final dynamic call = websocketController.liveCallList[hostCallIndex];
+    if (call is! Map) return true;
+
+    final dynamic raw = call['audio_on'] ?? call['is_audio_on'];
+    if (raw == null) return true;
+    if (raw is bool) return raw;
+    if (raw is num) return raw.toInt() != 0;
+
+    final String value = raw.toString().trim().toLowerCase();
+    return value == '1' ||
+        value == 'true' ||
+        value == 'yes' ||
+        value == 'on' ||
+        value == 'enabled';
+  }
+
+  Future<void> _toggleHostMicFromQuickMore() async {
+    if (!_isCurrentVideoHost) return;
+
+    final int userId =
+        authController.userProfile.value.user?.id?.toInt() ?? 0;
+    if (userId <= 0) return;
+
+    await livestreamController.toggleSpecificUserAudio(
+      userId,
+      rtcEngine: widget.rtcEngine,
+    );
+  }
+
+  Future<void> _openVideoFilterFromQuickMore() async {
+    if (!_isCurrentVideoHost || widget.onVideoFilterTap == null) return;
+
+    if (Get.isBottomSheetOpen == true) {
+      Get.back();
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+
+    widget.onVideoFilterTap?.call();
+  }
+
+  Future<void> _flipCameraFromQuickMore() async {
+    if (!_isCurrentVideoHost) return;
+
+    try {
+      await AgoraService().flipCamera();
+    } catch (e) {
+      debugPrint('Video quick camera switch failed: $e');
+    }
+  }
+
+  void _openVideoQuickControlsSheet() {
+    if (!_isCurrentVideoHost) return;
+
+    Get.bottomSheet(
+      StatefulBuilder(
+        builder: (sheetContext, sheetSetState) {
+          return SafeArea(
+            top: false,
+            child: Container(
+              width: double.infinity,
+              padding: EdgeInsets.fromLTRB(
+                kWeight * 0.035,
+                kHeight * 0.012,
+                kWeight * 0.035,
+                kHeight * 0.018,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xff1D1E22),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
+                border: Border(
+                  top: BorderSide(
+                    color: Colors.white.withOpacity(.08),
+                  ),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(.30),
+                    blurRadius: 24,
+                    offset: const Offset(0, -8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(.22),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                  SizedBox(height: kHeight * 0.014),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildQuickVideoControlItem(
+                          icon: Icons.auto_awesome_rounded,
+                          title: ('Filter').appTr,
+                          accent: const Color(0xffff5ca8),
+                          onTap: _openVideoFilterFromQuickMore,
+                        ),
+                      ),
+                      Expanded(
+                        child: _buildQuickVideoControlItem(
+                          icon: Icons.cameraswitch_rounded,
+                          title: ('Camera').appTr,
+                          accent: const Color(0xff5FD5FF),
+                          onTap: () async {
+                            await _flipCameraFromQuickMore();
+                            if (mounted) {
+                              sheetSetState(() {});
+                            }
+                          },
+                        ),
+                      ),
+                      Expanded(
+                        child: Obx(() {
+                          final bool audioOn = _hostAudioIsOn();
+                          return _buildQuickVideoControlItem(
+                            icon: audioOn
+                                ? Icons.mic_rounded
+                                : Icons.mic_off_rounded,
+                            title: audioOn
+                                ? ('Mute').appTr
+                                : ('Unmute').appTr,
+                            accent: audioOn
+                                ? const Color(0xffFFCA57)
+                                : const Color(0xffFF637D),
+                            onTap: () async {
+                              await _toggleHostMicFromQuickMore();
+                              if (mounted) {
+                                sheetSetState(() {});
+                              }
+                            },
+                          );
+                        }),
+                      ),
+                      Expanded(
+                        child: _buildQuickVideoControlItem(
+                          icon: _isBroadSpeakerMuted
+                              ? Icons.volume_off_rounded
+                              : Icons.volume_up_rounded,
+                          title: _isBroadSpeakerMuted
+                              ? ('Sound On').appTr
+                              : ('Sound Off').appTr,
+                          accent: _isBroadSpeakerMuted
+                              ? const Color(0xffFF637D)
+                              : const Color(0xff70E2A3),
+                          onTap: () async {
+                            await _toggleBroadSpeakerMute();
+                            if (mounted) {
+                              sheetSetState(() {});
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withOpacity(.18),
+    );
+  }
+
+  Widget _buildQuickVideoControlItem({
+    required IconData icon,
+    required String title,
+    required Color accent,
+    required Future<void> Function() onTap,
+  }) {
+    return InkWell(
+      onTap: () {
+        onTap();
+      },
+      borderRadius: BorderRadius.circular(18),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: kWeight * 0.006,
+          vertical: kHeight * 0.006,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: accent.withOpacity(.16),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: accent.withOpacity(.34),
+                ),
+              ),
+              child: Icon(
+                icon,
+                color: accent,
+                size: 22,
+              ),
+            ),
+            SizedBox(height: kHeight * 0.007),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                title,
+                maxLines: 1,
+                style: GoogleFonts.poppins(
+                  color: Colors.white.withOpacity(.94),
+                  fontSize: kHeight * 0.0115,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoFilterBottomButton() {
+    return InkWell(
+      onTap: widget.onVideoFilterTap,
+      borderRadius: BorderRadius.circular(50),
+      child: Container(
+        width: 42,
+        height: 42,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(.18),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: Colors.white.withOpacity(.10),
+          ),
+        ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            ShaderMask(
+              shaderCallback: (Rect bounds) {
+                return const LinearGradient(
+                  colors: [
+                    Color(0xFFFFFFFF),
+                    Color(0xFFFFB7E8),
+                    Color(0xFFFF4A9D),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ).createShader(bounds);
+              },
+              blendMode: BlendMode.srcIn,
+              child: const Icon(
+                Icons.auto_awesome_rounded,
+                color: Colors.white,
+                size: 24,
+              ),
+            ),
+            Positioned(
+              right: 2,
+              top: 1,
+              child: Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFFF3D77),
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

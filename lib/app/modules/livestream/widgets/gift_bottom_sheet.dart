@@ -41,6 +41,21 @@ class gift_bottom_sheet extends StatefulWidget {
 }
 
 class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
+  /// ✅ Pixel-sampled directly from the reference screenshot (see chat) —
+  /// NOT the same as the app's existing `kAppColor1`/`kAppColor2` brand
+  /// constants, because we don't know if those already equal these values
+  /// in this project's color_constants.dart. Every "match the image
+  /// exactly" accent below uses these hardcoded hex values instead of
+  /// kAppColor1/kAppColor2, so the result is guaranteed to match the
+  /// screenshot regardless of what the app's brand teal actually is.
+  static const Color _kRefTeal = Color(0xff00e6e6); // bright cyan accent
+  static const Color _kRefTealDeep = Color(0xff00b8c9); // darker teal (gradients)
+  static const Color _kRefNavy = Color(0xff1c1c40); // selected-card top navy
+  static const Color _kRefBg = Color(0xff1a1d26); // sheet background (flat)
+  static const Color _kRefPurpleTop = Color(0xffb04bff);
+  static const Color _kRefPurpleBottom = Color(0xff8f05f7);
+  static const Color _kRefGold = Color(0xffffc94d);
+
   final LivestreamController livestreamController = Get.find();
   final WebsocketController websocketController = Get.find();
   final AuthController authController = Get.find();
@@ -69,6 +84,14 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
   final RxString selectedSendAmount = ''.obs;
   final TextEditingController customAmountController = TextEditingController();
 
+  /// ✅ New (screenshot-matched): quick x1/x5/x10 quantity picker shown as a
+  /// "▲ x5" dropdown pill in the bottom bar. Purely a UI selection value —
+  /// same as the pre-existing `selectedSendAmount` custom chip, it is not
+  /// wired into `_sendSelectedGift`/`tryToSendGift` because that controller
+  /// method has no quantity/multiplier parameter in this codebase. Wiring
+  /// real repeat-send behaviour would need that API to accept a count.
+  final RxInt quickSendMultiplier = 1.obs;
+
   bool get isSmallScreen => Get.width < 370;
   bool get isTinyScreen => Get.width < 340;
 
@@ -80,11 +103,18 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     return Get.height * .68;
   }
 
-  double get avatarSize => isSmallScreen ? 42 : 48;
-  double get avatarBoxWidth => isSmallScreen ? 52 : 58;
-  double get tabFontSize => isSmallScreen ? 14 : 16;
-  double get giftNameFontSize => isSmallScreen ? 10.5 : 12.2;
-  double get coinFontSize => isSmallScreen ? 11.5 : 13.2;
+  double get avatarSize => isTinyScreen ? 36 : (isSmallScreen ? 42 : 48);
+  double get avatarBoxWidth => isTinyScreen ? 46 : (isSmallScreen ? 52 : 58);
+
+  /// Avatar circle + overlapping bottom number-badge height (used by the
+  /// receiver strip's SizedBox so the badge isn't clipped). Mirrors the
+  /// `badgeH * .55` overlap math used inside `_avatar`.
+  double get avatarRowHeight =>
+      avatarSize + (isTinyScreen ? 15 : (isSmallScreen ? 16 : 18)) * .55;
+  double get tabFontSize => isTinyScreen ? 12.5 : (isSmallScreen ? 14 : 16);
+  double get giftNameFontSize =>
+      isTinyScreen ? 9.5 : (isSmallScreen ? 10.5 : 12.2);
+  double get coinFontSize => isTinyScreen ? 10.5 : (isSmallScreen ? 11.5 : 13.2);
   double get giftImageSize => isSmallScreen ? 56 : 70;
 
   @override
@@ -599,11 +629,11 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
   BoxDecoration _premiumSheetDecoration() {
     return BoxDecoration(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
-      gradient: const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0xff07142d), Color(0xff07122a), Color(0xff061126)],
-      ),
+      // ✅ Re-confirmed by frequency analysis of the reference screenshot:
+      // #1a1d26 alone covers the vast majority of the background pixels —
+      // it's essentially FLAT, not a gradient. Using the exact sampled
+      // color as a near-flat fill instead of guessing a darker navy blend.
+      color: _kRefBg,
       boxShadow: [
         BoxShadow(
           color: const Color(0xff020814).withOpacity(.72),
@@ -618,6 +648,13 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     final id = int.tryParse('${user['id'] ?? 0}') ?? 0;
     final image = _safeImage(user['profile_image']);
     final seatNo = user['seat_no'];
+
+    /// ✅ Re-fixed to match the reference image exactly: the seat/receiver
+    /// number sits as a small pill OVERLAPPING the bottom of the avatar
+    /// ring (not below it) — unselected pill is a dark, near-invisible tag
+    /// with soft grey-blue text; selected pill turns bright cyan matching
+    /// the selected ring. Same tap/select logic as before, visuals only.
+    final double badgeH = isTinyScreen ? 15 : (isSmallScreen ? 16 : 18);
 
     return Obx(() {
       final selected = selectedLocalReceiverIds.contains(id);
@@ -639,47 +676,48 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
         },
         child: SizedBox(
           width: avatarBoxWidth,
-          height: avatarSize + 12,
+          height: avatarSize + badgeH * .55,
           child: Stack(
             clipBehavior: Clip.none,
-            alignment: Alignment.center,
+            alignment: Alignment.topCenter,
             children: [
               AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOut,
                 height: avatarSize,
                 width: avatarSize,
-                padding: const EdgeInsets.all(2.4),
+                padding: EdgeInsets.all(selected ? 2.2 : 1.3),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: selected
                       ? const LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [kAppColor2, kAppColor1],
+                    colors: [_kRefTeal, _kRefTealDeep],
                   )
-                      : LinearGradient(
-                    colors: [
-                      Colors.white.withOpacity(.22),
-                      Colors.white.withOpacity(.06),
-                    ],
+                      : null,
+                  border: selected
+                      ? null
+                      : Border.all(
+                    color: Colors.white.withOpacity(.24),
+                    width: 1.2,
                   ),
                   boxShadow: [
                     if (selected)
                       BoxShadow(
-                        color: kAppColor2.withOpacity(.52),
-                        blurRadius: 15,
-                        spreadRadius: 1,
+                        color: _kRefTeal.withOpacity(.50),
+                        blurRadius: 14,
+                        spreadRadius: .5,
                       ),
                     BoxShadow(
-                      color: Colors.black.withOpacity(.42),
-                      blurRadius: 12,
-                      offset: const Offset(0, 5),
+                      color: Colors.black.withOpacity(.35),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),
                 child: Container(
-                  padding: const EdgeInsets.all(2),
+                  padding: const EdgeInsets.all(1.6),
                   decoration: const BoxDecoration(
                     shape: BoxShape.circle,
                     color: Color(0xff07122a),
@@ -691,7 +729,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                       child: Icon(
                         Icons.person,
                         color: Colors.white,
-                        size: isSmallScreen ? 22 : 24,
+                        size: isTinyScreen ? 18 : (isSmallScreen ? 20 : 22),
                       ),
                     )
                         : CachedNetworkImage(
@@ -704,7 +742,7 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                         child: Icon(
                           Icons.person,
                           color: Colors.white,
-                          size: isSmallScreen ? 22 : 24,
+                          size: isTinyScreen ? 18 : (isSmallScreen ? 20 : 22),
                         ),
                       ),
                     ),
@@ -715,42 +753,39 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                 bottom: 0,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  height: isSmallScreen ? 17 : 19,
-                  constraints: BoxConstraints(
-                    minWidth: isSmallScreen ? 17 : 19,
-                  ),
+                  height: badgeH,
+                  constraints: BoxConstraints(minWidth: badgeH),
                   padding: const EdgeInsets.symmetric(horizontal: 5),
                   decoration: BoxDecoration(
-                    shape: seatNo == null
-                        ? BoxShape.circle
-                        : BoxShape.rectangle,
-                    borderRadius: seatNo == null
-                        ? null
-                        : BorderRadius.circular(30),
+                    borderRadius: BorderRadius.circular(30),
                     gradient: selected
-                        ? const LinearGradient(colors: [kAppColor2, kAppColor1])
-                        : const LinearGradient(
-                      colors: [Color(0xff2ddcff), Color(0xff5c7cff)],
-                    ),
+                        ? const LinearGradient(colors: [_kRefTeal, _kRefTealDeep])
+                        : null,
+                    color: selected ? null : const Color(0xcc0a1830),
                     border: Border.all(
-                      color: Colors.white.withOpacity(.55),
+                      color: selected
+                          ? Colors.white.withOpacity(.55)
+                          : Colors.white.withOpacity(.16),
                       width: 1,
                     ),
                     boxShadow: [
-                      BoxShadow(
-                        color: (selected ? kAppColor2 : const Color(0xff3aa8ff))
-                            .withOpacity(.40),
-                        blurRadius: 8,
-                      ),
+                      if (selected)
+                        BoxShadow(
+                          color: _kRefTeal.withOpacity(.45),
+                          blurRadius: 8,
+                        ),
                     ],
                   ),
                   child: Center(
                     child: Text(
-                      seatNo == null ? '✓' : '$seatNo',
+                      seatNo == null ? '' : '$seatNo',
                       style: GoogleFonts.poppins(
-                        color: Colors.white,
-                        fontSize: isSmallScreen ? 9 : 10,
-                        fontWeight: FontWeight.w900,
+                        color: selected
+                            ? Colors.white
+                            : const Color(0xffb9c6e6),
+                        fontSize:
+                        isTinyScreen ? 8.5 : (isSmallScreen ? 9 : 10),
+                        fontWeight: FontWeight.w700,
                         height: 1,
                       ),
                     ),
@@ -762,6 +797,77 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
         ),
       );
     });
+  }
+
+  /// ✅ Re-fixed to match the reference image: a single horizontal toggle
+  /// chip — a white pill labelled "All" that slides inside a dark track,
+  /// instead of a text-label-above-switch layout. Same select-all/clear-all
+  /// behaviour is passed in via [onTap] from `_topReceiverPanel`.
+  Widget _allToggle({
+    required bool allSelected,
+    required VoidCallback onTap,
+  }) {
+    final double trackH = isTinyScreen ? 24 : (isSmallScreen ? 26 : 28);
+    final double trackW = isTinyScreen ? 52 : (isSmallScreen ? 58 : 64);
+    final double thumbW = trackW * .62;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        height: trackH,
+        width: trackW,
+        padding: const EdgeInsets.all(2.4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(100),
+          color: allSelected
+              ? _kRefTeal.withOpacity(.16)
+              : Colors.white.withOpacity(.08),
+          border: Border.all(
+            color: allSelected
+                ? _kRefTeal.withOpacity(.65)
+                : Colors.white.withOpacity(.22),
+            width: 1,
+          ),
+        ),
+        child: AnimatedAlign(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          alignment: allSelected ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            width: thumbW,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(100),
+              gradient: allSelected
+                  ? const LinearGradient(colors: [_kRefTeal, _kRefTealDeep])
+                  : null,
+              color: allSelected ? null : Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(.30),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Center(
+              child: Text(
+                ('All').appTr,
+                maxLines: 1,
+                style: GoogleFonts.poppins(
+                  color: allSelected ? Colors.white : Colors.black87,
+                  fontSize: isTinyScreen ? 9.5 : (isSmallScreen ? 10 : 11),
+                  fontWeight: FontWeight.w700,
+                  height: 1,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _premiumPill({
@@ -840,9 +946,22 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     final ids = _allReceiverIds(receivers);
 
     return Padding(
-      padding: EdgeInsetsGeometry.symmetric(horizontal: kWeight * 0.02),
+      padding: EdgeInsetsGeometry.symmetric(
+        horizontal: kWeight * 0.02,
+        vertical: isTinyScreen ? 4 : 6,
+      ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          Text(
+            ('To:').appTr,
+            style: GoogleFonts.poppins(
+              color: Colors.white60,
+              fontSize: isTinyScreen ? 11 : (isSmallScreen ? 12 : 13.5),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          SizedBox(width: isSmallScreen ? 6 : 9),
           Expanded(
             child: receivers.isEmpty
                 ? Text(
@@ -854,13 +973,13 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
               ),
             )
                 : SizedBox(
-              height: avatarSize + 12,
+              height: avatarRowHeight,
               child: ListView.separated(
                 physics: const BouncingScrollPhysics(),
                 scrollDirection: Axis.horizontal,
                 itemCount: receivers.length,
                 separatorBuilder: (_, __) =>
-                    SizedBox(width: isSmallScreen ? 7 : 10),
+                    SizedBox(width: isSmallScreen ? 8 : 12),
                 itemBuilder: (_, index) => _avatar(receivers[index]),
               ),
             ),
@@ -872,11 +991,8 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                     selectedLocalReceiverIds.length == ids.length &&
                     ids.every((id) => selectedLocalReceiverIds.contains(id));
 
-            return _premiumPill(
-              icon: Icons.mic_rounded,
-              text: ('All Mic').appTr,
-              active: allSelected,
-              width: isSmallScreen ? 104 : 126,
+            return _allToggle(
+              allSelected: allSelected,
               onTap: () {
                 if (ids.isEmpty) return;
                 if (allSelected) {
@@ -906,11 +1022,11 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
       if (categories.isEmpty) return const SizedBox.shrink();
 
       return Container(
-        height: isSmallScreen ? 58 : 64,
+        height: isTinyScreen ? 52 : (isSmallScreen ? 58 : 64),
         padding: EdgeInsets.fromLTRB(
-          isSmallScreen ? 10 : 15,
+          isTinyScreen ? 8 : (isSmallScreen ? 10 : 15),
           isSmallScreen ? 5 : 7,
-          isSmallScreen ? 10 : 15,
+          isTinyScreen ? 8 : (isSmallScreen ? 10 : 15),
           0,
         ),
         decoration: BoxDecoration(
@@ -936,58 +1052,111 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                       duration: const Duration(milliseconds: 180),
                       margin: EdgeInsets.only(right: isSmallScreen ? 17 : 26),
                       padding: const EdgeInsets.only(top: 7),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            categories[index],
-                            style: GoogleFonts.roboto(
-                              color: selected
-                                  ? kAppColor2
-                                  : Colors.white.withOpacity(.68),
-                              fontSize: kHeight * 0.018,
-                              fontWeight: FontWeight.w500,
-                              height: 1,
-                              shadows: selected
-                                  ? [
-                                Shadow(
-                                  color: kAppColor2.withOpacity(.40),
-                                  blurRadius: 12,
-                                ),
-                              ]
-                                  : null,
-                            ),
+                      child: Center(
+                        // ✅ Re-fixed to match the reference image: plain
+                        // bold-white (selected) vs translucent-grey
+                        // (unselected) text, no teal color/glow, no
+                        // underline indicator bar.
+                        child: Text(
+                          categories[index],
+                          style: GoogleFonts.roboto(
+                            color: selected
+                                ? Colors.white
+                                : Colors.white.withOpacity(.55),
+                            fontSize: kHeight * 0.018,
+                            fontWeight:
+                            selected ? FontWeight.w700 : FontWeight.w500,
+                            height: 1,
                           ),
-                          const SizedBox(height: 7),
-                          AnimatedContainer(
-                            duration: const Duration(milliseconds: 180),
-                            height: 4,
-                            width: selected ? 24 : 0,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(50),
-                              gradient: const LinearGradient(
-                                colors: [kAppColor2, kAppColor1],
-                              ),
-                              boxShadow: [
-                                if (selected)
-                                  BoxShadow(
-                                    color: kAppColor2.withOpacity(.45),
-                                    blurRadius: 10,
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   );
                 },
               ),
             ),
+            SizedBox(width: isTinyScreen ? 6 : 9),
+            // ✅ New (decorative only, screenshot-matched): backpack/bag
+            // icon at the trailing end of the category tab row. No gift
+            // "inventory" feature exists in this codebase yet, so this is
+            // purely visual and intentionally not wired to any action.
+            _giftBackpackIcon(),
           ],
         ),
       );
     });
+  }
+
+  /// Purely decorative bag icon shown at the end of the category tabs row
+  /// (matches the reference design — a plain outline icon, no background
+  /// bubble). No onTap handler on purpose.
+  Widget _giftBackpackIcon() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Icon(
+        Icons.backpack_rounded,
+        color: Colors.white.withOpacity(.70),
+        size: isTinyScreen ? 21 : (isSmallScreen ? 23 : 26),
+      ),
+    );
+  }
+
+  /// ✅ New (screenshot-matched): ribbon-style "Lucky" banner tag for the
+  /// top-left corner of a gift card, replacing the old small icon badge.
+  /// Purely presentational — the caller still gates it on the same
+  /// _isLuckyGift/_canShowLuckyGift/kPlayStoreSafeMode conditions.
+  Widget _luckyRibbon() {
+    // ✅ Re-fixed to match the reference image: a small flag-style tag
+    // hanging off the top-left corner (not a rotated diagonal ribbon) —
+    // icon + "Lucky" text on a purple-to-blue gradient chip.
+    final double fontSize = isTinyScreen ? 7.5 : (isSmallScreen ? 8 : 8.8);
+
+    return Positioned(
+      top: isTinyScreen ? -4 : -5,
+      left: isTinyScreen ? -4 : -5,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: isSmallScreen ? 6 : 8,
+          vertical: isSmallScreen ? 2.4 : 3,
+        ),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(8),
+            topRight: Radius.circular(10),
+            bottomRight: Radius.circular(10),
+            bottomLeft: Radius.circular(2),
+          ),
+          // ✅ Pixel-sampled ribbon purple (was an eyeballed guess before).
+          gradient: const LinearGradient(
+            colors: [_kRefPurpleTop, _kRefPurpleBottom],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: _kRefPurpleBottom.withOpacity(.45),
+              blurRadius: 5,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.auto_awesome_rounded, color: Colors.white, size: fontSize + 2),
+            const SizedBox(width: 2),
+            Text(
+              ('Lucky').appTr,
+              maxLines: 1,
+              style: GoogleFonts.poppins(
+                color: Colors.white,
+                fontSize: fontSize,
+                fontWeight: FontWeight.w800,
+                height: 1,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _smallBadge({
@@ -1003,7 +1172,9 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
         height: isSmallScreen ? 16 : 18,
         width: isSmallScreen ? 16 : 18,
         decoration: BoxDecoration(
-          shape: BoxShape.circle,
+          // ✅ Re-fixed to match the reference image: small rounded SQUARE
+          // (not a circle) for the "hot"/flame badge.
+          borderRadius: BorderRadius.circular(6),
           gradient: LinearGradient(
             colors: [color.withOpacity(.95), color.withOpacity(.62)],
           ),
@@ -1141,134 +1312,144 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
         child: AnimatedScale(
           duration: const Duration(milliseconds: 140),
           scale: selected ? .97 : 1,
+          // ✅ Re-fixed per feedback (3rd pass): "selected" now means the
+          // SAME card treatment the reference image shows on its first
+          // card (Cactus fruit) — a rounded card box with a dark
+          // navy-to-bright-teal vertical gradient — instead of no styling
+          // at all. Unselected cards stay fully transparent, exactly like
+          // every other card in the reference.
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: EdgeInsets.all(selected ? 1 : 0),
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            padding: EdgeInsets.all(isSmallScreen ? 6 : 7),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(5),
+              borderRadius: BorderRadius.circular(14),
               gradient: selected
                   ? const LinearGradient(
-                colors: [kAppColor2, kAppColor1, kAppColor2],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  _kRefNavy,
+                  _kRefNavy,
+                  _kRefTeal,
+                ],
+                stops: [0.0, 0.55, 1.0],
               )
                   : null,
-
-              // ✅ Selected gift card glow shadow remove.
-              // Image er upor halka white/blur effect ashbe na.
-              boxShadow: const [],
             ),
-            child: Container(
-              padding: EdgeInsets.all(isSmallScreen ? 4 : 5),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(3),
-                color: selected ? const Color(0xff091834) : Colors.transparent,
-              ),
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(child: _giftImageBox(image)),
-                      SizedBox(height: isSmallScreen ? 7 : 9),
-                      Text(
-                        name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.roboto(
-                          color: Colors.white,
-                          fontSize: giftNameFontSize,
-                          fontWeight: FontWeight.w500,
-                          height: 1.05,
-                          shadows: [
-                            Shadow(
-                              color: Colors.black.withOpacity(.55),
-                              blurRadius: 6,
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: isSmallScreen ? 6 : 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            height: isSmallScreen ? 17 : 19,
-                            width: isSmallScreen ? 17 : 19,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: const LinearGradient(
-                                colors: [Color(0xfffff15f), Color(0xffff9d00)],
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(
-                                    0xffffb400,
-                                  ).withOpacity(.35),
-                                  blurRadius: 8,
-                                ),
-                              ],
-                            ),
-                            child: const Icon(
-                              Icons.monetization_on_rounded,
-                              color: Color(0xff8b4a00),
-                              size: 14,
-                            ),
-                          ),
-                          SizedBox(width: isSmallScreen ? 5 : 7),
-                          Flexible(
-                            child: Text(
-                              coin,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.poppins(
-                                color: const Color(0xffffd34d),
-                                fontSize: coinFontSize,
-                                fontWeight: FontWeight.w500,
-                                height: 1,
-                              ),
-                            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: _giftImageBox(image)),
+                    SizedBox(height: isSmallScreen ? 7 : 9),
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.roboto(
+                        color: Colors.white,
+                        fontSize: giftNameFontSize,
+                        fontWeight: FontWeight.w500,
+                        height: 1.05,
+                        shadows: [
+                          Shadow(
+                            color: Colors.black.withOpacity(.55),
+                            blurRadius: 6,
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                  if (!kPlayStoreSafeMode && _canShowLuckyGift && isLucky)
-                    _smallBadge(
-                      icon: Icons.auto_awesome_rounded,
-                      color: const Color(0xff9b55ff),
-                      top: 7,
-                      right: 7,
                     ),
-                  if (isVipLocked)
-                    Positioned(
-                      top: 5,
-                      right: 5,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: const BoxDecoration(
-                          color: Color(0xDD251645),
-                          shape: BoxShape.circle,
+                    SizedBox(height: isSmallScreen ? 6 : 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          height: isSmallScreen ? 16 : 18,
+                          width: isSmallScreen ? 16 : 18,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: const LinearGradient(
+                              colors: [Color(0xfffff15f), Color(0xffff9d00)],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(
+                                  0xffffb400,
+                                ).withOpacity(.35),
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                          // ✅ Screenshot-matched: gold star token instead
+                          // of a coin icon (visual only, same price data).
+                          child: Icon(
+                            Icons.star_rounded,
+                            color: const Color(0xff8b4a00),
+                            size: isSmallScreen ? 12 : 13,
+                          ),
                         ),
-                        child: const Icon(
-                          Icons.lock_rounded,
-                          color: Color(0xFFFFD76A),
-                          size: 14,
+                        SizedBox(width: isSmallScreen ? 5 : 7),
+                        Flexible(
+                          child: Text(
+                            coin,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                              // ✅ Re-fixed to match the reference image:
+                              // white price text (not gold/yellow).
+                              color: Colors.white.withOpacity(.95),
+                              fontSize: coinFontSize,
+                              fontWeight: FontWeight.w500,
+                              height: 1,
+                            ),
+                          ),
                         ),
+                      ],
+                    ),
+                  ],
+                ),
+                // ✅ Screenshot-matched: ribbon-style "Lucky" tag in the
+                // top-left corner instead of a small icon badge. Same
+                // _isLuckyGift/_canShowLuckyGift condition as before.
+                if (!kPlayStoreSafeMode && _canShowLuckyGift && isLucky)
+                  _luckyRibbon(),
+                if (isVipLocked)
+                  Positioned(
+                    top: 5,
+                    right: 5,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Color(0xDD251645),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.lock_rounded,
+                        color: Color(0xFFFFD76A),
+                        size: 14,
                       ),
                     ),
-                  if (!kPlayStoreSafeMode &&
-                      _canShowLuckyGift &&
-                      gift['back_coin'] != null &&
-                      gift['back_coin'].toString() != 'null')
-                    _smallBadge(
-                      icon: Icons.local_offer_rounded,
-                      color: const Color(0xff19d3af),
-                      top: isSmallScreen ? 31 : 34,
-                      right: 7,
-                    ),
-                ],
-              ),
+                  ),
+                // ✅ Screenshot-matched: "hot" flame badge in the top-right
+                // corner (freed up now that Lucky moved to a top-left
+                // ribbon). Same back_coin condition/data as before, only
+                // the icon/color/position changed.
+                if (!kPlayStoreSafeMode &&
+                    _canShowLuckyGift &&
+                    gift['back_coin'] != null &&
+                    gift['back_coin'].toString() != 'null' &&
+                    !isVipLocked)
+                  _smallBadge(
+                    icon: Icons.local_fire_department_rounded,
+                    color: const Color(0xffff5b3d),
+                    top: 7,
+                    right: 7,
+                  ),
+              ],
             ),
           ),
         ),
@@ -1519,6 +1700,150 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
     Get.back();
   }
 
+  /// ✅ New (screenshot-matched): "▲ x{n}" dropdown pill offering quick
+  /// x1/x5/x10 quantity presets plus the existing "Custom" flow. Selecting
+  /// x1/x5/x10 only updates the local `quickSendMultiplier` display value;
+  /// selecting Custom calls the original `_openCustomAmountDialog()` so
+  /// that flow's behaviour is completely unchanged.
+  /// ✅ Re-fixed to match the reference image: the quantity dropdown and
+  /// the Send button are ONE seamless stadium-shaped control (teal border
+  /// wraps both halves, no gap/seam between them, solid teal fill only on
+  /// the Send half) instead of two separate pills with a gap. Same
+  /// onSelected/_openCustomAmountDialog quantity logic and the same
+  /// `_sendSelectedGift` tap target as before — visual merge only.
+  Widget _quantityAndSendControl() {
+    final double controlHeight = isSmallScreen ? 32 : 36;
+
+    return Obx(() {
+      final qty = quickSendMultiplier.value;
+      final gift = selectedGift.value;
+      final giftId = int.tryParse('${gift?['id'] ?? 0}') ?? 0;
+      final enabled = giftId != 0;
+
+      return Container(
+        height: controlHeight,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(100),
+          border: Border.all(
+            color: _kRefTeal.withOpacity(enabled ? .9 : .5),
+            width: 1.2,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            PopupMenuButton<String>(
+              color: const Color(0xff0c1c3a),
+              surfaceTintColor: Colors.transparent,
+              elevation: 10,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.white.withOpacity(.14)),
+              ),
+              offset: const Offset(0, -8),
+              padding: EdgeInsets.zero,
+              onSelected: (value) {
+                if (value == 'custom') {
+                  _openCustomAmountDialog();
+                  return;
+                }
+                quickSendMultiplier.value = int.tryParse(value) ?? 1;
+              },
+              itemBuilder: (context) => <PopupMenuEntry<String>>[
+                for (final n in const [1, 5, 10])
+                  PopupMenuItem<String>(
+                    value: '$n',
+                    height: isSmallScreen ? 34 : 38,
+                    child: Text(
+                      'x$n',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                PopupMenuItem<String>(
+                  value: 'custom',
+                  height: isSmallScreen ? 34 : 38,
+                  child: Text(
+                    ('Custom').appTr,
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+              child: Container(
+                alignment: Alignment.center,
+                padding: EdgeInsets.symmetric(horizontal: kWeight * 0.022),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.arrow_drop_up_rounded,
+                      color: _kRefTeal,
+                      size: kHeight * 0.02,
+                    ),
+                    Text(
+                      'x$qty',
+                      style: GoogleFonts.roboto(
+                        color: Colors.white,
+                        fontSize: kHeight * 0.014,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Container(width: 1, color: _kRefTeal.withOpacity(.5)),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _sendSelectedGift,
+              child: Container(
+                alignment: Alignment.center,
+                padding: EdgeInsets.symmetric(horizontal: kWeight * 0.03),
+                decoration: BoxDecoration(
+                  // ✅ Screenshot-matched: flat pixel-sampled teal, not a
+                  // two-tone gradient (Send button in the reference is a
+                  // solid fill, essentially one color end to end).
+                  color: enabled
+                      ? _kRefTeal
+                      : _kRefTeal.withOpacity(.45),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.send_rounded,
+                      color: Colors.white,
+                      size: kHeight * 0.015,
+                    ),
+                    SizedBox(width: isSmallScreen ? 5 : 7),
+                    Text(
+                      ('Send').appTr,
+                      style: GoogleFonts.roboto(
+                        color: Colors.white,
+                        fontSize: kHeight * 0.015,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
   Widget _bottomBar() {
     return SafeArea(
       top: false,
@@ -1541,63 +1866,84 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
         ),
         child: Row(
           children: [
+            // ✅ Screenshot-matched: compact balance pill (star icon +
+            // balance + circular "+" button) instead of the old
+            // icon/text/"Recharge>" link row. Same recharge tap target and
+            // same coin-balance source, visual only.
             Expanded(
-              child: Row(
-                children: [
-                  Image.asset(
-                    'assets/icons/coin.png',
-                    height: isSmallScreen ? 21 : 24,
-                    width: isSmallScreen ? 21 : 24,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => Icon(
-                      Icons.monetization_on,
-                      color: const Color(0xffffd447),
-                      size: isSmallScreen ? 21 : 24,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isSmallScreen ? 9 : 11,
+                    vertical: isSmallScreen ? 4 : 5,
+                  ),
+                  decoration: BoxDecoration(
+                    // ✅ Re-fixed to match the reference image: rounded
+                    // rectangle (not a full stadium pill) with a gold/amber
+                    // outline on a dark fill.
+                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.black.withOpacity(.25),
+                    border: Border.all(
+                      color: _kRefGold.withOpacity(.85),
+                      width: 1.2,
                     ),
                   ),
-                  const SizedBox(width: 5),
-                  Flexible(
-                    child: Obx(() {
-                      final coins =
-                          authController.userProfile.value.user?.coins ?? 0;
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        height: isSmallScreen ? 18 : 20,
+                        width: isSmallScreen ? 18 : 20,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            colors: [Color(0xfffff15f), Color(0xffff9d00)],
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.star_rounded,
+                          color: const Color(0xff8b4a00),
+                          size: isSmallScreen ? 12 : 13,
+                        ),
+                      ),
+                      SizedBox(width: isSmallScreen ? 6 : 8),
+                      Flexible(
+                        child: Obx(() {
+                          final coins =
+                              authController.userProfile.value.user?.coins ??
+                                  0;
 
-                      return Text(
-                        _formatCoins(coins),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.poppins(
+                          return Text(
+                            _formatCoins(coins),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontSize: isSmallScreen ? 13 : 14.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          );
+                        }),
+                      ),
+                      SizedBox(width: isSmallScreen ? 6 : 8),
+                      // ✅ Re-fixed to match the reference image: a plain
+                      // "+" glyph (no circular teal button background).
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          // Recharge page route থাকলে এখানে দিন
+                          // Get.to(() => RechargeView());
+                        },
+                        child: Icon(
+                          Icons.add_rounded,
                           color: Colors.white,
-                          fontSize: isSmallScreen ? 13.5 : 15,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      );
-                    }),
-                  ),
-                  const SizedBox(width: 5),
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      // Recharge page route থাকলে এখানে দিন
-                      // Get.to(() => RechargeView());
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 2,
-                        vertical: 5,
-                      ),
-                      child: Text(
-                        ('Recharge>').appTr,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.poppins(
-                          color: const Color(0xff22e4c0),
-                          fontSize: isSmallScreen ? 9 : 10.5,
-                          fontWeight: FontWeight.w800,
+                          size: isSmallScreen ? 17 : 19,
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
 
@@ -1609,118 +1955,13 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _openCustomAmountDialog,
-                      child: Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: kWeight * 0.02,
-                          vertical: kHeight * 0.005,
-                        ),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(100),
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Colors.white.withOpacity(.14),
-                              Colors.white.withOpacity(.05),
-                            ],
-                          ),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(.26),
-                            width: 1,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.tune_rounded,
-                              color: Colors.white,
-                              size: kHeight * 0.014,
-                            ),
-                            SizedBox(width: isSmallScreen ? 5 : 7),
-                            Text(
-                              ('Custom').appTr,
-                              style: GoogleFonts.roboto(
-                                color: Colors.white,
-                                fontSize: kHeight * 0.014,
-                                fontWeight: FontWeight.w400,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    SizedBox(width: isSmallScreen ? 8 : 10),
-
                     /// Custom/selected number will show left side of Send.
                     _selectedCustomAmountChip(),
 
-                    Obx(() {
-                      final gift = selectedGift.value;
-                      final giftId = int.tryParse('${gift?['id'] ?? 0}') ?? 0;
-
-                      return GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _sendSelectedGift,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          padding: EdgeInsets.symmetric(
-                            horizontal: kWeight * 0.02,
-                            vertical: kHeight * 0.007,
-                          ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: giftId == 0
-                                  ? [
-                                kAppColor1.withOpacity(.64),
-                                kAppColor2.withOpacity(.64),
-                              ]
-                                  : [kAppColor2, kAppColor1],
-                            ),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(.25),
-                              width: 1.2,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: kAppColor2.withOpacity(
-                                  giftId == 0 ? .18 : .42,
-                                ),
-                                blurRadius: 18,
-                                offset: const Offset(0, 6),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.send_rounded,
-                                color: Colors.white,
-                                size: kHeight * 0.015,
-                              ),
-                              SizedBox(width: isSmallScreen ? 5 : 7),
-                              Text(
-                                ('Send').appTr,
-                                style: GoogleFonts.roboto(
-                                  color: Colors.white,
-                                  fontSize: kHeight * 0.015,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }),
+                    // ✅ New (screenshot-matched): merged "▲ x5 | Send"
+                    // stadium control (x1/x5/x10 + Custom dropdown seamlessly
+                    // joined to the Send button, no gap between them).
+                    _quantityAndSendControl(),
                   ],
                 ),
               ),
@@ -1738,7 +1979,11 @@ class _gift_bottom_sheetState extends State<gift_bottom_sheet> {
       SafeArea(
         top: false,
         child: Container(
-          height: kHeight * 0.49,
+          // ✅ Responsiveness fix: use the tiered `sheetHeight` getter
+          // (small mobile 76%, normal 72%, large screen 68%) instead of a
+          // single fixed fraction, so the sheet scales sensibly from small
+          // phones up to tablets/large screens.
+          height: sheetHeight,
           width: Get.width,
           clipBehavior: Clip.antiAlias,
           decoration: _premiumSheetDecoration(),

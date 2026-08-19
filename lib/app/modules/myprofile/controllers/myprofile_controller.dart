@@ -32,6 +32,18 @@ class MyprofileController extends GetxController {
   final profileGiftReceverList = [].obs;
   final profileContributionList = [].obs;
 
+  /// ✅ PROFILE VISITORS
+  /// API: GET profile-visit-count/{userId}
+  /// Response:
+  /// data.total_unique_visitors, data.total_profile_visits, data.visitors[]
+  final profileVisitorsList = <Map<String, dynamic>>[].obs;
+  final totalUniqueProfileVisitors = 0.obs;
+  final totalProfileVisits = 0.obs;
+  final isProfileVisitorsLoading = false.obs;
+  final profileVisitorsError = ''.obs;
+  int _profileVisitorsLoadedUserId = 0;
+  int _profileVisitorsLoadingUserId = 0;
+
   /// ✅ Profile page family card data
   final profileFamilyData = Rxn<Map<String, dynamic>>();
   final isProfileFamilyLoading = false.obs;
@@ -299,6 +311,135 @@ class MyprofileController extends GetxController {
         fontSize: 16.0,
       );
     }
+  }
+
+  /// ✅ Load profile visitor summary + visitor list.
+  /// Uses the existing endpoint helper:
+  /// kProfileVisitList(userId: userId)
+  Future<Map<String, dynamic>?> showProfileVisitorList({
+    required int userId,
+    bool force = false,
+  }) async {
+    if (userId <= 0) {
+      profileVisitorsList.clear();
+      totalUniqueProfileVisitors.value = 0;
+      totalProfileVisits.value = 0;
+      profileVisitorsError.value = '';
+      _profileVisitorsLoadedUserId = 0;
+      return null;
+    }
+
+    // Same user-er request already running hole parallel duplicate call korbo na.
+    if (isProfileVisitorsLoading.value &&
+        _profileVisitorsLoadingUserId == userId) {
+      return null;
+    }
+
+    // Same profile already loaded hole unnecessary duplicate API call korbo na.
+    if (!force &&
+        _profileVisitorsLoadedUserId == userId &&
+        profileVisitorsError.value.isEmpty) {
+      return <String, dynamic>{
+        'total_unique_visitors': totalUniqueProfileVisitors.value,
+        'total_profile_visits': totalProfileVisits.value,
+        'visitors': profileVisitorsList.toList(),
+      };
+    }
+
+    isProfileVisitorsLoading.value = true;
+    _profileVisitorsLoadingUserId = userId;
+    profileVisitorsError.value = '';
+
+    try {
+      final response = await dio.get(
+        kProfileVisitList(userId: userId),
+        options: _authOptions(),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final dynamic body = response.data;
+        final dynamic rawData = body is Map ? body['data'] : null;
+
+        if (rawData is Map) {
+          final data = Map<String, dynamic>.from(rawData);
+
+          totalUniqueProfileVisitors.value =
+              _profileVisitorSafeInt(data['total_unique_visitors']);
+          totalProfileVisits.value =
+              _profileVisitorSafeInt(data['total_profile_visits']);
+
+          final dynamic rawVisitors = data['visitors'];
+          final List<Map<String, dynamic>> visitors = [];
+
+          if (rawVisitors is List) {
+            for (final item in rawVisitors) {
+              if (item is Map) {
+                visitors.add(Map<String, dynamic>.from(item));
+              }
+            }
+          }
+
+          profileVisitorsList.assignAll(visitors);
+          _profileVisitorsLoadedUserId = userId;
+          return data;
+        }
+
+        profileVisitorsList.clear();
+        totalUniqueProfileVisitors.value = 0;
+        totalProfileVisits.value = 0;
+        _profileVisitorsLoadedUserId = userId;
+        return <String, dynamic>{};
+      }
+
+      profileVisitorsError.value = ('Failed to load profile visitors').appTr;
+      return null;
+    } on DioException catch (e) {
+      profileVisitorsError.value = _profileVisitorErrorMessage(e);
+
+      // Previous profile-er data jeno wrong user-er count hisebe na dekhay.
+      if (_profileVisitorsLoadedUserId != userId) {
+        profileVisitorsList.clear();
+        totalUniqueProfileVisitors.value = 0;
+        totalProfileVisits.value = 0;
+      }
+
+      return null;
+    } catch (_) {
+      profileVisitorsError.value = ('Something went wrong').appTr;
+
+      if (_profileVisitorsLoadedUserId != userId) {
+        profileVisitorsList.clear();
+        totalUniqueProfileVisitors.value = 0;
+        totalProfileVisits.value = 0;
+      }
+
+      return null;
+    } finally {
+      isProfileVisitorsLoading.value = false;
+      _profileVisitorsLoadingUserId = 0;
+    }
+  }
+
+  int _profileVisitorSafeInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString().trim()) ?? 0;
+  }
+
+  String _profileVisitorErrorMessage(DioException e) {
+    final dynamic body = e.response?.data;
+
+    if (body is Map && body['message'] != null) {
+      final text = body['message'].toString().trim();
+      if (text.isNotEmpty) return text;
+    }
+
+    if (e.response?.statusCode != null) {
+      return ('Failed to load profile visitors').appTr;
+    }
+
+    return ('Network error').appTr;
   }
 
   Future<void> showProfileContributionList({

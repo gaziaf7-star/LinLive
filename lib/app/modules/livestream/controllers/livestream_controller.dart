@@ -1552,8 +1552,17 @@ class LivestreamController extends GetxController {
     final int snapshotRevision = viewerState.beginSnapshot();
 
     try {
+      // ✅ FIX: was calling kLiveViewersList ("/livestream/{id}/viewers").
+      // Switched to getViewerList ("/viewerlist/{id}") — this is the
+      // endpoint confirmed (by direct testing) to return the full, correct
+      // room snapshot (viewers + viewer_count + occupied/locked/available
+      // seats). Everything below (applyLivestreamState, viewerState
+      // protections, pagination) is generic and reads whatever shape comes
+      // back, so this is a pure data-source swap — the top viewer strip and
+      // the "All Viewer List" sheet both read liveViewerList, which this
+      // function populates, so both now reflect this endpoint automatically.
       final response = await dio.get(
-        kLiveViewersList(streamId),
+        getViewerList(streamId),
         options: Options(
           headers: {
             'Accept': 'application/json',
@@ -1646,7 +1655,7 @@ class LivestreamController extends GetxController {
             break;
           }
           final pageResponse = await dio.get(
-            kLiveViewersList(streamId),
+            getViewerList(streamId),
             queryParameters: <String, dynamic>{'page': page},
             options: Options(
               headers: {

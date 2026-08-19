@@ -886,6 +886,13 @@ class WebsocketController extends GetxController {
   final Set<String> processedGiftIds = <String>{};
   final Set<String> processedImogiIds = <String>{};
   final liveImogiAnimations = <Map<String, dynamic>>[].obs;
+  // ✅ FIX (emoji vanishes within <1s): tracks recent LOCAL imogi sends
+  // (sender+imogi -> timestamp) so the REAL websocket confirmation that
+  // arrives moments later can be recognized as "this is just confirming
+  // the one I already showed locally" and skipped, instead of adding a
+  // second list entry with a different event_id — which made the widget's
+  // ValueKey change and get destroyed/recreated almost immediately.
+  final Map<String, int> _localImogiEchoes = <String, int>{};
 
   /// Keeps last known mic state for every user (host + seat callers).
   /// This prevents host mute icon from being reset by unrelated seat join/leave events.
@@ -3949,6 +3956,21 @@ class WebsocketController extends GetxController {
   bool _unifiedDisconnectIntentional = false;
   int _subscribedRoomStreamId = 0;
 
+  /// ✅ FIX (seat/lock/viewer state freezes after the room sits idle for
+  /// ~10-15 minutes): a raw WebSocketChannel does NOT reliably fire
+  /// onError/onDone when the underlying TCP connection dies silently, which
+  /// is common on mobile networks (carrier NAT tables / idle proxies drop
+  /// quiet connections without ever sending a close frame). `closeCode`
+  /// stays null forever in that case, so every "already connected, skip"
+  /// guard keeps trusting a dead socket and this device silently stops
+  /// receiving seat_switched / seat_lock_toggle / viewer events while the UI
+  /// still looks connected. This watchdog independently tracks time since
+  /// the last frame (any real event OR pusher:ping both refresh
+  /// _lastTestingWsFrameAtMs) and force-reconnects long before the
+  /// multi-minute freeze users were hitting.
+  Timer? _unifiedSocketStaleWatchdogTimer;
+  static const int _unifiedSocketStaleThresholdMs = 60000; // 60s
+
   String _roomRealtimeChannelName(int streamId) => 'live-stream.$streamId';
 
   void _switchRoomRealtimeSubscription(int streamId) {
@@ -5058,6 +5080,7 @@ class WebsocketController extends GetxController {
     _unifiedWsReconnectPausedByBackground = true;
     _unifiedReconnectTimer?.cancel();
     _unifiedReconnectTimer = null;
+    _stopUnifiedSocketStaleWatchdog();
 
     heartbeatTimer?.cancel();
     heartbeatTimer = null;
@@ -5342,6 +5365,7 @@ class WebsocketController extends GetxController {
     pauseRechargePopupForBackground();
     _unifiedReconnectTimer?.cancel();
     _unifiedReconnectTimer = null;
+    _stopUnifiedSocketStaleWatchdog();
     _cancelRedPacketTimer();
     _cancelGlobalRedPacketTimer();
     liveLog(
@@ -5356,7 +5380,15 @@ class WebsocketController extends GetxController {
     liveLog('▶️ Unified LiveStreamEvent reconnect resumed: foreground');
 
     if (wasPaused) {
-      tryToConnectToUnifiedLiveStreamEventWs(force: false);
+      // ✅ FIX: closeCode == null does NOT prove the socket survived the
+      // background period — a silent mobile-network/NAT drop while
+      // minimized never sends a close frame, so the old "force: false"
+      // check saw a channel that still "looked" open and skipped
+      // reconnecting entirely. That left the room frozen (stale seats/
+      // locks/viewer list) until the user manually left and rejoined.
+      // force: true guarantees a real, fresh connection every time the app
+      // returns to foreground.
+      tryToConnectToUnifiedLiveStreamEventWs(force: true);
     }
 
     resumeRechargePopupAfterForeground();
@@ -5434,6 +5466,7 @@ class WebsocketController extends GetxController {
     _unifiedReconnectTimer?.cancel();
     _unifiedReconnectTimer = null;
     _unifiedReconnectScheduledForGeneration = null;
+    _stopUnifiedSocketStaleWatchdog();
     _cancelRedPacketTimer();
     _cancelGlobalRedPacketTimer();
 
@@ -5484,8 +5517,37 @@ class WebsocketController extends GetxController {
           'reason': 'socket_reconnected',
         });
         _rtState();
+
+        // ✅ FIX (viewer list / seats stay wrong after reconnect): resuming
+        // the socket only means FUTURE events flow again — anyone who
+        // joined/left, or any lock/seat change, while this device's
+        // connection was silently dead is never retroactively corrected,
+        // because _rtState() above is a debug log only, not a real resync.
+        // Pull one fresh REST snapshot of viewers + seats/locks right after
+        // reconnecting so the room self-heals instead of staying stale
+        // until the user manually leaves and rejoins.
+        final int reconcileRoomId = _activeRealtimeRoomId();
+        if (reconcileRoomId > 0) {
+          liveLog(
+            '🔁 Post-reconnect resync => room:$reconcileRoomId (viewers + seats)',
+          );
+          unawaited(
+            livestreamController.showLiveViewerListList(
+              streamId: reconcileRoomId,
+            ),
+          );
+          unawaited(
+            livestreamController.liveSeatController.getAvailableSeats(
+              reconcileRoomId,
+            ),
+          );
+        }
       }
       liveLog('✅ Connected to unified LiveStreamEvent WebSocket');
+      // Fresh baseline so the stale-socket watchdog doesn't immediately
+      // trip on a timestamp left over from before this (re)connect.
+      _lastTestingWsFrameAtMs = DateTime.now().millisecondsSinceEpoch;
+      _startUnifiedSocketStaleWatchdog();
       LiveTestingLogger.printBlock('LIVE TEST WS CONNECTED', {
         'time': DateTime.now().toIso8601String(),
         'url': kWsUrl,
@@ -5747,6 +5809,55 @@ class WebsocketController extends GetxController {
       );
       tryToConnectToUnifiedLiveStreamEventWs(force: true);
     });
+  }
+
+  /// Starts the idle-socket watchdog. Call this once the unified socket is
+  /// actually connected and subscribed; call [_stopUnifiedSocketStaleWatchdog]
+  /// on every disconnect/pause/teardown path so it never runs against a
+  /// socket we intentionally closed.
+  void _startUnifiedSocketStaleWatchdog() {
+    _unifiedSocketStaleWatchdogTimer?.cancel();
+    _unifiedSocketStaleWatchdogTimer = Timer.periodic(
+      const Duration(seconds: 15),
+          (_) => _checkUnifiedSocketStaleness(),
+    );
+  }
+
+  void _stopUnifiedSocketStaleWatchdog() {
+    _unifiedSocketStaleWatchdogTimer?.cancel();
+    _unifiedSocketStaleWatchdogTimer = null;
+  }
+
+  /// Runs every 15s while connected. If no frame (event or pusher:ping) has
+  /// arrived for [_unifiedSocketStaleThresholdMs], the socket is almost
+  /// certainly a silently-dead zombie connection — force a real reconnect
+  /// instead of waiting for the user to notice seats/locks/viewer list have
+  /// frozen.
+  void _checkUnifiedSocketStaleness() {
+    if (_socketLifecycleClosed ||
+        _unifiedDisconnectIntentional ||
+        _unifiedWsReconnectPausedByBackground ||
+        _isConnectingUnifiedWs) {
+      return;
+    }
+    if (liveStreamEventChannel == null || _lastTestingWsFrameAtMs <= 0) {
+      return;
+    }
+
+    final int ageMs =
+        DateTime.now().millisecondsSinceEpoch - _lastTestingWsFrameAtMs;
+    if (ageMs < _unifiedSocketStaleThresholdMs) return;
+
+    liveLog(
+      '🩺 Unified LiveStreamEvent WS looks stale (no frame for ${ageMs}ms) '
+          '=> forcing reconnect',
+    );
+    LiveRealtimeDebugLog.event('SOCKET_STALE_FORCE_RECONNECT', <String, Object?>{
+      'room': _rtRoom(),
+      'channel': liveStreamEventChannelName,
+      'age_ms': ageMs,
+    });
+    tryToConnectToUnifiedLiveStreamEventWs(force: true);
   }
 
   Future<void> _handleUnifiedLiveStreamMessage(dynamic message) async {
@@ -7977,6 +8088,7 @@ class WebsocketController extends GetxController {
     _giftMessagesRefreshTimer = null;
     _unifiedReconnectTimer?.cancel();
     _unifiedReconnectTimer = null;
+    _stopUnifiedSocketStaleWatchdog();
     _rechargePopupRetryTimer?.cancel();
     _rechargePopupRetryTimer = null;
     _rechargePopupQueue.clear();

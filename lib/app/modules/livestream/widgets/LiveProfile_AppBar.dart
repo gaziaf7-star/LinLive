@@ -70,11 +70,27 @@ class LiveProfile extends StatelessWidget {
   }
 
   dynamic _firstProfileFrameHistory(Map<String, dynamic> user, Map<String, dynamic> item) {
+    // ✅ FIX (top viewer-strip frame/profile sometimes missing): the backend
+    // is inconsistent about this field's name — some endpoints/responses
+    // (e.g. /livestream/{id}/viewers) return the SINGULAR
+    // `asset_purchase_history`, others return the PLURAL
+    // `asset_purchase_histories`. Every other profile-frame widget in this
+    // app (LiveView_Circle_Container, live_viewers_list, seat_event_handler,
+    // etc.) already checks both forms — this widget only checked the plural
+    // one, so whenever a viewer's data came from an endpoint using the
+    // singular key, their VIP frame/decoration silently failed to render
+    // here even though it rendered correctly elsewhere in the same room.
     final candidates = <dynamic>[
-
       user['frame_purchase_history'],
+      user['frame_purchase_histories'],
+      user['asset_purchase_history'],
       user['asset_purchase_histories'],
-
+      user['asset_purchase_history2'],
+      item['frame_purchase_history'],
+      item['frame_purchase_histories'],
+      item['asset_purchase_history'],
+      item['asset_purchase_histories'],
+      item['asset_purchase_history2'],
     ];
 
     for (final candidate in candidates) {

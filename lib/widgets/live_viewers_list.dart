@@ -79,12 +79,23 @@ class LiveViewersList extends StatelessWidget {
   }
 
   dynamic _firstProfileFrameHistory(Map<String, dynamic> user, Map<String, dynamic> item) {
+    // ✅ FIX (bottom-sheet "All Viewer List" frame not showing): the backend
+    // sends this field as singular `asset_purchase_history` nested inside
+    // `user` (see /viewerlist/{id}). This was only checking the PLURAL form
+    // on `user`, and the singular form on the wrong object (`item`, the raw
+    // viewer row, not `user`) — so it could never find the frame for the
+    // shape this API actually returns. Checking both forms on `user` (and
+    // `item` as a fallback for other endpoints) matches every other
+    // frame-lookup in the app.
     final candidates = <dynamic>[
-
+      user['asset_purchase_history'],
       user['asset_purchase_histories'],
+      user['frame_purchase_history'],
+      user['frame_purchase_histories'],
       item['profile_frame_history'],
       item['active_frame'],
       item['asset_purchase_history'],
+      item['asset_purchase_histories'],
     ];
 
     for (final candidate in candidates) {
@@ -96,10 +107,25 @@ class LiveViewersList extends StatelessWidget {
     return null;
   }
 
+  // ✅ NEW: same level_image fallback-key pattern used elsewhere in the app
+  // (live_comments.dart, LiveProfile_AppBar.dart) so the level badge below
+  // shows each viewer's OWN level image instead of always falling back to
+  // the logged-in user's.
+  String _levelImagePath(Map<String, dynamic> user, Map<String, dynamic> item) {
+    return _safeText(
+      user['level_image'] ??
+          user['levelImage'] ??
+          user['level_image_url'] ??
+          user['levelImageUrl'] ??
+          item['level_image'] ??
+          item['levelImage'],
+    );
+  }
+
   Widget _avatar(Map<String, dynamic> user) {
     final profileImage = _safeText(user['profile_image'] ?? user['image'] ?? user['avatar']);
     final String normalizedUrl =
-        profileImage.isEmpty ? '' : ImageHelper.getImageUrl(profileImage);
+    profileImage.isEmpty ? '' : ImageHelper.getImageUrl(profileImage);
     final int decodeSize = (kHeight * 0.11).round().clamp(96, 240);
     final String stableUserId = _safeText(user['id'] ?? user['user_id']);
 
@@ -116,9 +142,9 @@ class LiveViewersList extends StatelessWidget {
       child: normalizedUrl.isEmpty
           ? fallback()
           : CachedNetworkImage(
-              key: ValueKey<String>(
-                'viewer-profile-$stableUserId-$normalizedUrl',
-              ),
+        key: ValueKey<String>(
+          'viewer-profile-$stableUserId-$normalizedUrl',
+        ),
         fit: BoxFit.cover,
         imageUrl: normalizedUrl,
         cacheKey: normalizedUrl,
@@ -173,8 +199,10 @@ class LiveViewersList extends StatelessWidget {
           final level = _safeText(user['level']).isEmpty ? '0' : _safeText(user['level']);
           final frameHistory = _firstProfileFrameHistory(user, item);
           final assetPath = _frameAssetPath(frameHistory);
+          final levelImagePath = _levelImagePath(user, item);
 
           return Container(
+            key: ValueKey<String>('viewer_row_${idInt}_$viewerIndex'),
             margin: EdgeInsets.symmetric(vertical: 5, horizontal: kWeight * 0.015),
             padding: EdgeInsets.symmetric(vertical: 5, horizontal: kWeight * 0.02),
             decoration: BoxDecoration(
@@ -269,7 +297,26 @@ class LiveViewersList extends StatelessWidget {
 
                                 padding: EdgeInsets.only(left: kWeight * 0.047),
                                 child: LevelFrame(
-                                    level: level),
+                                    key: ValueKey<String>(
+                                      'level_frame_${idInt}_$levelImagePath',
+                                    ),
+                                    level: level,
+                                    // ✅ FIX: was omitted, so LevelFrame's
+                                    // own default silently fell back to the
+                                    // *logged-in* user's level image for
+                                    // every row here instead of each
+                                    // viewer's own.
+                                    levelImage: levelImagePath,
+                                    // ✅ FIX (root cause of "everyone shows
+                                    // the same image"): this list shows
+                                    // OTHER users. Without this flag,
+                                    // LevelFrame fell back to the CURRENTLY
+                                    // LOGGED-IN user's own level image for
+                                    // every row that had no level_image of
+                                    // its own (i.e. most rows) — so every
+                                    // such row showed the viewer's own
+                                    // badge instead of the neutral default.
+                                    useCurrentUserFallback: false),
                               ),
                             ],
                           ),

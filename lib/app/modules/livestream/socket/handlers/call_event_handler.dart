@@ -978,16 +978,24 @@ extension CallEventHandler on WebsocketController {
         .toLowerCase()
         .trim();
 
+    // ✅ FIX (video-live call popup never shows, audience auto-joins):
+    // previously a third fallback condition treated
+    // "auto_accepted:true AND NOT explicitly requires_host_acceptance:true"
+    // as proof this is an audio room. But auto_accepted appears to be a
+    // generic field the server can send regardless of room type, while
+    // requires_host_acceptance isn't always explicitly sent for video
+    // requests either — so this fallback could (and did) misclassify a
+    // VIDEO room's call request as an audio one, skipping the 'pending'
+    // state that triggers the host's accept/reject popup and instead
+    // auto-accepting the caller straight onto the call.
+    // _isCurrentAudioOnlyRoom() already reliably checks this via
+    // activeAudioStreamId (room-type-specific, not a generic field), and
+    // is_audio_seat_join is an explicit, unambiguous per-event flag — both
+    // are trustworthy on their own without needing this riskier fallback.
     final bool audioRoom =
         _isCurrentAudioOnlyRoom(livestreamId: livestreamId) ||
             _truthy(payload['is_audio_seat_join']) ||
-            _truthy(callData['is_audio_seat_join']) ||
-            ((_truthy(payload['auto_accepted']) ||
-                _truthy(callData['auto_accepted'])) &&
-                !_truthy(
-                  payload['requires_host_acceptance'] ??
-                      callData['requires_host_acceptance'],
-                ));
+            _truthy(callData['is_audio_seat_join']);
 
     if (callStatus.isEmpty) {
       /// Terminal/accepted actions MUST win before generic live_stream_call.

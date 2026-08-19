@@ -13,21 +13,38 @@ class LevelFrame extends StatelessWidget {
   /// Example:
   /// LevelFrame(level: '12', levelImage: user.levelImage)
   ///
-  /// Pass না করলে authController এর levelImage নিবে
+  /// Pass না করলে, ar useCurrentUserFallback true thakle (default),
+  /// authController এর levelImage নিবে — এটা শুধুমাত্র "নিজের" profile/self
+  /// display context-এর জন্য ঠিক (jekhane level ta always logged-in user er-i).
   final String? levelImage;
+
+  /// ✅ FIX: lists that render OTHER people's rows (viewer list, seat grid,
+  /// etc.) must pass `useCurrentUserFallback: false`. Otherwise, whenever a
+  /// particular row has no level_image of its own (very common — most users
+  /// are level 0 with no custom image), this widget silently fell back to
+  /// the CURRENTLY LOGGED-IN user's own level image — so every such row
+  /// showed the viewing user's own badge instead of a neutral default,
+  /// making it look like "everyone shows the same [my] image".
+  /// Defaults to true so any existing self-display call site keeps working
+  /// unchanged.
+  final bool useCurrentUserFallback;
 
   const LevelFrame({
     super.key,
     required this.level,
     this.levelImage,
+    this.useCurrentUserFallback = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    final String? selectedLevelImage =
-    levelImage != null && levelImage!.trim().isNotEmpty
+    final bool hasExplicitImage =
+        levelImage != null && levelImage!.trim().isNotEmpty;
+    final String? selectedLevelImage = hasExplicitImage
         ? levelImage!.trim()
-        : authController.userProfile.value.user?.levelImage;
+        : (useCurrentUserFallback
+        ? authController.userProfile.value.user?.levelImage
+        : null);
 
     return SizedBox(
       height: kHeight * 0.027,
@@ -62,8 +79,19 @@ class LevelFrame extends StatelessWidget {
   }
 
   Widget _buildLevelBackground(String? image) {
+    // ✅ FIX ("level image showing the same for everyone" in lists like
+    // the All Viewer List bottom sheet): SVGAEasyPlayer/Image.network are
+    // stateful widgets that load/cache their content in State. Without a
+    // key tied to the actual image being shown, Flutter's default
+    // ListView.builder reconciliation can reuse the Element (and its
+    // already-loaded State) at a given list position for a *different*
+    // row's data, so the visual can lag behind or repeat a previous row's
+    // image. Keying every branch by the resolved path/asset forces a fresh
+    // widget identity — and therefore a fresh load — whenever the actual
+    // image differs, regardless of where it sits in a list.
     if (image == null || image.trim().isEmpty) {
       return SVGAEasyPlayer(
+        key: const ValueKey<String>('level_bg_default'),
         assetsName: 'assets/svga/Level/level_0_to_9_bg.svga',
         fit: BoxFit.cover,
       );
@@ -74,6 +102,7 @@ class LevelFrame extends StatelessWidget {
     if (cleanImage.startsWith('assets/')) {
       if (cleanImage.toLowerCase().endsWith('.svga')) {
         return SVGAEasyPlayer(
+          key: ValueKey<String>('level_bg_asset_$cleanImage'),
           assetsName: cleanImage,
           fit: BoxFit.cover,
         );
@@ -81,6 +110,7 @@ class LevelFrame extends StatelessWidget {
 
       return Image.asset(
         cleanImage,
+        key: ValueKey<String>('level_bg_asset_img_$cleanImage'),
         fit: BoxFit.cover,
       );
     }
@@ -94,6 +124,7 @@ class LevelFrame extends StatelessWidget {
         height: kHeight * 0.12,
         width: kHeight * 0.12,
         child: SVGAEasyPlayer(
+          key: ValueKey<String>('level_bg_net_$imageUrl'),
           resUrl: imageUrl,
           fit: BoxFit.cover,
         ),
@@ -105,9 +136,11 @@ class LevelFrame extends StatelessWidget {
       width: kHeight * 0.12,
       child: Image.network(
         imageUrl,
+        key: ValueKey<String>('level_bg_net_img_$imageUrl'),
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
           return SVGAEasyPlayer(
+            key: const ValueKey<String>('level_bg_default_fallback'),
             assetsName: 'assets/svga/Level/level_0_to_9_bg.svga',
             fit: BoxFit.cover,
           );

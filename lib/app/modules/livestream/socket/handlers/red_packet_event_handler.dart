@@ -136,6 +136,22 @@ extension RedPacketEventHandler on WebsocketController {
   }
 
   void _handleUnifiedRedPacketSent(Map<String, dynamic> payload) {
+    // ✅ DEBUG: guaranteed-visible dump (liveLog/_printFullLiveDebug may be
+    // gated behind an extra flag beyond kDebugMode, as confirmed during the
+    // emoji investigation). This shows exactly what payload['red_packet']
+    // contains at the moment this handler runs, field by field.
+    debugPrint('🧧🧧🧧 [REDPACKET_DEBUG] _handleUnifiedRedPacketSent ENTERED');
+    debugPrint('🧧🧧🧧 [REDPACKET_DEBUG] payload top-level keys => ${payload.keys.toList()}');
+    final dynamic rpCandidate = payload['red_packet'];
+    debugPrint('🧧🧧🧧 [REDPACKET_DEBUG] payload[red_packet] runtimeType => ${rpCandidate?.runtimeType}');
+    debugPrint('🧧🧧🧧 [REDPACKET_DEBUG] payload[red_packet] value => $rpCandidate');
+    if (rpCandidate is Map) {
+      rpCandidate.forEach((key, value) {
+        debugPrint('🧧🧧🧧 [REDPACKET_DEBUG]   red_packet.$key = $value (${value?.runtimeType})');
+      });
+    }
+    debugPrint('🧧🧧🧧 [REDPACKET_DEBUG] payload[data] runtimeType => ${payload['data']?.runtimeType}');
+
     _printFullLiveDebug('RED PACKET WEBSOCKET SENT RAW', <String, dynamic>{
       'local_time': DateTime.now().toIso8601String(),
       'local_epoch_ms': DateTime.now().millisecondsSinceEpoch,
@@ -146,6 +162,7 @@ extension RedPacketEventHandler on WebsocketController {
     });
 
     final packet = _normalizeRedPacket(payload);
+    debugPrint('🧧🧧🧧 [REDPACKET_DEBUG] normalized packet id => ${packet['id']} full => $packet');
 
     _printFullLiveDebug('RED PACKET WEBSOCKET SENT NORMALIZED', <
         String,

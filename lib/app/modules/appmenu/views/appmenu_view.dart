@@ -36,6 +36,7 @@ import '../../backpack/views/BackPack.dart';
 import '../../home/views/widgets/unicId2.dart';
 
 import '../../livestream/widgets/audioText.dart';
+import '../../myprofile/controllers/myprofile_controller.dart';
 import '../../myprofile/views/myprofile_view.dart';
 
 import '../../record/views/record_view.dart';
@@ -407,6 +408,7 @@ class AppmenuView extends StatefulWidget {
 class _AppmenuViewState extends State<AppmenuView>
     with AutomaticKeepAliveClientMixin<AppmenuView> {
   bool _initialDataRequested = false;
+  late final MyprofileController _myprofileController;
 
   @override
   bool get wantKeepAlive => true;
@@ -414,6 +416,10 @@ class _AppmenuViewState extends State<AppmenuView>
   @override
   void initState() {
     super.initState();
+
+    _myprofileController = Get.isRegistered<MyprofileController>()
+        ? Get.find<MyprofileController>()
+        : Get.put(MyprofileController());
 
     if (!Get.isRegistered<VerifiedController>()) {
       Get.put(VerifiedController());
@@ -427,11 +433,27 @@ class _AppmenuViewState extends State<AppmenuView>
   }
 
   Future<void> _loadInitialPageData() async {
+    final int userId = _currentAuthUserId();
+
+    // Visitor count is visible near the top of this page, so load it together
+    // with the lightweight base data instead of waiting for every other card.
+    final List<Future<dynamic>> initialTasks = <Future<dynamic>>[
+      homeController.baseList(),
+    ];
+
+    if (userId > 0) {
+      initialTasks.add(
+        _myprofileController.showProfileVisitorList(
+          userId: userId,
+          force: false,
+        ),
+      );
+    }
+
     try {
-      await homeController.baseList();
+      await Future.wait<dynamic>(initialTasks);
     } catch (_) {}
 
-    final int userId = _currentAuthUserId();
     if (userId <= 0) return;
 
     try {
@@ -443,6 +465,34 @@ class _AppmenuViewState extends State<AppmenuView>
     } catch (_) {}
   }
 
+  Future<void> _loadProfileVisitors({bool force = false}) async {
+    final int userId = _currentAuthUserId();
+    if (userId <= 0) return;
+
+    await _myprofileController.showProfileVisitorList(
+      userId: userId,
+      force: force,
+    );
+  }
+
+  void _openProfileVisitors() {
+    final int userId = _currentAuthUserId();
+    if (userId <= 0) return;
+
+    Get.bottomSheet(
+      _AppMenuProfileVisitorsSheet(
+        controller: _myprofileController,
+        userId: userId,
+      ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withOpacity(.42),
+    );
+
+    // Keep the already rendered list visible while the latest data refreshes.
+    _loadProfileVisitors(force: true);
+  }
+
   Future<void> _refreshPage() async {
     await Future.wait<dynamic>([
       registerstepsController.refreshAuthUserData(),
@@ -452,11 +502,17 @@ class _AppmenuViewState extends State<AppmenuView>
     final int userId = _currentAuthUserId();
     if (userId <= 0) return;
 
-    await homeController.fetchUserCurrentVip(
-      userId: userId,
-      force: true,
-      silent: true,
-    );
+    await Future.wait<dynamic>([
+      homeController.fetchUserCurrentVip(
+        userId: userId,
+        force: true,
+        silent: true,
+      ),
+      _myprofileController.showProfileVisitorList(
+        userId: userId,
+        force: true,
+      ),
+    ]);
   }
 
   @override
@@ -466,7 +522,7 @@ class _AppmenuViewState extends State<AppmenuView>
       final String token =
           authController.userProfile.value.token?.toString().trim() ?? '';
       debugPrint(
-        'App menu auth: token_present=${token.isNotEmpty} '
+        'App menu auth: token_present=${authController.userProfile.value.user?.id} '
             'token_length=${token}',
       );
     }
@@ -629,9 +685,15 @@ class _AppmenuViewState extends State<AppmenuView>
                     ),
                   ),
                   Expanded(
-                    child: _statTile(
-                      '${_authTotalVisitors()}',
-                      'Visitor'.appTr,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: _openProfileVisitors,
+                      child: _visitorStatTile(
+                        total: _myprofileController
+                            .totalUniqueProfileVisitors.value,
+                        loading:
+                        _myprofileController.isProfileVisitorsLoading.value,
+                      ),
                     ),
                   ),
                 ],
@@ -948,6 +1010,77 @@ class _AppmenuViewState extends State<AppmenuView>
     );
   }
 
+  Widget _visitorStatTile({
+    required int total,
+    required bool loading,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: kWeight * .010,
+        vertical: kHeight * .008,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: (Get.height * .024).clamp(19.0, 23.0).toDouble(),
+            child: Center(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 160),
+                child: loading && total == 0
+                    ? SizedBox(
+                  key: const ValueKey<String>('app-menu-visitor-loading'),
+                  height: 15,
+                  width: 15,
+                  child: const CircularProgressIndicator(
+                    strokeWidth: 1.8,
+                    color: Color(0xFF8B4D23),
+                  ),
+                )
+                    : Text(
+                  '$total',
+                  key: ValueKey<int>(total),
+                  style: GoogleFonts.poppins(
+                    fontSize:
+                    (Get.height * .020).clamp(16.0, 20.0).toDouble(),
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF8B4D23),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(height: kHeight * .002),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  'Visitor'.appTr,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.poppins(
+                    fontSize:
+                    (Get.height * .0155).clamp(12.0, 15.0).toDouble(),
+                    fontWeight: FontWeight.w500,
+                    color: const Color(0xFF6B4936),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: (Get.height * .017).clamp(13.0, 16.0).toDouble(),
+                color: const Color(0xFF8B4D23).withOpacity(.78),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _statTile(String value, String label) {
     return Padding(
       padding: EdgeInsets.symmetric(
@@ -978,6 +1111,569 @@ class _AppmenuViewState extends State<AppmenuView>
     );
   }
 }
+
+
+class _AppMenuProfileVisitorsSheet extends StatelessWidget {
+  final MyprofileController controller;
+  final int userId;
+
+  const _AppMenuProfileVisitorsSheet({
+    required this.controller,
+    required this.userId,
+  });
+
+  Future<void> _refresh() async {
+    await controller.showProfileVisitorList(
+      userId: userId,
+      force: true,
+    );
+  }
+
+  String _text(dynamic value, {String fallback = ''}) {
+    final String text = value?.toString().trim() ?? '';
+    if (text.isEmpty || text.toLowerCase() == 'null') return fallback;
+    return text;
+  }
+
+  String _imageUrl(dynamic value) {
+    final String raw = _text(value);
+    if (raw.isEmpty) return '';
+    if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+    return ImageHelper.getImageUrl(raw);
+  }
+
+  String _visitTime(dynamic value) {
+    final String raw = _text(value);
+    if (raw.isEmpty) return '';
+    return raw.replaceFirst('T', ' ');
+  }
+
+  void _openVisitorProfile(Map<String, dynamic> visitor) {
+    final String id = _text(visitor['id'] ?? visitor['user_id']);
+    if (id.isEmpty || id == '0') return;
+
+    if (Get.isBottomSheetOpen == true) {
+      Get.back();
+    }
+
+    Future<void>.delayed(const Duration(milliseconds: 100), () {
+      homeController.visitProfile(userId: id);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final double screenHeight = MediaQuery.sizeOf(context).height;
+    final double sheetHeight = (screenHeight * .78).clamp(500.0, 720.0).toDouble();
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: sheetHeight,
+        clipBehavior: Clip.antiAlias,
+        decoration: const BoxDecoration(
+          color: Color(0xFFFFFDF9),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 46,
+              height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD7D2CD),
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 12, 8),
+              child: Row(
+                children: [
+                  Container(
+                    height: 42,
+                    width: 42,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xFFFFC861),
+                          Color(0xFFFE8A61),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.visibility_rounded,
+                      color: Colors.white,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Profile Visitors'.appTr,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF2B2928),
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          'People who visited your profile'.appTr,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF9A938D),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: Get.back,
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: Color(0xFF625D58),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Obx(() {
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _AppMenuVisitorSummaryCard(
+                        icon: Icons.people_alt_rounded,
+                        value:
+                        '${controller.totalUniqueProfileVisitors.value}',
+                        label: 'Unique Visitors'.appTr,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _AppMenuVisitorSummaryCard(
+                        icon: Icons.remove_red_eye_rounded,
+                        value: '${controller.totalProfileVisits.value}',
+                        label: 'Total Visits'.appTr,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const Divider(height: 1, color: Color(0xFFF0EBE6)),
+            Expanded(
+              child: Obx(() {
+                final bool loading = controller.isProfileVisitorsLoading.value;
+                final String error = controller.profileVisitorsError.value.trim();
+                final List<Map<String, dynamic>> visitors =
+                controller.profileVisitorsList.toList(growable: false);
+
+                if (loading && visitors.isEmpty) {
+                  return ListView.separated(
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                    itemCount: 6,
+                    separatorBuilder: (_, __) => const SizedBox(height: 9),
+                    itemBuilder: (_, __) => const _AppMenuVisitorShimmerTile(),
+                  );
+                }
+
+                if (error.isNotEmpty && visitors.isEmpty) {
+                  return _AppMenuVisitorEmptyState(
+                    icon: Icons.cloud_off_rounded,
+                    title: 'Could not load visitors'.appTr,
+                    subtitle: error,
+                    onRetry: _refresh,
+                  );
+                }
+
+                if (visitors.isEmpty) {
+                  return _AppMenuVisitorEmptyState(
+                    icon: Icons.visibility_off_rounded,
+                    title: 'No visitors yet'.appTr,
+                    subtitle: 'Your profile visitors will appear here'.appTr,
+                    onRetry: _refresh,
+                  );
+                }
+
+                return RefreshIndicator(
+                  color: const Color(0xFFFE9A55),
+                  onRefresh: _refresh,
+                  child: ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: ClampingScrollPhysics(),
+                    ),
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 26),
+                    itemCount: visitors.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final visitor = visitors[index];
+                      final String name =
+                      _text(visitor['name'], fallback: 'User'.appTr);
+                      final String id = _text(
+                        visitor['user_id'] ?? visitor['id'],
+                        fallback: '0',
+                      );
+                      final String image = _imageUrl(
+                        visitor['profile_image_url'] ??
+                            visitor['profile_image'],
+                      );
+                      final String visitCount =
+                      _text(visitor['visit_count'], fallback: '1');
+                      final String visitedAt = _visitTime(visitor['visited_at']);
+
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(17),
+                          onTap: () => _openVisitorProfile(visitor),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(17),
+                              border: Border.all(
+                                color: const Color(0xFFF1EAE3),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(.025),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 50,
+                                  height: 50,
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        Color(0xFFFFD978),
+                                        Color(0xFFFF8B67),
+                                      ],
+                                    ),
+                                  ),
+                                  child: ClipOval(
+                                    child: image.isEmpty
+                                        ? const ColoredBox(
+                                      color: Color(0xFFF4EEE8),
+                                      child: Icon(
+                                        Icons.person_rounded,
+                                        color: Color(0xFFB4AAA1),
+                                      ),
+                                    )
+                                        : CachedNetworkImage(
+                                      imageUrl: image,
+                                      fit: BoxFit.cover,
+                                      memCacheWidth: 120,
+                                      memCacheHeight: 120,
+                                      fadeInDuration: Duration.zero,
+                                      fadeOutDuration: Duration.zero,
+                                      placeholder: (_, __) =>
+                                      const ColoredBox(
+                                        color: Color(0xFFF4EEE8),
+                                      ),
+                                      errorWidget: (_, __, ___) =>
+                                      const ColoredBox(
+                                        color: Color(0xFFF4EEE8),
+                                        child: Icon(
+                                          Icons.person_rounded,
+                                          color: Color(0xFFB4AAA1),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 11),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: GoogleFonts.poppins(
+                                          color: const Color(0xFF2B2928),
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'ID: $id',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: GoogleFonts.poppins(
+                                          color: const Color(0xFF8F8780),
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                      if (visitedAt.isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          '${'Last visit'.appTr}: $visitedAt',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: GoogleFonts.poppins(
+                                            color: const Color(0xFFAAA29B),
+                                            fontSize: 10.5,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  constraints:
+                                  const BoxConstraints(minWidth: 46),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 9,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFFF2E8),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    'x$visitCount',
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    style: GoogleFonts.poppins(
+                                      color: const Color(0xFFD87337),
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: Color(0xFFB9B1AA),
+                                  size: 20,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              }),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AppMenuVisitorSummaryCard extends StatelessWidget {
+  final IconData icon;
+  final String value;
+  final String label;
+
+  const _AppMenuVisitorSummaryCard({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 72,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF5EB),
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xFFF4E4D6)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: Color(0xFFFFE3CB),
+            ),
+            child: Icon(icon, color: const Color(0xFFD87B43), size: 18),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  maxLines: 1,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFF6E432A),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFF9A7965),
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppMenuVisitorEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Future<void> Function() onRetry;
+
+  const _AppMenuVisitorEmptyState({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      color: const Color(0xFFFE9A55),
+      onRefresh: onRetry,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        children: [
+          SizedBox(height: MediaQuery.sizeOf(context).height * .10),
+          Icon(icon, size: 54, color: const Color(0xFFC9BDB2)),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.poppins(
+              color: const Color(0xFF4D4742),
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.poppins(
+              color: const Color(0xFFA49A92),
+              fontSize: 11.5,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: OutlinedButton.icon(
+              onPressed: () => onRetry(),
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: Text('Refresh'.appTr),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppMenuVisitorShimmerTile extends StatelessWidget {
+  const _AppMenuVisitorShimmerTile();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 72,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xFFF1EAE3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: const BoxDecoration(
+              color: Color(0xFFF2ECE7),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  height: 11,
+                  width: 120,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF2ECE7),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  height: 9,
+                  width: 78,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F0EC),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 
 class _FastAppMenuScrollBehavior extends MaterialScrollBehavior {
   const _FastAppMenuScrollBehavior();

@@ -1952,7 +1952,20 @@ class LiveViewCircle_container extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: CachedNetworkImage(
+                // ✅ FIX: CachedNetworkImage cannot decode .svga (a vector
+                // animation format) — an animated emoji asset either failed
+                // to load or showed only a static preview frame instead of
+                // playing its full animation. Route .svga URLs to
+                // SVGAEasyPlayer instead. Same fix applied to
+                // _hostImogiOverlay (audio_live_view.dart) and the emoji
+                // picker (live_imogi_bottom_sheet.dart) for consistency.
+                child: image.toLowerCase().endsWith('.svga')
+                    ? SVGAEasyPlayer(
+                  key: ValueKey(image),
+                  resUrl: image,
+                  fit: BoxFit.contain,
+                )
+                    : CachedNetworkImage(
                   imageUrl: image,
                   fit: BoxFit.contain,
                   fadeInDuration: Duration.zero,

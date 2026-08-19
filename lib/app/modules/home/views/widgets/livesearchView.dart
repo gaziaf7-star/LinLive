@@ -40,6 +40,18 @@ class _LiveSearchViewState extends State<LiveSearchView>
   bool _searchAutoLoadingLive = false;
   int _searchGeneration = 0;
 
+  // PERFORMANCE caches. Search rebuild-er moddhe same data bar bar normalize/scan korbe na.
+  int _indexedUserCount = -1;
+  final Map<String, Map<String, dynamic>> _userByKey =
+  <String, Map<String, dynamic>>{};
+  final List<_IndexedSearchUser> _indexedUsers = <_IndexedSearchUser>[];
+  final Map<String, List<String>> _livePartsCache =
+  <String, List<String>>{};
+  String _userResultCacheKey = '';
+  List<dynamic> _userResultCache = <dynamic>[];
+  String _liveResultCacheKey = '';
+  List<dynamic> _liveResultCache = <dynamic>[];
+
   @override
   void initState() {
     super.initState();
@@ -47,18 +59,29 @@ class _LiveSearchViewState extends State<LiveSearchView>
         ? Get.find<HomeController>()
         : Get.put(HomeController());
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(_onTabChanged);
     _liveScrollController.addListener(_onLiveScroll);
 
     Future.microtask(() async {
+      final List<Future<void>> tasks = <Future<void>>[];
+
       if (controller.allUserData.isEmpty) {
-        await controller.showAllUserData();
+        tasks.add(controller.showAllUserData());
       }
-      if (controller.showingLiveStreamList.isEmpty) {
-        await controller.refreshLivestreamList();
+
+      // HomeController nijer onInit-e live load kore. Duplicate request avoid kori.
+      if (controller.showingLiveStreamList.isEmpty &&
+          !controller.isLoading.value) {
+        tasks.add(controller.refreshLivestreamList());
       }
+
+      if (tasks.isNotEmpty) {
+        await Future.wait(tasks);
+      }
+
       if (mounted) {
-        _cachedUserKeyQuery = '';
-        _cachedUserKeys = <String>{};
+        _invalidateSearchCaches(clearLiveParts: true);
+        _ensureUserIndex();
         setState(() {});
       }
     });
@@ -67,11 +90,27 @@ class _LiveSearchViewState extends State<LiveSearchView>
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _tabController.removeListener(_onTabChanged);
     _searchController.dispose();
     _liveScrollController.dispose();
     _userScrollController.dispose();
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (!mounted || _tabController.indexIsChanging) return;
+
+    // User tab search local index theke instant. Room tab-e gele only tokhon
+    // bounded live pagination run hobe.
+    if (_tabController.index == 1 &&
+        (_query.trim().isNotEmpty || _selectedCountryKey != 'all')) {
+      _ensureSearchLoadedEnough(
+        _query,
+        countryKey: _selectedCountryKey,
+        forceDeepSearch: false,
+      );
+    }
   }
 
   void _onLiveScroll() {
@@ -93,11 +132,12 @@ class _LiveSearchViewState extends State<LiveSearchView>
   }
 
   Future<void> _runSearch([String? value]) async {
-    final q = (value ?? _searchController.text).trim();
+    final String q = (value ?? _searchController.text).trim();
     _searchDebounce?.cancel();
 
     FocusScope.of(context).unfocus();
 
+    _invalidateSearchCaches();
     setState(() {
       _draftQuery = q;
       _query = q;
@@ -105,6 +145,14 @@ class _LiveSearchViewState extends State<LiveSearchView>
       _cachedUserKeys = <String>{};
       _searchGeneration++;
     });
+
+    // Default tab User. User ID/name search local pre-built index theke instant,
+    // tai Search press korlei 18/35 live page network request ar hobe na.
+    if (_tabController.index == 0) {
+      _ensureUserIndex();
+      if (mounted) setState(() {});
+      return;
+    }
 
     await _ensureSearchLoadedEnough(
       q,
@@ -116,6 +164,7 @@ class _LiveSearchViewState extends State<LiveSearchView>
   Future<void> _clearSearch() async {
     _searchDebounce?.cancel();
     _searchController.clear();
+    _invalidateSearchCaches();
     setState(() {
       _draftQuery = '';
       _query = '';
@@ -127,12 +176,16 @@ class _LiveSearchViewState extends State<LiveSearchView>
   }
 
   Future<void> _selectCountry(_CountryOption option) async {
+    _invalidateSearchCaches();
     setState(() {
       _selectedCountryKey = option.key;
       _selectedCountryName = option.name;
       _selectedCountryFlag = option.flag;
     });
-    await _ensureSearchLoadedEnough(_query, countryKey: option.key);
+
+    if (_tabController.index == 1) {
+      await _ensureSearchLoadedEnough(_query, countryKey: option.key);
+    }
   }
 
   Future<void> _ensureSearchLoadedEnough(
@@ -140,34 +193,44 @@ class _LiveSearchViewState extends State<LiveSearchView>
         String countryKey = 'all',
         bool forceDeepSearch = false,
       }) async {
-    final q = query.trim();
-    final needCountry = countryKey.trim().isNotEmpty && countryKey != 'all';
+    final String q = query.trim();
+    final bool needCountry =
+        countryKey.trim().isNotEmpty && countryKey != 'all';
+
     if (!needCountry && q.isEmpty) return;
     if (_searchAutoLoadingLive) return;
     if (!controller.liveHasMore.value && !controller.canLoadMoreLive) return;
 
     _searchAutoLoadingLive = true;
     final int generation = ++_searchGeneration;
+    if (mounted) setState(() {});
 
     try {
-      int guard = 0;
       final bool strictIdSearch = RegExp(r'^\d{3,}$').hasMatch(q);
-      final int maxPageTry = forceDeepSearch ? (strictIdSearch ? 35 : 18) : (strictIdSearch ? 12 : 6);
 
+      // Old code 35/18 page sequentially load korto. Ekhon UI thread/network bounded.
+      // Scroll korle porer page progressive load hobe.
+      final int maxPageTry = forceDeepSearch
+          ? (strictIdSearch ? 4 : 3)
+          : 2;
+
+      int loadedPages = 0;
       while (mounted &&
           generation == _searchGeneration &&
-          guard < maxPageTry &&
+          loadedPages < maxPageTry &&
           controller.canLoadMoreLive) {
-        final int exactBefore = _liveResults(exactOnly: true).length;
-        final int totalBefore = _liveResults().length;
+        final List<dynamic> current = _liveResults();
 
-        if (q.isNotEmpty && exactBefore > 0) break;
-        if (q.isEmpty && needCountry && totalBefore >= 10) break;
-        if (!forceDeepSearch && !strictIdSearch && q.isNotEmpty && totalBefore >= 12 && guard >= 2) break;
+        if (q.isNotEmpty && current.isNotEmpty) break;
+        if (q.isEmpty && needCountry && current.length >= 10) break;
 
         await controller.loadMoreLivestreamList();
-        guard++;
-        await Future<void>.delayed(const Duration(milliseconds: 80));
+        loadedPages++;
+
+        _invalidateSearchCaches(clearLiveParts: true);
+
+        // Network await-er pore next frame-e result paint korte dei.
+        await Future<void>.delayed(Duration.zero);
       }
     } finally {
       _searchAutoLoadingLive = false;
@@ -189,6 +252,66 @@ class _LiveSearchViewState extends State<LiveSearchView>
         .replaceAll(RegExp(r'[^a-z0-9\u0980-\u09ff ]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+  }
+
+  void _invalidateSearchCaches({bool clearLiveParts = false}) {
+    _userResultCacheKey = '';
+    _userResultCache = <dynamic>[];
+    _liveResultCacheKey = '';
+    _liveResultCache = <dynamic>[];
+    if (clearLiveParts) _livePartsCache.clear();
+  }
+
+  void _ensureUserIndex() {
+    final int currentCount = controller.allUserData.length;
+    if (_indexedUserCount == currentCount &&
+        (_indexedUsers.isNotEmpty || currentCount == 0)) {
+      return;
+    }
+
+    _indexedUserCount = currentCount;
+    _userByKey.clear();
+    _indexedUsers.clear();
+
+    for (final raw in controller.allUserData) {
+      final Map<String, dynamic> user = _asMap(raw);
+      if (user.isEmpty) continue;
+
+      final Set<String> keys = <String>{};
+      for (final field in <dynamic>[
+        user['id'],
+        user['user_id'],
+        user['unique_id'],
+        user['phone'],
+      ]) {
+        final String key = _normalize(_safe(field));
+        if (key.isEmpty) continue;
+        keys.add(key);
+        _userByKey.putIfAbsent(key, () => user);
+      }
+
+      _indexedUsers.add(
+        _IndexedSearchUser(
+          user: user,
+          searchText: _userSearchText(user),
+          keys: keys,
+        ),
+      );
+    }
+
+    _cachedUserKeyQuery = '';
+    _cachedUserKeys = <String>{};
+    _invalidateSearchCaches(clearLiveParts: true);
+  }
+
+  String _liveStableCacheKey(Map<String, dynamic> item) {
+    final String id = _safe(
+      item['id'] ?? item['livestream_id'] ?? item['stream_id'] ?? item['room_id'],
+    );
+    final int callerCount = item['livestream_callers'] is List
+        ? (item['livestream_callers'] as List).length
+        : 0;
+    return '${id}_${_safe(item['user_id'])}_${_safe(item['resolved_country'])}_$callerCount';
   }
 
   String _normalizeCountry(dynamic value) {
@@ -393,24 +516,24 @@ class _LiveSearchViewState extends State<LiveSearchView>
   }
 
   Map<String, dynamic> _findUserFromAllUsersByKeys(Iterable<String> keys) {
-    final keySet = keys.map(_normalize).where((e) => e.isNotEmpty).toSet();
-    if (keySet.isEmpty) return <String, dynamic>{};
+    _ensureUserIndex();
 
-    for (final rawUser in controller.allUserData) {
-      final user = _asMap(rawUser);
-      final userKeys = [
-        user['id'],
-        user['user_id'],
-        user['unique_id'],
-        user['phone'],
-      ].map((e) => _normalize(_safe(e))).where((e) => e.isNotEmpty).toSet();
-      if (userKeys.any(keySet.contains)) return user;
+    for (final rawKey in keys) {
+      final String key = _normalize(_safe(rawKey));
+      if (key.isEmpty) continue;
+      final Map<String, dynamic>? user = _userByKey[key];
+      if (user != null) return user;
     }
+
     return <String, dynamic>{};
   }
 
   List<String> _liveParts(dynamic raw) {
     final item = _asMap(raw);
+    final String cacheKey = _liveStableCacheKey(item);
+    final List<String>? cached = _livePartsCache[cacheKey];
+    if (cached != null) return cached;
+
     final user = _liveUser(item);
     final parts = <String>[
       _safe(item['id']),
@@ -469,34 +592,43 @@ class _LiveSearchViewState extends State<LiveSearchView>
       ]);
     }
 
-    return parts.where((e) => e.isNotEmpty).toList();
+    final List<String> result =
+    parts.where((e) => e.isNotEmpty).toList(growable: false);
+    _livePartsCache[cacheKey] = result;
+    return result;
   }
 
   String _liveSearchText(dynamic raw) => _normalize(_liveParts(raw).join(' '));
 
   Set<String> _queryUserKeys(String query) {
-    final q = _normalize(query);
+    final String q = _normalize(query);
     if (q.isEmpty) return <String>{};
-    final parts = q.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
-    final keys = <String>{};
 
-    for (final raw in controller.allUserData) {
-      final user = _asMap(raw);
-      final text = _userSearchText(user);
-      final exact = [
-        user['id'],
-        user['user_id'],
-        user['unique_id'],
-        user['phone'],
-      ].map((e) => _normalize(_safe(e))).any((e) => e == q);
+    _ensureUserIndex();
 
-      if (exact || parts.every(text.contains)) {
-        for (final field in [user['id'], user['user_id'], user['unique_id'], user['phone']]) {
-          final key = _normalize(_safe(field));
-          if (key.isNotEmpty) keys.add(key);
-        }
+    final Map<String, dynamic>? exactUser = _userByKey[q];
+    if (exactUser != null) {
+      return <String>{
+        for (final rawKey in <dynamic>[
+          exactUser['id'],
+          exactUser['user_id'],
+          exactUser['unique_id'],
+          exactUser['phone'],
+        ])
+          if (_normalize(_safe(rawKey)).isNotEmpty) _normalize(_safe(rawKey)),
+      };
+    }
+
+    final List<String> queryParts =
+    q.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+    final Set<String> keys = <String>{};
+
+    for (final entry in _indexedUsers) {
+      if (queryParts.every(entry.searchText.contains)) {
+        keys.addAll(entry.keys);
       }
     }
+
     return keys;
   }
 
@@ -747,52 +879,86 @@ class _LiveSearchViewState extends State<LiveSearchView>
   }
 
   List<dynamic> _liveResults({bool exactOnly = false}) {
-    final q = _query.trim();
+    final String q = _query.trim();
 
-    // Reference screen shows "No data" until a search is submitted.
     if (q.isEmpty && _selectedCountryKey == 'all') {
       return <dynamic>[];
     }
 
-    final source = List<dynamic>.from(controller.showingLiveStreamList);
-    final scored = <_ScoredLive>[];
+    final String cacheKey =
+        '${exactOnly ? 1 : 0}|${_normalize(q)}|$_selectedCountryKey|'
+        '${controller.showingLiveStreamList.length}|${controller.liveCurrentPage.value}';
+    if (_liveResultCacheKey == cacheKey) {
+      return _liveResultCache;
+    }
+
+    final List<dynamic> source =
+    List<dynamic>.from(controller.showingLiveStreamList);
+    final List<_ScoredLive> scored = <_ScoredLive>[];
 
     for (final item in source) {
       if (!_countryMatches(item)) continue;
       if (!_liveMatchesQuery(item, q)) continue;
-      final score = _liveScore(item, q) + (_selectedCountryKey == 'all' ? 0 : 700);
+      final int score =
+          _liveScore(item, q) + (_selectedCountryKey == 'all' ? 0 : 700);
       if (exactOnly && q.isNotEmpty && score < 8000) continue;
       scored.add(_ScoredLive(item, score));
     }
 
+    final List<dynamic> result;
     if (q.isEmpty) {
-      return scored.map((e) => e.item).toList();
+      result = scored.map((e) => e.item).toList(growable: false);
+    } else {
+      scored.sort((a, b) {
+        final int byScore = b.score.compareTo(a.score);
+        if (byScore != 0) return byScore;
+        return _safe(_asMap(b.item)['id'])
+            .compareTo(_safe(_asMap(a.item)['id']));
+      });
+      result = scored.map((e) => e.item).toList(growable: false);
     }
 
-    scored.sort((a, b) {
-      final byScore = b.score.compareTo(a.score);
-      if (byScore != 0) return byScore;
-      return _safe(_asMap(b.item)['id']).compareTo(_safe(_asMap(a.item)['id']));
-    });
-    return scored.map((e) => e.item).toList();
+    _liveResultCacheKey = cacheKey;
+    _liveResultCache = result;
+    return result;
   }
 
   List<dynamic> _userResults() {
-    final q = _query.trim();
-    final source = List<dynamic>.from(controller.allUserData);
-    // Reference design starts with an empty state.
-    // Results appear only after the user presses Search / submits a query.
+    final String q = _normalize(_query.trim());
     if (q.isEmpty) return <dynamic>[];
 
-    final parts = _normalize(q).split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
-    final scored = <_ScoredLive>[];
-    for (final user in source) {
-      final text = _userSearchText(user);
-      if (!parts.every(text.contains)) continue;
-      scored.add(_ScoredLive(user, _userScore(user, q)));
+    _ensureUserIndex();
+
+    final String cacheKey = '$q|${controller.allUserData.length}';
+    if (_userResultCacheKey == cacheKey) {
+      return _userResultCache;
     }
+
+    // Exact ID / unique ID / phone => O(1), no full list scoring.
+    final Map<String, dynamic>? exact = _userByKey[q];
+    if (exact != null) {
+      _userResultCacheKey = cacheKey;
+      _userResultCache = <dynamic>[exact];
+      return _userResultCache;
+    }
+
+    final List<String> parts =
+    q.split(RegExp(r'\s+')).where((e) => e.isNotEmpty).toList();
+    final List<_ScoredLive> scored = <_ScoredLive>[];
+
+    for (final entry in _indexedUsers) {
+      if (!parts.every(entry.searchText.contains)) continue;
+      scored.add(_ScoredLive(entry.user, _userScore(entry.user, q)));
+      if (scored.length >= 140) break;
+    }
+
     scored.sort((a, b) => b.score.compareTo(a.score));
-    return scored.map((e) => e.item).take(100).toList();
+    final List<dynamic> result =
+    scored.map((e) => e.item).take(100).toList(growable: false);
+
+    _userResultCacheKey = cacheKey;
+    _userResultCache = result;
+    return result;
   }
 
   String _imageUrl(dynamic raw) {
@@ -1412,8 +1578,7 @@ class _LiveSearchViewState extends State<LiveSearchView>
               ),
               itemBuilder: (context, index) {
                 if (index >= results.length) return const _LiveCardShimmer();
-                return AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 220),
+                return RepaintBoundary(
                   child: UserProfileCard(
                     key: ValueKey('${_safe(_asMap(results[index])['id'])}_$index'),
                     data: results[index],
@@ -1484,7 +1649,25 @@ class _LiveSearchViewState extends State<LiveSearchView>
                 final userCount = _userResults().length;
                 return _tabs(liveCount, userCount);
               }),
-              const SizedBox(height: 8),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 160),
+                child: _searchAutoLoadingLive
+                    ? const SizedBox(
+                  key: ValueKey('room-search-loading'),
+                  height: 2.5,
+                  width: double.infinity,
+                  child: LinearProgressIndicator(
+                    minHeight: 2.5,
+                    color: Color(0xFFFFC915),
+                    backgroundColor: Color(0xFFFFF5C4),
+                  ),
+                )
+                    : const SizedBox(
+                  key: ValueKey('room-search-idle'),
+                  height: 2.5,
+                ),
+              ),
+              const SizedBox(height: 6),
               Expanded(
                 child: TabBarView(
                   controller: _tabController,
@@ -1706,6 +1889,18 @@ class _TriangleClipper extends CustomClipper<Path> {
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
+class _IndexedSearchUser {
+  final Map<String, dynamic> user;
+  final String searchText;
+  final Set<String> keys;
+
+  const _IndexedSearchUser({
+    required this.user,
+    required this.searchText,
+    required this.keys,
+  });
+}
+
 class _ScoredLive {
   final dynamic item;
   final int score;
@@ -1874,15 +2069,17 @@ class _SearchUserTile extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Hero(
-                tag: 'search_user_${_safe(user['id'])}',
+              RepaintBoundary(
                 child: ClipOval(
                   child: imageUrl.isNotEmpty
                       ? CachedNetworkImage(
                     imageUrl: imageUrl,
                     height: 54,
                     width: 54,
+                    memCacheWidth: 160,
+                    memCacheHeight: 160,
                     fit: BoxFit.cover,
+                    fadeInDuration: Duration.zero,
                     placeholder: (_, __) => _avatarFallback(),
                     errorWidget: (_, __, ___) => _avatarFallback(),
                   )

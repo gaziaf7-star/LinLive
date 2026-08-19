@@ -492,6 +492,45 @@ class _RedPacketOpenDialogState extends State<RedPacketOpenDialog> {
         _idSyncWorker?.dispose();
       }
     });
+
+    // ✅ ADDITIONAL FIX: don't only passively wait for currentRedPacket to
+    // update — actively fetch the active-packets list ourselves right now.
+    // Confirmed via server-side investigation that the websocket
+    // red_packet_sent event itself never carries the real id, so waiting
+    // on it alone can leave the dialog stuck showing the "still loading"
+    // toast indefinitely. This closes that gap directly.
+    _fetchRealIdFromRest(myLivestreamId);
+  }
+
+  Future<void> _fetchRealIdFromRest(int myLivestreamId) async {
+    if (myLivestreamId <= 0) return;
+    for (int attempt = 0; attempt < 5; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      if (!mounted || _effectivePacketId > 0) return;
+      try {
+        final packets = await liveController.getLivestreamRedPackets(
+          livestreamId: myLivestreamId,
+          status: 'active',
+          perPage: 5,
+        );
+        if (!mounted || _effectivePacketId > 0) return;
+        for (final raw in packets) {
+          final int id = _safeInt(
+            raw['id'] ?? raw['red_packet_id'] ?? raw['packet_id'],
+          );
+          if (id > 0) {
+            debugPrint(
+              '🧧 [RED_PACKET] resolved real id via direct REST fetch => id=$id (attempt ${attempt + 1})',
+            );
+            setState(() => _resolvedPacketId = id);
+            _idSyncWorker?.dispose();
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint('🧧 [RED_PACKET] direct REST fetch attempt ${attempt + 1} failed => $e');
+      }
+    }
   }
 
   @override
@@ -1384,4 +1423,3 @@ class GlobalRedPacketBanner extends StatelessWidget {
     });
   }
 }
-

@@ -391,6 +391,18 @@ extension SeatEventHandler on WebsocketController {
     );
     if (!applied) return;
 
+    // ✅ FIX (profile shows muted while actually talking / audio silent
+    // until manual mute→unmute): audioMutedUserMap[userId] is set true on
+    // room exit as a mic-leak-prevention measure, but was only ever reset
+    // on a full rejoin (audience_join_controller.dart's activateRoomTransition)
+    // — never here, when a user simply takes/switches to a seat. A stale
+    // true flag left over from an earlier session/seat then made this
+    // seat's mute indicator wrongly show muted, and — since some UI paths
+    // gate whether to play incoming audio on this same flag — could also
+    // suppress hearing them until mute/unmute was toggled manually. Taking
+    // any seat should start from a clean, un-muted state.
+    audioMutedUserMap.remove(userId);
+
     /// CP connection/base image can be sent at root level, not inside call_data.
     /// Sync it immediately so every viewer sees the base without waiting for an API refresh.
     syncCpSeatConnectionsFromAnyPayload(data, source: 'seat_switched');

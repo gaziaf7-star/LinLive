@@ -1,6 +1,7 @@
 
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:flutter/foundation.dart';
@@ -20,6 +21,114 @@ class AgoraRenewalToken {
 typedef AgoraFreshTokenProvider = Future<AgoraRenewalToken> Function();
 
 enum _AgoraLifecycleState { idle, initializing, ready, disposing }
+
+
+enum AgoraLutFilter {
+  none,
+  natural,
+  warm,
+  saturated,
+  fresh,
+  cool,
+  rosy,
+  studio,
+  cinematic,
+}
+
+double _lutClamp(double value) {
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+List<double> _transformLutColor(
+    String filterName,
+    double r,
+    double g,
+    double b,
+    ) {
+  double rr = r;
+  double gg = g;
+  double bb = b;
+
+  final double luma = (r * .2126) + (g * .7152) + (b * .0722);
+
+  switch (filterName) {
+    case 'warm':
+      rr = r * 1.08 + .015;
+      gg = g * 1.01;
+      bb = b * .90;
+      break;
+    case 'saturated':
+      rr = luma + (r - luma) * 1.32;
+      gg = luma + (g - luma) * 1.32;
+      bb = luma + (b - luma) * 1.32;
+      break;
+    case 'fresh':
+      rr = r * 1.01 + .015;
+      gg = g * 1.045 + .010;
+      bb = b * 1.055 + .012;
+      break;
+    case 'cool':
+      rr = r * .94;
+      gg = g * 1.01;
+      bb = b * 1.10 + .01;
+      break;
+    case 'rosy':
+      rr = r * 1.08 + .015;
+      gg = g * .98;
+      bb = b * 1.02 + .006;
+      break;
+    case 'studio':
+      rr = (r - .5) * 1.10 + .5;
+      gg = (g - .5) * 1.10 + .5;
+      bb = (b - .5) * 1.10 + .5;
+      break;
+    case 'cinematic':
+      rr = r * 1.04 + g * .015;
+      gg = g * .99 + b * .018;
+      bb = b * .96 + g * .025;
+      break;
+    case 'natural':
+    default:
+      rr = (r - .5) * 1.025 + .5;
+      gg = (g - .5) * 1.025 + .5;
+      bb = (b - .5) * 1.025 + .5;
+      break;
+  }
+
+  return <double>[
+    _lutClamp(rr),
+    _lutClamp(gg),
+    _lutClamp(bb),
+  ];
+}
+
+String _buildAgoraCubeLut(String filterName) {
+  const int size = 32;
+  final StringBuffer buffer = StringBuffer('LUT_3D_SIZE 32\n');
+
+  // Standard .cube ordering: red changes fastest, then green, then blue.
+  for (int b = 0; b < size; b++) {
+    for (int g = 0; g < size; g++) {
+      for (int r = 0; r < size; r++) {
+        final double rf = r / (size - 1);
+        final double gf = g / (size - 1);
+        final double bf = b / (size - 1);
+        final values = _transformLutColor(filterName, rf, gf, bf);
+        buffer
+          ..write(values[0].toStringAsFixed(8))
+          ..write(' ')
+          ..write(values[1].toStringAsFixed(8))
+          ..write(' ')
+          ..write(values[2].toStringAsFixed(8))
+          ..write('\n');
+      }
+    }
+  }
+
+  return buffer.toString();
+}
 
 class AgoraService {
   static final AgoraService _instance = AgoraService._internal();
@@ -75,6 +184,9 @@ class AgoraService {
   bool _queuedBeautyEnabled = false;
   ColorEnhanceOptions? _queuedColor;
   bool _queuedColorEnabled = false;
+  final Map<AgoraLutFilter, String> _generatedLutPaths = <AgoraLutFilter, String>{};
+  AgoraLutFilter _activeLutFilter = AgoraLutFilter.none;
+  double _activeLutStrength = 0;
 
   // final String appId = "4d68656dc95447fc97b709a5321482bd";
 
@@ -1079,6 +1191,251 @@ class AgoraService {
     } catch (e) {
       debugPrint('Error applying queued effects: $e');
     }
+  }
+
+
+  // =================== FAST VIDEO PREVIEW ===================
+  /// Makes the camera visible as early as possible. Heavy enhancement work is
+  /// intentionally not performed here, so the UI does not wait for beauty,
+  /// denoise or LUT generation before showing the first preview frame.
+  Future<bool> prepareVideoPreviewFast() async {
+    final bool initialized = await initializeEngine();
+    if (!initialized) return false;
+
+    final RtcEngine? currentEngine = _engine;
+    final int generation = _engineGeneration;
+    if (currentEngine == null || !_isInitialized) return false;
+
+    try {
+      await currentEngine.enableVideo();
+      if (!_isCurrentEngine(currentEngine, generation)) return false;
+      await currentEngine.enableLocalVideo(true);
+      if (!_isCurrentEngine(currentEngine, generation)) return false;
+      await currentEngine.muteLocalVideoStream(false);
+      if (!_isCurrentEngine(currentEngine, generation)) return false;
+
+      _lastLocalVideoEnabled = true;
+      _lastLocalVideoMuted = false;
+
+      await startPreview();
+      return _isCurrentEngine(currentEngine, generation);
+    } catch (error) {
+      debugPrint('FAST_CAMERA_PREVIEW_FAILED => $error');
+      return false;
+    }
+  }
+
+  /// Applies the encoder tuning after preview has already become visible.
+  /// Keeping this separate removes unnecessary work from the first-frame path.
+  Future<void> configureVideoQualityAfterPreview() async {
+    final RtcEngine? currentEngine = _engine;
+    final int generation = _engineGeneration;
+    if (currentEngine == null || !_isInitialized) return;
+
+    try {
+      await currentEngine.setVideoEncoderConfiguration(
+        const VideoEncoderConfiguration(
+          dimensions: VideoDimensions(width: 540, height: 960),
+          frameRate: 15,
+          bitrate: 0,
+          orientationMode: OrientationMode.orientationModeAdaptive,
+          degradationPreference: DegradationPreference.maintainBalanced,
+        ),
+      );
+      if (!_isCurrentEngine(currentEngine, generation)) return;
+
+      try {
+        await currentEngine.setParameters(
+          '{"che.video.hardware_encoding":true,'
+              '"che.video.enableAdaptiveBitrate":true,'
+              '"rtc.video.dynamic_switch":true}',
+        );
+      } catch (error) {
+        debugPrint('VIDEO_FAST_PARAMETERS_SKIPPED => $error');
+      }
+    } catch (error) {
+      debugPrint('VIDEO_QUALITY_POST_PREVIEW_SKIPPED => $error');
+    }
+  }
+
+  // =================== PROFESSIONAL VIDEO LOOKS ===================
+  Future<String> _ensureGeneratedLut(AgoraLutFilter filter) async {
+    final String? cached = _generatedLutPaths[filter];
+    if (cached != null && File(cached).existsSync()) return cached;
+
+    final String filePath =
+        '${Directory.systemTemp.path}/linlive_${filter.name}_32.cube';
+    final File file = File(filePath);
+
+    if (!file.existsSync() || await file.length() < 10000) {
+      final String cube = await compute(_buildAgoraCubeLut, filter.name);
+      await file.writeAsString(cube, flush: true);
+    }
+
+    _generatedLutPaths[filter] = filePath;
+    return filePath;
+  }
+
+  Future<void> _applyLutFilter(
+      AgoraLutFilter filter, {
+        required double strength,
+      }) async {
+    final RtcEngine? currentEngine = _engine;
+    final int generation = _engineGeneration;
+    if (currentEngine == null || !_isInitialized) return;
+
+    if (filter == AgoraLutFilter.none || strength <= .001) {
+      try {
+        await currentEngine.setFilterEffectOptions(
+          enabled: false,
+          options: const FilterEffectOptions(),
+        );
+        if (!_isCurrentEngine(currentEngine, generation)) return;
+      } catch (error) {
+        debugPrint('AGORA_LUT_DISABLE_SKIPPED => $error');
+      }
+      _activeLutFilter = AgoraLutFilter.none;
+      _activeLutStrength = 0;
+      return;
+    }
+
+    if (_activeLutFilter == filter &&
+        (_activeLutStrength - strength).abs() < .005) {
+      return;
+    }
+
+    try {
+      final String path = await _ensureGeneratedLut(filter);
+      if (!_isCurrentEngine(currentEngine, generation)) return;
+
+      await currentEngine.setFilterEffectOptions(
+        enabled: true,
+        options: FilterEffectOptions(
+          path: path,
+          strength: strength.clamp(0.0, 1.0).toDouble(),
+        ),
+      );
+      if (!_isCurrentEngine(currentEngine, generation)) return;
+
+      _activeLutFilter = filter;
+      _activeLutStrength = strength;
+      debugPrint(
+        'AGORA_LUT_APPLIED => ${filter.name} '
+            'strength=${strength.toStringAsFixed(2)}',
+      );
+    } catch (error) {
+      // Some builds/devices do not ship or support Agora Clear Vision LUT.
+      // Keep the look functional by falling back to color enhancement.
+      debugPrint('AGORA_LUT_FALLBACK => ${filter.name}: $error');
+      final double fallbackStrength = switch (filter) {
+        AgoraLutFilter.saturated => .50,
+        AgoraLutFilter.fresh => .38,
+        AgoraLutFilter.studio => .42,
+        AgoraLutFilter.cinematic => .46,
+        _ => .30,
+      };
+      await setColorEnhance(
+        strength: fallbackStrength,
+        skinProtect: .48,
+      );
+    }
+  }
+
+  Future<void> setEnhancementQuality({
+    bool lowLight = true,
+    bool denoise = true,
+  }) async {
+    final RtcEngine? currentEngine = _engine;
+    final int generation = _engineGeneration;
+    if (currentEngine == null || !_isInitialized) return;
+
+    try {
+      await currentEngine.setLowlightEnhanceOptions(
+        enabled: lowLight,
+        options: const LowlightEnhanceOptions(
+          mode: LowLightEnhanceMode.lowLightEnhanceAuto,
+          level: LowLightEnhanceLevel.lowLightEnhanceLevelFast,
+        ),
+      );
+      if (!_isCurrentEngine(currentEngine, generation)) return;
+    } catch (error) {
+      debugPrint('LOW_LIGHT_OPTION_SKIPPED => $error');
+    }
+
+    try {
+      await currentEngine.setVideoDenoiserOptions(
+        enabled: denoise,
+        options: const VideoDenoiserOptions(
+          mode: VideoDenoiserMode.videoDenoiserAuto,
+          level: VideoDenoiserLevel.videoDenoiserLevelFast,
+        ),
+      );
+    } catch (error) {
+      debugPrint('VIDEO_DENOISER_OPTION_SKIPPED => $error');
+    }
+  }
+
+  Future<void> applyProfessionalVideoLook({
+    required double lightening,
+    required double smoothness,
+    required double redness,
+    required double sharpness,
+    required double colorStrength,
+    required double skinProtect,
+    required AgoraLutFilter filter,
+    required double filterStrength,
+    bool lowLight = true,
+    bool denoise = true,
+  }) async {
+    // These SDK effects are applied to the primary camera source, therefore the
+    // same processed frames continue into the published broadcaster stream.
+    await setBeautyCustom(
+      contrast: LighteningContrastLevel.lighteningContrastNormal,
+      lightening: lightening,
+      smoothness: smoothness,
+      redness: redness,
+      sharpness: sharpness,
+    );
+
+    await setColorEnhance(
+      strength: colorStrength,
+      skinProtect: skinProtect,
+    );
+
+    await _applyLutFilter(
+      filter,
+      strength: filterStrength,
+    );
+
+    await setEnhancementQuality(
+      lowLight: lowLight,
+      denoise: denoise,
+    );
+  }
+
+  Future<void> resetProfessionalVideoEffects() async {
+    final RtcEngine? currentEngine = _engine;
+    final int generation = _engineGeneration;
+
+    await disableAllVideoEffects();
+    await _applyLutFilter(AgoraLutFilter.none, strength: 0);
+
+    if (currentEngine == null || !_isInitialized) return;
+
+    try {
+      await currentEngine.setLowlightEnhanceOptions(
+        enabled: false,
+        options: const LowlightEnhanceOptions(),
+      );
+      if (!_isCurrentEngine(currentEngine, generation)) return;
+    } catch (_) {}
+
+    try {
+      await currentEngine.setVideoDenoiserOptions(
+        enabled: false,
+        options: const VideoDenoiserOptions(),
+      );
+    } catch (_) {}
   }
 
   // =================== SAFE LIVE HELPERS ===================

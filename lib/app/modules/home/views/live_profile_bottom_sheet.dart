@@ -85,10 +85,74 @@ extension LiveProfileBottomSheetView on HomeController {
                       !liveVipTypeForCard.startsWith('svip') &&
                       liveVipLevelNoForCard == 1);
 
+          // ✅ VIP 2 আলাদা করে detect করা হচ্ছে।
+          // VIP 1 এবং SVIP-এর existing position/size এতে পরিবর্তন হবে না।
+          final bool isVipTwoProfileCard =
+              liveVipTypeForCard == 'vip2' ||
+                  (liveVipTypeForCard.startsWith('vip') &&
+                      !liveVipTypeForCard.startsWith('svip') &&
+                      liveVipLevelNoForCard == 2);
+
+          // ✅ VIP 3 আলাদা detect করা হচ্ছে।
+          // VIP 3 bottom frame safe centered scale-এ extra ছোট হবে।
+          final bool isVipThreeProfileCard =
+              liveVipTypeForCard == 'vip3' ||
+                  (liveVipTypeForCard.startsWith('vip') &&
+                      !liveVipTypeForCard.startsWith('svip') &&
+                      liveVipLevelNoForCard == 3);
+
+          // ✅ VIP 4 আলাদা detect করা হচ্ছে।
+          // VIP 4 bottom frame VIP 2-এর same size/position/fit ব্যবহার করবে।
+          final bool isVipFourProfileCard =
+              liveVipTypeForCard == 'vip4' ||
+                  (liveVipTypeForCard.startsWith('vip') &&
+                      !liveVipTypeForCard.startsWith('svip') &&
+                      liveVipLevelNoForCard == 4);
+
+          // ✅ VIP 5, 6, 7, 8 আলাদা detect করা হচ্ছে।
+          // এদের bottom frame VIP 4-এর exact same size/position/fit ব্যবহার করবে।
+          final bool isVipFiveProfileCard =
+              liveVipTypeForCard == 'vip5' ||
+                  (liveVipTypeForCard.startsWith('vip') &&
+                      !liveVipTypeForCard.startsWith('svip') &&
+                      liveVipLevelNoForCard == 5);
+
+          final bool isVipSixProfileCard =
+              liveVipTypeForCard == 'vip6' ||
+                  (liveVipTypeForCard.startsWith('vip') &&
+                      !liveVipTypeForCard.startsWith('svip') &&
+                      liveVipLevelNoForCard == 6);
+
+          final bool isVipSevenProfileCard =
+              liveVipTypeForCard == 'vip7' ||
+                  (liveVipTypeForCard.startsWith('vip') &&
+                      !liveVipTypeForCard.startsWith('svip') &&
+                      liveVipLevelNoForCard == 7);
+
+          final bool isVipEightProfileCard =
+              liveVipTypeForCard == 'vip8' ||
+                  (liveVipTypeForCard.startsWith('vip') &&
+                      !liveVipTypeForCard.startsWith('svip') &&
+                      liveVipLevelNoForCard == 8);
+
+          final bool usesVipThreeFrameLayout =
+              isVipThreeProfileCard;
+
+          final bool usesVipFourFrameLayout =
+              isVipFourProfileCard ||
+                  isVipFiveProfileCard ||
+                  isVipSixProfileCard ||
+                  isVipSevenProfileCard ||
+                  isVipEightProfileCard;
+
           // VIP/SVIP profile-card background এখন bottom-sheet container-এর
           // সাথে fixed থাকবে। Image position container-এর বাইরে shift হবে না।
           final Alignment vipProfileCardAlignment =
-          isVipOneProfileCard ? Alignment.topCenter : Alignment.center;
+          (isVipOneProfileCard ||
+              isVipTwoProfileCard ||
+              usesVipFourFrameLayout)
+              ? Alignment.topCenter
+              : Alignment.center;
 
           final bool isOwnProfile =
               user['id']?.toString() ==
@@ -166,7 +230,7 @@ extension LiveProfileBottomSheetView on HomeController {
                   constraints: BoxConstraints(maxHeight: Get.height * 0.90),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(3),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withOpacity(.14),
@@ -177,7 +241,7 @@ extension LiveProfileBottomSheetView on HomeController {
                   ),
 
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
+                    borderRadius: BorderRadius.circular(3),
                     // VIP/SVIP frame top-e uthle jeno kata na jay.
                     clipBehavior: Clip.none,
                     child: Stack(
@@ -190,35 +254,89 @@ extension LiveProfileBottomSheetView on HomeController {
                         if (_isActiveVipMap(liveVipForCard) &&
                             profileCardImageUrlForSheet.isNotEmpty)
                           Positioned(
-                            // Previous -50px theke aro 100px upore:
-                            // total 150px upore uthano holo.
-                            // clipBehavior: Clip.none thakbe, tai upper artwork
-                            // container-er baire geleo kata jabe na.
-                            top: -220,
-                            bottom: 0,
-                            left: 0,
-                            right: 0,
+                            // ✅ VIP 1 top border-এর সাথে থাকবে, তবে width/size
+                            // আগের চেয়ে ছোট করা হয়েছে।
+                            //
+                            // ✅ SVIP এবং অন্য VIP frame একদম unchanged।
+                            // ✅ VIP 1: আগের approved position/size unchanged.
+                            // ✅ VIP 2: আরও উপরে এবং আরও বড় করা হয়েছে.
+                            // top 180px থেকে 80px করা হয়েছে.
+                            // left/right inset 4.5% থেকে 2% করা হয়েছে.
+                            // ✅ VIP 2 bottom inset 0 রাখা হয়েছে যাতে
+                            // frame-এর নিচের artwork আর কাটা/ঢাকা না যায়.
+                            // ✅ SVIP/other VIP: আগের position unchanged.
+                            top: isVipOneProfileCard
+                                ? -300
+                                : (isVipTwoProfileCard || usesVipFourFrameLayout)
+                                ? -120
+                                : usesVipThreeFrameLayout
+                                ? -750
+                                : -220,
+                            bottom: isVipOneProfileCard
+                                ? kHeight * 0.020
+                                : (isVipTwoProfileCard || usesVipFourFrameLayout)
+                                ? 0
+                                : usesVipThreeFrameLayout
+                                ? -430.0
+                                : 0,
+                            left: isVipOneProfileCard
+                                ? kWeight * 0.010
+                                : (isVipTwoProfileCard || usesVipFourFrameLayout)
+                                ? 0
+                                : usesVipThreeFrameLayout
+                                ? 152.5
+                                : 0,
+                            right: isVipOneProfileCard
+                                ? kWeight * 0.010
+                                : (isVipTwoProfileCard || usesVipFourFrameLayout)
+                                ? 0
+                                : usesVipThreeFrameLayout
+                                ? 152.5
+                                : 0,
                             child: IgnorePointer(
                               child: RepaintBoundary(
-                                child: profileCardImageUrlForSheet
-                                    .toLowerCase()
-                                    .endsWith('.svga')
-                                    ? SVGAEasyPlayer(
-                                  resUrl: profileCardImageUrlForSheet,
-                                  fit: BoxFit.cover,
-                                )
-                                    : CachedNetworkImage(
-                                  imageUrl: profileCardImageUrlForSheet,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                  fit: BoxFit.cover,
-                                  alignment: vipProfileCardAlignment,
-                                  fadeInDuration: Duration.zero,
-                                  fadeOutDuration: Duration.zero,
-                                  placeholder: (_, __) =>
-                                  const SizedBox.shrink(),
-                                  errorWidget: (_, __, ___) =>
-                                  const SizedBox.shrink(),
+                                child: Transform.scale(
+                                  // ✅ VIP 3 current width box already খুব ছোট।
+                                  // আর literal 200px inset দিলে ছোট phone-এ
+                                  // negative width/layout crash হতে পারে।
+                                  // তাই শুধু VIP 3 artwork safe centered scale-এ
+                                  // আরও ছোট করা হচ্ছে।
+                                  scale: isVipThreeProfileCard ? 7.50 : 1.0,
+                                  alignment: Alignment.center,
+                                  child: profileCardImageUrlForSheet
+                                      .toLowerCase()
+                                      .endsWith('.svga')
+                                      ? SVGAEasyPlayer(
+                                    resUrl: profileCardImageUrlForSheet,
+                                    fit: (isVipOneProfileCard ||
+                                        isVipTwoProfileCard ||
+                                        isVipThreeProfileCard ||
+                                        usesVipFourFrameLayout)
+                                        ? BoxFit.contain
+                                        : BoxFit.cover,
+                                  )
+                                      : CachedNetworkImage(
+                                    imageUrl: profileCardImageUrlForSheet,
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                    fit: (isVipOneProfileCard ||
+                                        isVipTwoProfileCard ||
+                                        isVipThreeProfileCard ||
+                                        usesVipFourFrameLayout)
+                                        ? BoxFit.contain
+                                        : BoxFit.cover,
+                                    alignment: (isVipOneProfileCard ||
+                                        isVipTwoProfileCard ||
+                                        usesVipFourFrameLayout)
+                                        ? Alignment.topCenter
+                                        : Alignment.center,
+                                    fadeInDuration: Duration.zero,
+                                    fadeOutDuration: Duration.zero,
+                                    placeholder: (_, __) =>
+                                    const SizedBox.shrink(),
+                                    errorWidget: (_, __, ___) =>
+                                    const SizedBox.shrink(),
+                                  ),
                                 ),
                               ),
                             ),
@@ -240,7 +358,7 @@ extension LiveProfileBottomSheetView on HomeController {
                                 ),
                                 decoration: BoxDecoration(
                                   color: Colors.transparent,
-                                  borderRadius: BorderRadius.circular(24),
+                                  borderRadius: BorderRadius.circular(3),
                                 ),
                                 child: Stack(
                                   clipBehavior: Clip.none,
@@ -1262,80 +1380,6 @@ int _profileSafeInt(dynamic value, {int fallback = 0}) {
   return int.tryParse(value.toString()) ?? fallback;
 }
 
-Widget _profileLiveIdRow(Map<String, dynamic> user) {
-  Widget idBadge() {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: kWeight * 0.011,
-        vertical: kHeight * 0.002,
-      ),
-      decoration: BoxDecoration(
-        color: kAppColor2,
-        borderRadius: BorderRadius.circular(4),
-        boxShadow: [
-          BoxShadow(
-            color: kAppColor2.withOpacity(.45),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Text(
-        ('ID').appTr,
-        style: GoogleFonts.poppins(
-          fontSize: kHeight * 0.016,
-          fontWeight: FontWeight.w700,
-          color: Colors.white,
-        ),
-      ),
-    );
-  }
-
-  return Row(
-    mainAxisAlignment: MainAxisAlignment.center,
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      idBadge(),
-      SizedBox(width: kWeight * 0.015),
-      user['unique_id'] == null
-          ? Text(
-        '${user['user_id'] ?? ''}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: GoogleFonts.poppins(
-          fontSize: kHeight * 0.018,
-          fontWeight: FontWeight.w600,
-          color: Colors.white,
-          shadows: const [
-            Shadow(
-              blurRadius: 8,
-              color: Color(0xFFFFD700),
-              offset: Offset(0, 0),
-            ),
-          ],
-        ),
-      )
-          : ShimmerUserId(
-        user: user,
-        kHeight: kHeight,
-        kWeight: kWeight,
-      ),
-      SizedBox(width: kWeight * 0.015),
-      GestureDetector(
-        onTap: () {
-          Clipboard.setData(
-            ClipboardData(text: '${user['user_id'] ?? ''}'),
-          );
-        },
-        child: Icon(
-          Icons.copy,
-          size: kHeight * 0.019,
-          color: Colors.white,
-        ),
-      ),
-    ],
-  );
-}
 
 Widget _profileLevelVipBaseRow(Map<String, dynamic> user) {
   return SizedBox(

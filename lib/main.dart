@@ -63,7 +63,7 @@ class MyHttpOverrides extends HttpOverrides {
 
 Future<void> main() async {
   runZonedGuarded<Future<void>>(
-    () async {
+        () async {
       WidgetsFlutterBinding.ensureInitialized();
 
       await GetStorage.init();
@@ -74,7 +74,7 @@ Future<void> main() async {
         debugPrint('APP_THEME controller registered (permanent singleton)');
       }
       final AppLanguageController languageController =
-          Get.isRegistered<AppLanguageController>()
+      Get.isRegistered<AppLanguageController>()
           ? Get.find<AppLanguageController>()
           : Get.put(AppLanguageController(), permanent: true);
       await languageController.initialize();
@@ -112,7 +112,7 @@ Future<void> main() async {
 
       runApp(const MyApp());
     },
-    (Object error, StackTrace stack) {
+        (Object error, StackTrace stack) {
       debugPrint('❌ Uncaught zone error: $error');
       debugPrint('$stack');
     },
@@ -164,7 +164,7 @@ T _putIfAbsent<T>(T Function() builder, {bool permanent = true}) {
 Future<void> _registerControllersSafely() async {
   try {
     final DeviceIdentityService deviceIdentity =
-        _putIfAbsent<DeviceIdentityService>(() => DeviceIdentityService());
+    _putIfAbsent<DeviceIdentityService>(() => DeviceIdentityService());
     await deviceIdentity.initialize();
 
     _putIfAbsent<AccountBlockService>(() => AccountBlockService());
@@ -298,42 +298,42 @@ void _configureAccountBlockService() {
     },
     goToLogin:
         (
-          String message,
-          String? unblockAt,
-          String? reason,
-          bool blockedByAdmin,
-          bool blockedDevice,
+        String message,
+        String? unblockAt,
+        String? reason,
+        bool blockedByAdmin,
+        bool blockedDevice,
         ) async {
-          try {
-            if (Get.isDialogOpen == true || Get.isBottomSheetOpen == true) {
-              Get.back();
-            }
-          } catch (_) {}
+      try {
+        if (Get.isDialogOpen == true || Get.isBottomSheetOpen == true) {
+          Get.back();
+        }
+      } catch (_) {}
 
-          Get.offAll(
+      Get.offAll(
             () => const LoginView(),
-            arguments: <String, dynamic>{
-              'account_blocked': blockedByAdmin,
-              'device_blocked': blockedDevice,
-              if (message.trim().isNotEmpty) 'message': message.trim(),
-              if (reason != null && reason.trim().isNotEmpty)
-                'reason': reason.trim(),
-              if (unblockAt != null && unblockAt.trim().isNotEmpty)
-                'unblock_at': unblockAt.trim(),
-            },
-          );
-
-          if ((blockedByAdmin || blockedDevice) && message.trim().isNotEmpty) {
-            unawaited(
-              _showForceBlockedPopup(
-                message: message.trim(),
-                reason: reason,
-                unblockAt: unblockAt,
-                deviceBlocked: blockedDevice,
-              ),
-            );
-          }
+        arguments: <String, dynamic>{
+          'account_blocked': blockedByAdmin,
+          'device_blocked': blockedDevice,
+          if (message.trim().isNotEmpty) 'message': message.trim(),
+          if (reason != null && reason.trim().isNotEmpty)
+            'reason': reason.trim(),
+          if (unblockAt != null && unblockAt.trim().isNotEmpty)
+            'unblock_at': unblockAt.trim(),
         },
+      );
+
+      if ((blockedByAdmin || blockedDevice) && message.trim().isNotEmpty) {
+        unawaited(
+          _showForceBlockedPopup(
+            message: message.trim(),
+            reason: reason,
+            unblockAt: unblockAt,
+            deviceBlocked: blockedDevice,
+          ),
+        );
+      }
+    },
   );
 
   final int currentUserId =
@@ -367,8 +367,8 @@ Future<void> _showForceBlockedPopup({
 
   final String safeMessage = message.trim().isEmpty
       ? (deviceBlocked
-            ? 'This device has been blocked by the administrator.'
-            : 'Your account has been blocked by the administrator.')
+      ? 'This device has been blocked by the administrator.'
+      : 'Your account has been blocked by the administrator.')
       : message.trim();
   final String safeReason = reason?.trim() ?? '';
   final String safeUnblockAt = unblockAt?.trim() ?? '';
@@ -620,7 +620,7 @@ class MyApp extends StatefulWidget {
         }
 
         final AgoraTokenController agoraTokenController =
-            Get.find<AgoraTokenController>();
+        Get.find<AgoraTokenController>();
 
         await agoraTokenController.tryToGenerateBroadcasterToken(
           isBroadcaster: true,
@@ -640,7 +640,7 @@ class MyApp extends StatefulWidget {
 
         if (callType == 'video') {
           Get.to(
-            () => VideoCallView(
+                () => VideoCallView(
               channelName: '$callerUserId',
               isBroadcaster: false,
               token: token.toString(),
@@ -651,7 +651,7 @@ class MyApp extends StatefulWidget {
           );
         } else {
           Get.to(
-            () => AudioCallView(
+                () => AudioCallView(
               channelName: '$callerUserId',
               isBroadcaster: false,
               token: token.toString(),
@@ -730,13 +730,19 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       final WebsocketController ws = Get.find<WebsocketController>();
       final LivestreamController live = Get.find<LivestreamController>();
 
-      final int activeStreamId = <int>[
-        ws.streamID.value,
-        ws.activeAudioStreamId.value,
-        live.streamId.value,
-      ].firstWhere((int value) => value > 0, orElse: () => 0);
-
-      final bool hasActiveLiveAudio = activeStreamId > 0 || live.isLive.value;
+      // ✅ FIX: this whole handler exists specifically to keep AUDIO alive
+      // in the background (it starts a heavy secondary Flutter engine via
+      // startLiveForegroundService — confirmed from the crash log to take
+      // ~2.5s and block the main thread). The previous check used
+      // activeStreamId>0 || live.isLive.value, both of which are true for
+      // a VIDEO live room just as much as an audio one, since neither
+      // signal distinguishes room type. That caused this audio-only
+      // foreground service to start while a VIDEO room was backgrounding —
+      // colliding with active video encoding and crashing the app (dropped
+      // frames, then "Lost connection to device" in the reported log).
+      // ws.activeAudioStreamId is the one signal here that is genuinely
+      // audio-room-specific, so only it should gate this audio behavior.
+      final bool hasActiveLiveAudio = ws.activeAudioStreamId.value > 0;
 
       if (state == AppLifecycleState.resumed) {
         debugPrint('✅ App foreground: keep live realtime/audio active');
@@ -818,9 +824,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   /// ✅ Global Lucky Bag banner click => open target live room from anywhere.
   void _openGlobalLuckyBagLiveRoom(
-    int livestreamId,
-    Map<String, dynamic> packet,
-  ) {
+      int livestreamId,
+      Map<String, dynamic> packet,
+      ) {
     debugPrint(
       '🎁 Global Lucky Bag click => livestreamId=$livestreamId packetId=${packet['id']}',
     );
@@ -875,7 +881,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     };
 
     final AudienceJoinController joinController =
-        Get.isRegistered<AudienceJoinController>()
+    Get.isRegistered<AudienceJoinController>()
         ? Get.find<AudienceJoinController>()
         : Get.put(AudienceJoinController());
 
@@ -885,20 +891,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   /// Global Lucky Gift banner click => open the winning live room from any page.
   /// Uses the same AudienceJoinController path as Global Lucky Bag.
   void _openGlobalLuckyGiftLiveRoom(
-    int livestreamId,
-    Map<String, dynamic> result, {
-    String bannerType = 'lucky',
-  }) {
+      int livestreamId,
+      Map<String, dynamic> result, {
+        String bannerType = 'lucky',
+      }) {
     debugPrint(
       '🍀 Global Lucky Gift click => livestreamId=$livestreamId '
-      'event=${result['event_id'] ?? result['result_event_id']}',
+          'event=${result['event_id'] ?? result['result_event_id']}',
     );
 
     if (livestreamId <= 0) return;
 
     try {
       final LivestreamController liveController =
-          Get.find<LivestreamController>();
+      Get.find<LivestreamController>();
 
       if (liveController.streamId.value == livestreamId) {
         return;
@@ -916,16 +922,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       if (Get.isRegistered<HomeController>()) {
         final HomeController home = Get.find<HomeController>();
         final dynamic found = home.showingLiveStreamList.firstWhere((
-          dynamic raw,
-        ) {
+            dynamic raw,
+            ) {
           if (raw is! Map) return false;
           final Map<String, dynamic> item = Map<String, dynamic>.from(raw);
           return _safeInt(
-                item['livestream_id'] ??
-                    item['stream_id'] ??
-                    item['live_stream_id'] ??
-                    item['id'],
-              ) ==
+            item['livestream_id'] ??
+                item['stream_id'] ??
+                item['live_stream_id'] ??
+                item['id'],
+          ) ==
               livestreamId;
         }, orElse: () => null);
         if (found is Map) {
@@ -993,7 +999,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (channelName.isEmpty) return;
 
     final AudienceJoinController joinController =
-        Get.isRegistered<AudienceJoinController>()
+    Get.isRegistered<AudienceJoinController>()
         ? Get.find<AudienceJoinController>()
         : Get.put(AudienceJoinController());
 
@@ -1004,7 +1010,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void _openGlobalRocketLiveRoom(int livestreamId, Map<String, dynamic> data) {
     debugPrint(
       '🚀 Global Rocket click => livestreamId=$livestreamId '
-      'level=${data['level_no'] ?? data['level']}',
+          'level=${data['level_no'] ?? data['level']}',
     );
     _openGlobalLuckyGiftLiveRoom(livestreamId, data, bannerType: 'rocket');
   }
@@ -1106,9 +1112,9 @@ class _GlobalBannerOverlayState extends State<_GlobalBannerOverlay> {
   final Set<String> _firstFrameLogged = <String>{};
 
   void _traceItems(
-    BuildContext context,
-    List<GlobalLiveBannerItem> items,
-  ) {
+      BuildContext context,
+      List<GlobalLiveBannerItem> items,
+      ) {
     final currentIds = items.map((item) => item.id).toSet();
     for (final removed in _renderedIds.difference(currentIds)) {
       debugPrint(
@@ -1127,17 +1133,17 @@ class _GlobalBannerOverlayState extends State<_GlobalBannerOverlay> {
       final slot = items.indexOf(item);
       final resolvedTop =
           safeTop +
-          globalBannerTopOffset(context) +
-          globalBannerSlotOffset(context, slot);
+              globalBannerTopOffset(context) +
+              globalBannerSlotOffset(context, slot);
       final compact = screenWidth < 370;
       final width = item.type == GlobalLiveBannerType.luckyWin
           ? (screenWidth * (compact ? .92 : .86))
-                .clamp(280.0, 560.0)
-                .toDouble()
+          .clamp(280.0, 560.0)
+          .toDouble()
           : item.type == GlobalLiveBannerType.bigGift
           ? (screenWidth * (compact ? .90 : .86))
-                .clamp(280.0, 560.0)
-                .toDouble()
+          .clamp(280.0, 560.0)
+          .toDouble()
           : screenWidth;
       final height = item.type == GlobalLiveBannerType.luckyWin
           ? globalLuckyBannerHeight(context)
@@ -1146,14 +1152,14 @@ class _GlobalBannerOverlayState extends State<_GlobalBannerOverlay> {
           : 146.0;
       debugPrint(
         '[BANNER_UI][BUILD] type=${item.type.name} visible=true '
-        'has_item=true route=${Get.currentRoute}',
+            'has_item=true route=${Get.currentRoute}',
       );
       debugPrint(
         '[BANNER_UI][LAYOUT] top=$resolvedTop width=$width height=$height',
       );
       debugPrint(
         '[BANNER_UI][POSITION] screen_h=$screenHeight safe_top=$safeTop '
-        'resolved_top=$resolvedTop banner_h=$height',
+            'resolved_top=$resolvedTop banner_h=$height',
       );
       if (_firstFrameLogged.add(item.id)) {
         debugPrint('[BANNER_UI][MOUNTED] event_id=${item.id}');

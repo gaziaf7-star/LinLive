@@ -767,24 +767,47 @@ class userProfileVisit extends StatelessWidget {
 
                           SizedBox(height: kHeight*0.02,),
 
-                          Row(
-                            children: [
-                              SizedBox(width: kHeight*0.02,),
-                              _topStatTile(
-                                value: '${sendGiftList.length}',
-                                label: ('Sending').appTr,
-                              ),
-                              SizedBox(width: Get.width * 0.10),
-                              _topStatTile(
-                                value: '${profileUser['total_following'] ?? 0}',
-                                label: ('Following').appTr,
-                              ),
-                              SizedBox(width: Get.width * 0.10),
-                              _topStatTile(
-                                value: '${profileUser['total_followers'] ?? 0}',
-                                label: ('Followers').appTr,
-                              ),
-                            ],
+                          Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: kWeight * 0.018,
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: _topStatTile(
+                                    value: '${sendGiftList.length}',
+                                    label: ('Sending').appTr,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _VisitorProfileVisitsStat(
+                                    myprofileController: myprofileController,
+                                    userId: int.tryParse(
+                                      _safeText(
+                                        user['id'] ??
+                                            profileUser['id'] ??
+                                            profileUser['user_id'],
+                                      ),
+                                    ) ??
+                                        0,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _topStatTile(
+                                    value:
+                                    '${profileUser['total_following'] ?? 0}',
+                                    label: ('Following').appTr,
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _topStatTile(
+                                    value:
+                                    '${profileUser['total_followers'] ?? 0}',
+                                    label: ('Followers').appTr,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -1709,6 +1732,757 @@ class userProfileVisit extends StatelessWidget {
 
 }
 
+
+
+
+// ============================================================================
+// ✅ PROFILE VISITORS PROFESSIONAL STAT + LIST
+// - Header-e total_unique_visitors show kore.
+// - Visitors stat click korle professional bottom sheet open hoy.
+// - List-e profile image, name, ID, visit_count, visited_at show kore.
+// - Pull-to-refresh support ache.
+// ============================================================================
+class _VisitorProfileVisitsStat extends StatefulWidget {
+  final MyprofileController myprofileController;
+  final int userId;
+
+  const _VisitorProfileVisitsStat({
+    required this.myprofileController,
+    required this.userId,
+  });
+
+  @override
+  State<_VisitorProfileVisitsStat> createState() =>
+      _VisitorProfileVisitsStatState();
+}
+
+class _VisitorProfileVisitsStatState extends State<_VisitorProfileVisitsStat> {
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VisitorProfileVisitsStat oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.userId != widget.userId) {
+      _load();
+    }
+  }
+
+  void _load() {
+    if (widget.userId <= 0) return;
+
+    widget.myprofileController.showProfileVisitorList(
+      userId: widget.userId,
+      force: true,
+    );
+  }
+
+  void _openVisitorList() {
+    if (widget.userId <= 0) return;
+
+    Get.bottomSheet(
+      _VisitorProfileVisitorsBottomSheet(
+        myprofileController: widget.myprofileController,
+        userId: widget.userId,
+      ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withOpacity(.45),
+    );
+
+    // Sheet open howar sathe latest count/list refresh.
+    widget.myprofileController.showProfileVisitorList(
+      userId: widget.userId,
+      force: true,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final bool loading =
+          widget.myprofileController.isProfileVisitorsLoading.value;
+      final int total =
+          widget.myprofileController.totalUniqueProfileVisitors.value;
+
+      return InkWell(
+        onTap: _openVisitorList,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: loading && total == 0
+                    ? SizedBox(
+                  key: const ValueKey('visitor-loading'),
+                  height: kHeight * 0.020,
+                  width: kHeight * 0.020,
+                  child: const CircularProgressIndicator(
+                    strokeWidth: 1.6,
+                    color: Colors.white,
+                  ),
+                )
+                    : Text(
+                  '$total',
+                  key: ValueKey<int>(total),
+                  style: GoogleFonts.poppins(
+                    fontSize: kHeight * 0.020,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    ('Visitors').appTr,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(
+                      fontSize: kHeight * 0.0132,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(width: kWeight * 0.004),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: kHeight * 0.015,
+                    color: Colors.white.withOpacity(.82),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+}
+
+class _VisitorProfileVisitorsBottomSheet extends StatelessWidget {
+  final MyprofileController myprofileController;
+  final int userId;
+
+  const _VisitorProfileVisitorsBottomSheet({
+    required this.myprofileController,
+    required this.userId,
+  });
+
+  Future<void> _refresh() {
+    return myprofileController.showProfileVisitorList(
+      userId: userId,
+      force: true,
+    ).then((_) {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final double sheetHeight = MediaQuery.of(context).size.height * .78;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        height: sheetHeight,
+        decoration: const BoxDecoration(
+          color: Color(0xFFF8F8FB),
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(26),
+          ),
+        ),
+        child: Column(
+          children: [
+            SizedBox(height: kHeight * 0.010),
+            Container(
+              height: 4,
+              width: 44,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD4D4DB),
+                borderRadius: BorderRadius.circular(30),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                kWeight * .045,
+                kHeight * .016,
+                kWeight * .035,
+                kHeight * .010,
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    height: kHeight * .045,
+                    width: kHeight * .045,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xFFFF4B6E),
+                          Color(0xFFFF8A65),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      Icons.visibility_rounded,
+                      color: Colors.white,
+                      size: kHeight * .023,
+                    ),
+                  ),
+                  SizedBox(width: kWeight * .025),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          ('Profile Visitors').appTr,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF202028),
+                            fontSize: kHeight * .020,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(height: kHeight * .001),
+                        Text(
+                          ('People who visited this profile').appTr,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF8C8C96),
+                            fontSize: kHeight * .0115,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  InkWell(
+                    onTap: () => Get.back(),
+                    borderRadius: BorderRadius.circular(30),
+                    child: Container(
+                      height: kHeight * .038,
+                      width: kHeight * .038,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEDEDF2),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFFE0E0E8),
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.close_rounded,
+                        color: const Color(0xFF555560),
+                        size: kHeight * .021,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Obx(() {
+              final int unique =
+                  myprofileController.totalUniqueProfileVisitors.value;
+              final int visits = myprofileController.totalProfileVisits.value;
+
+              return Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: kWeight * .040,
+                  vertical: kHeight * .006,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _visitorProfileSummaryCard(
+                        icon: Icons.people_alt_rounded,
+                        value: '$unique',
+                        label: ('Unique Visitors').appTr,
+                      ),
+                    ),
+                    SizedBox(width: kWeight * .025),
+                    Expanded(
+                      child: _visitorProfileSummaryCard(
+                        icon: Icons.remove_red_eye_rounded,
+                        value: '$visits',
+                        label: ('Total Visits').appTr,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            SizedBox(height: kHeight * .006),
+            Expanded(
+              child: Obx(() {
+                final bool loading =
+                    myprofileController.isProfileVisitorsLoading.value;
+                final String error =
+                myprofileController.profileVisitorsError.value.trim();
+                final List<Map<String, dynamic>> visitors =
+                myprofileController.profileVisitorsList.toList();
+
+                if (loading && visitors.isEmpty) {
+                  return Center(
+                    child: SizedBox(
+                      height: kHeight * .030,
+                      width: kHeight * .030,
+                      child: const CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: Color(0xFFFF4B6E),
+                      ),
+                    ),
+                  );
+                }
+
+                if (error.isNotEmpty && visitors.isEmpty) {
+                  return _visitorProfileVisitorsMessage(
+                    icon: Icons.cloud_off_rounded,
+                    title: ('Could not load visitors').appTr,
+                    subtitle: error,
+                    onRetry: _refresh,
+                  );
+                }
+
+                if (visitors.isEmpty) {
+                  return _visitorProfileVisitorsMessage(
+                    icon: Icons.visibility_off_rounded,
+                    title: ('No visitors yet').appTr,
+                    subtitle: ('Profile visitors will appear here').appTr,
+                    onRetry: _refresh,
+                  );
+                }
+
+                return RefreshIndicator(
+                  color: const Color(0xFFFF4B6E),
+                  onRefresh: _refresh,
+                  child: ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics(),
+                    ),
+                    padding: EdgeInsets.fromLTRB(
+                      kWeight * .040,
+                      kHeight * .008,
+                      kWeight * .040,
+                      kHeight * .025,
+                    ),
+                    itemCount: visitors.length,
+                    separatorBuilder: (_, __) =>
+                        SizedBox(height: kHeight * .008),
+                    itemBuilder: (context, index) {
+                      return _visitorProfileVisitorListTile(
+                        visitor: visitors[index],
+                        index: index,
+                      );
+                    },
+                  ),
+                );
+              }),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Widget _visitorProfileSummaryCard({
+  required IconData icon,
+  required String value,
+  required String label,
+}) {
+  return Container(
+    padding: EdgeInsets.symmetric(
+      horizontal: kWeight * .025,
+      vertical: kHeight * .012,
+    ),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: const Color(0xFFECECF2),
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(.035),
+          blurRadius: 12,
+          offset: const Offset(0, 5),
+        ),
+      ],
+    ),
+    child: Row(
+      children: [
+        Container(
+          height: kHeight * .036,
+          width: kHeight * .036,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFEEF2),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Icon(
+            icon,
+            color: const Color(0xFFFF4B6E),
+            size: kHeight * .018,
+          ),
+        ),
+        SizedBox(width: kWeight * .018),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.poppins(
+                  color: const Color(0xFF22222A),
+                  fontSize: kHeight * .018,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.poppins(
+                  color: const Color(0xFF8F8F98),
+                  fontSize: kHeight * .0105,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _visitorProfileVisitorListTile({
+  required Map<String, dynamic> visitor,
+  required int index,
+}) {
+  final String name = _visitorSafeText(
+    visitor['name'],
+    fallback: ('User').appTr,
+  );
+  final String id = _visitorSafeText(
+    visitor['user_id'] ?? visitor['id'],
+    fallback: 'N/A',
+  );
+  final String image = _visitorFullUrl(
+    visitor['profile_image_url'] ?? visitor['profile_image'],
+  );
+  final int visitCount = _visitorProfileSafeInt(visitor['visit_count']);
+  final String visitedAt = _visitorProfileVisitedAt(visitor['visited_at']);
+
+  return Material(
+    color: Colors.transparent,
+    child: Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: kWeight * .025,
+        vertical: kHeight * .010,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(
+          color: const Color(0xFFECECF2),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(.032),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                height: kHeight * .052,
+                width: kHeight * .052,
+                padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFFFFD45B),
+                      Color(0xFFFF4B6E),
+                      Color(0xFF8C5BFF),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: ClipOval(
+                  child: image.isEmpty
+                      ? Container(
+                    color: const Color(0xFFF0F0F4),
+                    child: Icon(
+                      Icons.person_rounded,
+                      color: const Color(0xFFA0A0AA),
+                      size: kHeight * .027,
+                    ),
+                  )
+                      : CachedNetworkImage(
+                    imageUrl: image,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(
+                      color: const Color(0xFFF0F0F4),
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      color: const Color(0xFFF0F0F4),
+                      child: Icon(
+                        Icons.person_rounded,
+                        color: const Color(0xFFA0A0AA),
+                        size: kHeight * .027,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: -2,
+                bottom: -1,
+                child: Container(
+                  height: kHeight * .018,
+                  width: kHeight * .018,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF4B6E),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white,
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Text(
+                    '${index + 1}',
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontSize: kHeight * .0085,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(width: kWeight * .025),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFF26262E),
+                    fontSize: kHeight * .0145,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                SizedBox(height: kHeight * .002),
+                Row(
+                  children: [
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: kWeight * .012,
+                        vertical: kHeight * .0015,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF2F2F6),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        ('ID $id').appTr,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(
+                          color: const Color(0xFF777781),
+                          fontSize: kHeight * .0105,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: kWeight * .010),
+                    InkWell(
+                      onTap: () {
+                        Clipboard.setData(ClipboardData(text: id));
+                        Fluttertoast.showToast(
+                          msg: ('ID copied').appTr,
+                          toastLength: Toast.LENGTH_SHORT,
+                          gravity: ToastGravity.BOTTOM,
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: const EdgeInsets.all(3),
+                        child: Icon(
+                          Icons.copy_rounded,
+                          size: kHeight * .014,
+                          color: const Color(0xFF9A9AA4),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (visitedAt.isNotEmpty) ...[
+                  SizedBox(height: kHeight * .003),
+                  Text(
+                    visitedAt,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(
+                      color: const Color(0xFFAAAAAF),
+                      fontSize: kHeight * .0097,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          SizedBox(width: kWeight * .018),
+          Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: kWeight * .018,
+              vertical: kHeight * .007,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFEEF2),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  '$visitCount',
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFFFF4B6E),
+                    fontSize: kHeight * .014,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  visitCount == 1 ? ('Visit').appTr : ('Visits').appTr,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFFB56B7B),
+                    fontSize: kHeight * .0088,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _visitorProfileVisitorsMessage({
+  required IconData icon,
+  required String title,
+  required String subtitle,
+  required Future<void> Function() onRetry,
+}) {
+  return ListView(
+    physics: const AlwaysScrollableScrollPhysics(),
+    padding: EdgeInsets.symmetric(
+      horizontal: kWeight * .08,
+      vertical: kHeight * .070,
+    ),
+    children: [
+      Center(
+        child: Container(
+          height: kHeight * .076,
+          width: kHeight * .076,
+          decoration: const BoxDecoration(
+            color: Color(0xFFFFEEF2),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            icon,
+            color: const Color(0xFFFF4B6E),
+            size: kHeight * .034,
+          ),
+        ),
+      ),
+      SizedBox(height: kHeight * .018),
+      Text(
+        title,
+        textAlign: TextAlign.center,
+        style: GoogleFonts.poppins(
+          color: const Color(0xFF2A2A32),
+          fontSize: kHeight * .016,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      SizedBox(height: kHeight * .006),
+      Text(
+        subtitle,
+        textAlign: TextAlign.center,
+        style: GoogleFonts.poppins(
+          color: const Color(0xFF93939D),
+          fontSize: kHeight * .0115,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      SizedBox(height: kHeight * .018),
+      Center(
+        child: OutlinedButton.icon(
+          onPressed: () {
+            onRetry();
+          },
+          icon: const Icon(Icons.refresh_rounded),
+          label: Text(('Refresh').appTr),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFFF4B6E),
+            side: const BorderSide(
+              color: Color(0xFFFFB7C5),
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(30),
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+int _visitorProfileSafeInt(dynamic value) {
+  if (value == null) return 0;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value.toString().trim()) ?? 0;
+}
+
+String _visitorProfileVisitedAt(dynamic value) {
+  final String raw = _visitorSafeText(value);
+  if (raw.isEmpty) return '';
+
+  final DateTime? date = DateTime.tryParse(raw.replaceFirst(' ', 'T'));
+  if (date == null) return raw;
+
+  String two(int number) => number.toString().padLeft(2, '0');
+
+  return '${date.year}-${two(date.month)}-${two(date.day)}  '
+      '${two(date.hour)}:${two(date.minute)}';
+}
 
 
 // ============================================================================

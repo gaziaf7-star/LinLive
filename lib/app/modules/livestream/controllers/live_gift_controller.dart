@@ -51,7 +51,7 @@ class LiveGiftController extends GetxController {
   /// List.removeAt(0), so long rapid-tap sessions do not become progressively
   /// slower and freeze the UI.
   final Queue<Map<String, dynamic>> _quickGiftSendQueue =
-      Queue<Map<String, dynamic>>();
+  Queue<Map<String, dynamic>>();
   final RxInt quickGiftPendingCount = 0.obs;
   bool _quickGiftQueueRunning = false;
   bool _quickGiftPumpScheduled = false;
@@ -187,9 +187,9 @@ class LiveGiftController extends GetxController {
 
     final bool sameCombo =
         quickGiftVisible.value &&
-        int.tryParse('${quickGiftData['gift_id'] ?? 0}') == giftId &&
-        _safeQuickReceiverIds(quickGiftData['receiver_ids']).join(',') ==
-            receivers.join(',');
+            int.tryParse('${quickGiftData['gift_id'] ?? 0}') == giftId &&
+            _safeQuickReceiverIds(quickGiftData['receiver_ids']).join(',') ==
+                receivers.join(',');
 
     // Do not replace the whole RxMap on every rapid Combo tap. Replacing it
     // rebuilds the gift sheet/card even though gift + receivers are unchanged.
@@ -246,7 +246,7 @@ class LiveGiftController extends GetxController {
     final int senderId =
         livestreamController.authController.userProfile.value.user?.id
             ?.toInt() ??
-        0;
+            0;
     if (senderId <= 0) return;
 
     quickGiftComboCount.value = quickGiftComboCount.value <= 0
@@ -354,7 +354,7 @@ class LiveGiftController extends GetxController {
           final int queuedAt = int.tryParse('${job['queued_at_ms'] ?? 0}') ?? 0;
           debugPrint(
             '[GIFT] batch_flush qty=$batchQuantity '
-            'delayMs=${DateTime.now().millisecondsSinceEpoch - queuedAt}',
+                'delayMs=${DateTime.now().millisecondsSinceEpoch - queuedAt}',
           );
         }
         quickGiftPendingCount.value =
@@ -440,9 +440,9 @@ class LiveGiftController extends GetxController {
 
   String giftCategoryOf(Map<String, dynamic> gift) {
     return (gift['category'] ??
-            gift['gift_category'] ??
-            gift['type'] ??
-            'Popular')
+        gift['gift_category'] ??
+        gift['type'] ??
+        'Popular')
         .toString()
         .trim();
   }
@@ -451,10 +451,10 @@ class LiveGiftController extends GetxController {
     final category = giftCategoryOf(gift).toLowerCase();
     final backCoin = gift['back_coin'];
     final explicitLucky =
-        (gift['is_lucky_gift'] ?? gift['is_lucky'] ?? gift['lucky'] ?? '')
-            .toString()
-            .trim()
-            .toLowerCase();
+    (gift['is_lucky_gift'] ?? gift['is_lucky'] ?? gift['lucky'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
     return explicitLucky == '1' ||
         explicitLucky == 'true' ||
         explicitLucky == 'yes' ||
@@ -467,10 +467,10 @@ class LiveGiftController extends GetxController {
 
   bool _isVipGift(Map<String, dynamic> gift) {
     final category = (gift['category'] ??
-            gift['gift_category'] ??
-            gift['gift_type'] ??
-            gift['type'] ??
-            '')
+        gift['gift_category'] ??
+        gift['gift_type'] ??
+        gift['type'] ??
+        '')
         .toString()
         .toLowerCase();
     final raw = gift['is_vip'] ?? gift['vip_only'] ?? gift['requires_vip'];
@@ -530,7 +530,7 @@ class LiveGiftController extends GetxController {
           int.tryParse(
             '${gift['id'] ?? gift['gift_id'] ?? gift['asset_id'] ?? 0}',
           ) ??
-          0;
+              0;
       if (id == giftId) {
         return {
           ...gift,
@@ -539,9 +539,9 @@ class LiveGiftController extends GetxController {
           'coin': gift['coin'] ?? gift['coins'] ?? gift['price'] ?? giftPrice,
           'coins': gift['coins'] ?? gift['coin'] ?? gift['price'] ?? giftPrice,
           'gift_image':
-              gift['gift_image'] ?? gift['image'] ?? gift['show_image'],
+          gift['gift_image'] ?? gift['image'] ?? gift['show_image'],
           'show_image':
-              gift['show_image'] ?? gift['gift_image'] ?? gift['image'],
+          gift['show_image'] ?? gift['gift_image'] ?? gift['image'],
           'audio': gift['audio'] ?? gift['gift_audio'] ?? gift['sound'],
           'gift_audio': gift['gift_audio'] ?? gift['audio'] ?? gift['sound'],
         };
@@ -572,7 +572,7 @@ class LiveGiftController extends GetxController {
           livestreamController.authController.userProfile.value.user;
 
       final Map<String, dynamic> sourceGift =
-          giftOverride != null && giftOverride.isNotEmpty
+      giftOverride != null && giftOverride.isNotEmpty
           ? Map<String, dynamic>.from(giftOverride)
           : _localGiftAssetById(giftId, giftPrice);
 
@@ -584,27 +584,27 @@ class LiveGiftController extends GetxController {
         'id': sourceGift['id'] ?? sourceGift['gift_id'] ?? giftId,
         'gift_id': sourceGift['gift_id'] ?? sourceGift['id'] ?? giftId,
         'coin':
-            sourceGift['coin'] ??
+        sourceGift['coin'] ??
             sourceGift['coins'] ??
             sourceGift['price'] ??
             giftPrice,
         'coins':
-            sourceGift['coins'] ??
+        sourceGift['coins'] ??
             sourceGift['coin'] ??
             sourceGift['price'] ??
             giftPrice,
         'gift_image':
-            sourceGift['gift_image'] ??
+        sourceGift['gift_image'] ??
             sourceGift['image'] ??
             sourceGift['show_image'] ??
             sourceGift['svga'],
         'image':
-            sourceGift['image'] ??
+        sourceGift['image'] ??
             sourceGift['gift_image'] ??
             sourceGift['show_image'] ??
             sourceGift['svga'],
         'show_image':
-            sourceGift['show_image'] ??
+        sourceGift['show_image'] ??
             sourceGift['gift_image'] ??
             sourceGift['image'] ??
             sourceGift['svga'],
@@ -613,14 +613,14 @@ class LiveGiftController extends GetxController {
       final sender = responseData['sender'] is Map
           ? Map<String, dynamic>.from(responseData['sender'])
           : <String, dynamic>{
-              'id': senderId,
-              'user_id': senderId,
-              'name': currentUser?.name ?? 'User',
-              'profile_image': currentUser?.profileImage ?? '',
-              'level': currentUser?.level ?? 0,
-              'coins': currentUser?.coins,
-              'earned_coins': currentUser?.earnedCoins,
-            };
+        'id': senderId,
+        'user_id': senderId,
+        'name': currentUser?.name ?? 'User',
+        'profile_image': currentUser?.profileImage ?? '',
+        'level': currentUser?.level ?? 0,
+        'coins': currentUser?.coins,
+        'earned_coins': currentUser?.earnedCoins,
+      };
 
       final int localNow = DateTime.now().microsecondsSinceEpoch;
 
@@ -630,11 +630,11 @@ class LiveGiftController extends GetxController {
         'action_type': 'gift_sent',
         'type': 'gift',
         'livestream_id':
-            responseData['livestream_id'] ??
+        responseData['livestream_id'] ??
             responseData['stream_id'] ??
             livestreamController.streamId.value,
         'stream_id':
-            responseData['stream_id'] ??
+        responseData['stream_id'] ??
             responseData['livestream_id'] ??
             livestreamController.streamId.value,
         'sender_id': senderId,
@@ -719,14 +719,14 @@ class LiveGiftController extends GetxController {
     return fallback.isEmpty ? 'Unknown backend error' : fallback;
   }
 
-  static const bool _giftApiVerboseSuccessLogs = false;
+  static const bool _giftApiVerboseSuccessLogs = true;
 
   void _printGiftApiLine(String label, Map<String, dynamic> details) {
     final String upper = label.toUpperCase();
     final bool isFailure =
         upper.contains('ERROR') ||
-        upper.contains('REJECTED') ||
-        upper.contains('FAILED');
+            upper.contains('REJECTED') ||
+            upper.contains('FAILED');
 
     // Success request/response logging is disabled during normal use. Encoding
     // and printing a large JSON result for every rapid Combo tap blocks Dart's
@@ -847,6 +847,23 @@ class LiveGiftController extends GetxController {
         ...livestreamController.pkCommentGiftMetaBody(),
       };
 
+      // ✅ POSTMAN / DEBUG:
+      // Gift API-তে ঠিক যে JSON body পাঠানো হচ্ছে, সেটা pretty format-এ print হবে।
+      // Console থেকে JSON অংশ copy করে Postman -> Body -> raw -> JSON-এ paste করা যাবে।
+      try {
+        final String prettyGiftBody =
+        const JsonEncoder.withIndent('  ').convert(data);
+        debugPrint('');
+        debugPrint('================ GIFT POSTMAN BODY JSON ================');
+        debugPrint('POST URL => $kSentGift');
+        debugPrint(prettyGiftBody);
+        debugPrint('================ END GIFT POSTMAN BODY JSON ============');
+        debugPrint('');
+      } catch (e) {
+        debugPrint('GIFT BODY JSON PRINT ERROR => $e');
+        debugPrint('GIFT BODY RAW => $data');
+      }
+
       if (_giftApiVerboseSuccessLogs) {
         _printGiftApiLine('GIFT_API_REQUEST', <String, dynamic>{
           'url': kSentGift,
@@ -862,23 +879,23 @@ class LiveGiftController extends GetxController {
       }
 
       final Map<String, dynamic> selectedGiftForDebug =
-          safeLocalGift.isNotEmpty
+      safeLocalGift.isNotEmpty
           ? <String, dynamic>{
-              ...safeLocalGift,
-              'id': safeLocalGift['id'] ?? safeLocalGift['gift_id'] ?? giftId,
-              'gift_id':
-                  safeLocalGift['gift_id'] ?? safeLocalGift['id'] ?? giftId,
-              'coin':
-                  safeLocalGift['coin'] ??
-                  safeLocalGift['coins'] ??
-                  safeLocalGift['price'] ??
-                  giftPrice,
-              'coins':
-                  safeLocalGift['coins'] ??
-                  safeLocalGift['coin'] ??
-                  safeLocalGift['price'] ??
-                  giftPrice,
-            }
+        ...safeLocalGift,
+        'id': safeLocalGift['id'] ?? safeLocalGift['gift_id'] ?? giftId,
+        'gift_id':
+        safeLocalGift['gift_id'] ?? safeLocalGift['id'] ?? giftId,
+        'coin':
+        safeLocalGift['coin'] ??
+            safeLocalGift['coins'] ??
+            safeLocalGift['price'] ??
+            giftPrice,
+        'coins':
+        safeLocalGift['coins'] ??
+            safeLocalGift['coin'] ??
+            safeLocalGift['price'] ??
+            giftPrice,
+      }
           : _localGiftAssetById(giftId, giftPrice);
 
       // DEBUG V2: Print every gift request. Some backends expose a Lucky gift
@@ -941,7 +958,7 @@ class LiveGiftController extends GetxController {
           livestreamController.authController.userProfile.value.token
               ?.toString()
               .trim() ??
-          '';
+              '';
 
       final Stopwatch? requestStopwatch = kDebugMode
           ? (Stopwatch()..start())
@@ -965,7 +982,7 @@ class LiveGiftController extends GetxController {
       if (requestStopwatch != null) {
         debugPrint(
           '[GIFT] request durationMs=${requestStopwatch.elapsedMilliseconds} '
-          'qty=$safeQuantity',
+              'qty=$safeQuantity',
         );
       }
 
@@ -1000,11 +1017,11 @@ class LiveGiftController extends GetxController {
 
       if (kLiveDebug &&
           (isLuckyGift(selectedGiftForDebug) ||
-          (response.data is Map &&
-              ((response.data as Map)['action_type'] == 'lucky_gift_result' ||
-                  (response.data as Map)['is_lucky_gift'] == true ||
-                  (response.data as Map)['lucky_results'] is List ||
-                  (response.data as Map)['lucky_result'] is Map)))) {
+              (response.data is Map &&
+                  ((response.data as Map)['action_type'] == 'lucky_gift_result' ||
+                      (response.data as Map)['is_lucky_gift'] == true ||
+                      (response.data as Map)['lucky_results'] is List ||
+                      (response.data as Map)['lucky_result'] is Map)))) {
         _luckyPrint('LUCKY GIFT SEND API FULL RESPONSE', {
           'status_code': response.statusCode,
           'status_message': response.statusMessage,
@@ -1051,13 +1068,13 @@ class LiveGiftController extends GetxController {
             try {
               livestreamController.websocketController
                   .ensureSenderGiftCoinsAtLeast(
-                    receiverIds: receivers
-                        .map((e) => int.tryParse(e.toString()) ?? 0)
-                        .where((e) => e > 0)
-                        .toList(growable: false),
-                    baselineCoins: receiverCoinBaseline,
-                    coinValue: batchGiftCost,
-                  );
+                receiverIds: receivers
+                    .map((e) => int.tryParse(e.toString()) ?? 0)
+                    .where((e) => e > 0)
+                    .toList(growable: false),
+                baselineCoins: receiverCoinBaseline,
+                coinValue: batchGiftCost,
+              );
             } catch (e) {
               liveLog('⚠️ Sender gift coin reconciliation skipped => $e');
             }
@@ -1104,22 +1121,14 @@ class LiveGiftController extends GetxController {
               );
             }
 
-            // Fluttertoast.showToast(
-            //   msg: isWin
-            //       ? 'Lucky win! +$winAmount coins x$multiplier'
-            //       : 'Better luck next time',
-            //   backgroundColor: isWin ? Colors.green : Colors.black87,
-            //   textColor: Colors.white,
-            //   gravity: ToastGravity.CENTER,
-            // );
           }
 
           return responseData;
         } else {
           livestreamController.websocketController
               .cancelOptimisticGiftAnimation(
-                clientEventId: resolvedClientEventId,
-              );
+            clientEventId: resolvedClientEventId,
+          );
           final String msg = _giftBackendMessage(responseData);
           _printGiftApiLine('GIFT_API_REJECTED', <String, dynamic>{
             'status': response.statusCode,
@@ -1165,8 +1174,8 @@ class LiveGiftController extends GetxController {
       final String safeMessage = e.response != null
           ? backendMessage
           : (e.message?.trim().isNotEmpty == true
-                ? e.message!.trim()
-                : (e.error?.toString() ?? 'Network request failed'));
+          ? e.message!.trim()
+          : (e.error?.toString() ?? 'Network request failed'));
 
       _printGiftApiLine('GIFT_API_DIO_ERROR', <String, dynamic>{
         'type': e.type.toString(),
@@ -1389,9 +1398,9 @@ class LiveGiftController extends GetxController {
   }
 
   void syncLiveGiftCoinsFromPayload(
-    Map<String, dynamic> payload, {
-    String source = 'payload',
-  }) {
+      Map<String, dynamic> payload, {
+        String source = 'payload',
+      }) {
     try {
       final data = payload['livestream'] is Map
           ? Map<String, dynamic>.from(payload['livestream'])
@@ -1406,26 +1415,26 @@ class LiveGiftController extends GetxController {
           .toLowerCase();
       final viewerPayload =
           action.contains('viewer') ||
-          action.contains('join') ||
-          payload.containsKey('viewer') ||
-          payload.containsKey('viewer_data') ||
-          data.containsKey('viewer_id');
+              action.contains('join') ||
+              payload.containsKey('viewer') ||
+              payload.containsKey('viewer_data') ||
+              data.containsKey('viewer_id');
       final hasLiveCoinKey =
           data.containsKey('total_gift_coins') ||
-          data.containsKey('total_coins') ||
-          data.containsKey('gift_amount') ||
-          data.containsKey('stream_coins') ||
-          data.containsKey('received_coins');
+              data.containsKey('total_coins') ||
+              data.containsKey('gift_amount') ||
+              data.containsKey('stream_coins') ||
+              data.containsKey('received_coins');
 
       if (viewerPayload && !hasLiveCoinKey) return;
 
       final raw =
           data['total_gift_coins'] ??
-          data['total_coins'] ??
-          data['gift_amount'] ??
-          data['stream_coins'] ??
-          data['received_coins'] ??
-          data['gifts_coins'];
+              data['total_coins'] ??
+              data['gift_amount'] ??
+              data['stream_coins'] ??
+              data['received_coins'] ??
+              data['gifts_coins'];
       if (raw == null) return;
 
       final newCoins = _safeCoinInt(raw);
@@ -1446,7 +1455,7 @@ class LiveGiftController extends GetxController {
           payloadStreamId != currentStreamId) {
         liveLog(
           'Live gift coin sync ignored from other stream '
-          'event=$payloadStreamId current=$currentStreamId source=$source',
+              'event=$payloadStreamId current=$currentStreamId source=$source',
         );
         return;
       }
@@ -1502,10 +1511,10 @@ class LiveGiftController extends GetxController {
             responseData.containsKey('total_gift_coins')) {
           final raw =
               responseData['total_gift_coins'] ??
-              responseData['total_coins'] ??
-              responseData['gifts_coins'] ??
-              responseData['gift_amount'] ??
-              responseData['stream_coins'];
+                  responseData['total_coins'] ??
+                  responseData['gifts_coins'] ??
+                  responseData['gift_amount'] ??
+                  responseData['stream_coins'];
           final newCoins = _safeCoinInt(raw);
           final oldCoins = _safeCoinInt(totalGiftCoins.value);
           final streamChanged =

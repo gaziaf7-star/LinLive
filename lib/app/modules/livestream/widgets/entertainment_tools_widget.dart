@@ -1615,7 +1615,8 @@ class _EntertainmentToolsWidgetState extends State<EntertainmentToolsWidget> {
                             ],
                           ),
 
-                        if (_isAudioRoom() && _hasMinimumCoinBalance)
+                        if ((_isAudioRoom() || _isPopularRoom()) &&
+                            _hasMinimumCoinBalance)
                           Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [

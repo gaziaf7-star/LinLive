@@ -45,8 +45,8 @@ class GlobalLuckyBagBanner extends StatelessWidget {
   const GlobalLuckyBagBanner({
     super.key,
     this.topPadding = 8,
-    this.left = 10,
-    this.right = 10,
+    this.left = 25,
+    this.right = 25,
     this.bannerAssetPath = 'assets/flaticons/redpoketbanner.png',
     this.bannerImageUrl,
     this.onOpenLive,
@@ -528,7 +528,8 @@ class _QueuedLuckyBagMotionState extends State<_QueuedLuckyBagMotion>
             behavior: HitTestBehavior.translucent,
             onTap: widget.onTap,
             child: SizedBox(
-              height: globalLuckyVisibleBannerHeight(context),
+              height: (globalLuckyVisibleBannerHeight(context) - 10.0)
+                  .clamp(48.0, double.infinity),
               width: bannerWidth,
               child: Stack(
                 clipBehavior: Clip.none,
@@ -612,13 +613,13 @@ class _LuckyBagAvatarPositioned extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double size = (bannerHeight * 0.58).clamp(36.0, 43.0).toDouble();
+    final double size = (bannerHeight * 0.48).clamp(30.0, 36.0).toDouble();
     final double left = bannerWidth * 0.082;
     final double top = (bannerHeight - size) / 2;
 
     return Positioned(
       left: left,
-      top: kHeight*0.045,
+      top: top + 4.0,
       child: SizedBox(
         height: size,
         width: size,
@@ -684,7 +685,7 @@ class _LuckyBagTextPositioned extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: GoogleFonts.poppins(
               color: Colors.white,
-              fontSize: (bannerHeight * 0.205).clamp(12.8, 15.3).toDouble(),
+              fontSize: (bannerHeight * 0.185).clamp(11.8, 14.0).toDouble(),
               fontWeight: FontWeight.w700,
               height: 1,
             ),
@@ -696,7 +697,7 @@ class _LuckyBagTextPositioned extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: GoogleFonts.poppins(
               color: Colors.white,
-              fontSize: (bannerHeight * 0.175).clamp(11.4, 13.2).toDouble(),
+              fontSize: (bannerHeight * 0.158).clamp(10.5, 12.2).toDouble(),
               fontWeight: FontWeight.w600,
               height: 1,
             ),
@@ -720,7 +721,7 @@ class _LuckyBagSecondsPositioned extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double size = (bannerHeight * 0.49).clamp(33.0, 39.0).toDouble();
+    final double size = (bannerHeight * 0.44).clamp(30.0, 35.0).toDouble();
     final double goWidth = (bannerWidth * 0.118).clamp(46.0, 56.0).toDouble();
     final double goRight = bannerWidth * 0.025;
     final double right = goRight + goWidth + (bannerWidth * 0.102);
@@ -744,7 +745,7 @@ class _LuckyBagSecondsPositioned extends StatelessWidget {
           textAlign: TextAlign.center,
           style: GoogleFonts.poppins(
             color: Colors.white,
-            fontSize: seconds > 99 ? size * 0.34 : size * 0.47,
+            fontSize: seconds > 99 ? size * 0.32 : size * 0.44,
             fontWeight: FontWeight.w800,
             height: 1,
           ),
@@ -765,14 +766,14 @@ class _LuckyBagGoPositioned extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double height = (bannerHeight * 0.405).clamp(29.0, 34.0).toDouble();
-    final double width = (bannerWidth * 0.118).clamp(46.0, 56.0).toDouble();
+    final double height = (bannerHeight * 0.325).clamp(23.0, 28.0).toDouble();
+    final double width = (bannerWidth * 0.098).clamp(38.0, 47.0).toDouble();
     final double right = bannerWidth * 0.005;
     final double top = (bannerHeight - height) / 2;
 
     return Positioned(
       right: -kHeight*0.015,
-      top: kHeight*0.052,
+      top: top + 4.0,
       child: Container(
         height: height,
         width: width,
@@ -785,7 +786,7 @@ class _LuckyBagGoPositioned extends StatelessWidget {
           ('Go').appTr,
           style: GoogleFonts.poppins(
             color: const Color(0xff442300),
-            fontSize: (bannerHeight * 0.175).clamp(11.5, 13.5).toDouble(),
+            fontSize: (bannerHeight * 0.145).clamp(9.8, 11.4).toDouble(),
             fontWeight: FontWeight.w800,
             height: 1,
           ),

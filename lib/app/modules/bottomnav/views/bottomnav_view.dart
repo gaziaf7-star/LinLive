@@ -22,6 +22,7 @@ import '../../notification/views/notification_view.dart';
 import '../../messanger/views/chat_controller.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../../../services/account_block_service.dart';
+import '../../../services/agora_service.dart';
 import '../../../theme/app_theme_controller.dart';
 import '../../../theme/app_theme_model.dart';
 import '../../../theme/app_theme_image_cache.dart';
@@ -62,18 +63,20 @@ class _BottomnavViewState extends State<BottomnavView>
   late final AppThemeController _appThemeController;
   bool _firstThemedFrameLogged = false;
 
-  final List<Widget> _pages = [
-    const HomeView(),
-    MomentsView(),
-    GotoLiveTabView(),
-    NotificationView(),
-    AppmenuView(),
-  ];
+  late final List<Widget> _pages;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _pages = [
+      const HomeView(),
+      MomentsView(),
+      GotoLiveTabView(onClose: _returnHomeFromLiveCreate),
+      NotificationView(),
+      AppmenuView(),
+    ];
 
     _chatController = Get.isRegistered<ChatController>()
         ? Get.find<ChatController>()
@@ -402,7 +405,28 @@ class _BottomnavViewState extends State<BottomnavView>
     );
   }
 
+  void _returnHomeFromLiveCreate() {
+    if (!mounted) return;
+
+    // The live creator is page index 2 inside BottomnavView, not a separate
+    // Navigator route. Therefore closing it must select Home instead of
+    // calling Get.back(), otherwise the app/root route can be popped.
+    setState(() => _selectedIndex = 0);
+
+    // Release camera preview immediately after leaving Video LIVE.
+    // Run this after the UI switches so the close tap feels instant.
+    final AgoraService agora = AgoraService();
+    unawaited(agora.stopPreview());
+    unawaited(agora.muteLocalVideoSafe(true));
+    unawaited(agora.enableLocalVideoSafe(false));
+  }
+
   Future<bool> _onWillPop() async {
+    if (_selectedIndex == 2) {
+      _returnHomeFromLiveCreate();
+      return false;
+    }
+
     final exitApp = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -562,7 +586,7 @@ class _BottomnavViewState extends State<BottomnavView>
         WidgetsBinding.instance.addPostFrameCallback((_) {
           debugPrint(
             '[APP_THEME_STARTUP] first_themed_frame='
-            '${_appThemeController.startupElapsedMilliseconds}ms',
+                '${_appThemeController.startupElapsedMilliseconds}ms',
           );
         });
       }
@@ -579,14 +603,16 @@ class _BottomnavViewState extends State<BottomnavView>
             imageUrl: appTheme?.backgroundImage,
             child: _pages[_selectedIndex],
           ),
-          bottomNavigationBar: SizedBox(
+          bottomNavigationBar: _selectedIndex == 2
+              ? null
+              : SizedBox(
             height: footerHeight,
             width: double.infinity,
             child: Stack(
               fit: StackFit.expand,
               clipBehavior: Clip.none,
               children: [
-                const ColoredBox(color: Color(0xFF3B072F)),
+                const ColoredBox(color: Color(0xFFFFFCFE)),
                 if (footerUrl != null)
                   CachedNetworkImage(
                     key: ValueKey<String>(footerUrl),

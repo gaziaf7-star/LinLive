@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svga_easyplayer/flutter_svga_easyplayer.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -92,7 +93,7 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
   }
 
   Future<void> _precacheUrl(String url) async {
-    if (!mounted || url.isEmpty) return;
+    if (!mounted || url.isEmpty || _isSvgaUrl(url)) return;
 
     try {
       await precacheImage(
@@ -117,20 +118,20 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
     // Category icon কম সংখ্যায় cache করা যথেষ্ট।
     for (final category in _categories.take(10)) {
       final icon = category.icon;
-      if (icon.isNotEmpty) urls.add(icon);
+      if (icon.isNotEmpty && !_isSvgaUrl(icon)) urls.add(icon);
     }
 
     // Current tab-এর প্রথম visible items.
     for (final item in _categories[safeIndex].items.take(18)) {
       final image = _itemImage(item);
-      if (image.isNotEmpty) urls.add(image);
+      if (image.isNotEmpty && !_isSvgaUrl(image)) urls.add(image);
     }
 
     // Next tab-এর অল্প কয়েকটি item warm-up.
     if (safeIndex + 1 < _categories.length) {
       for (final item in _categories[safeIndex + 1].items.take(4)) {
         final image = _itemImage(item);
-        if (image.isNotEmpty) urls.add(image);
+        if (image.isNotEmpty && !_isSvgaUrl(image)) urls.add(image);
       }
     }
 
@@ -199,10 +200,19 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
     );
   }
 
+  // ✅ FIX: this picker only ever rendered CachedNetworkImage, a static
+  // raster-image widget that cannot decode .svga (a vector animation
+  // format) — so an animated emoji item either failed to load (showing the
+  // error icon) or, if the backend also supplies a static preview under
+  // one of the same field names, silently showed just that still frame
+  // instead of the actual animation. Detecting the extension lets the grid
+  // item route to the correct player below.
+  bool _isSvgaUrl(String url) => url.toLowerCase().endsWith('.svga');
+
   int _itemId(Map<String, dynamic> item) {
     return int.tryParse(
-          (item['id'] ?? item['imogi_id'] ?? item['emoji_id'] ?? 0).toString(),
-        ) ??
+      (item['id'] ?? item['imogi_id'] ?? item['emoji_id'] ?? 0).toString(),
+    ) ??
         0;
   }
 
@@ -261,7 +271,7 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
 
       grouped.putIfAbsent(
         key,
-        () => _ImogiCategory(
+            () => _ImogiCategory(
           name: categoryName,
           icon: _itemImage(item),
           items: <Map<String, dynamic>>[],
@@ -286,13 +296,13 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
             (a.items.first['sort_order'] ?? a.items.first['sort'] ?? 999)
                 .toString(),
           ) ??
-          999;
+              999;
       final bSort =
           int.tryParse(
             (b.items.first['sort_order'] ?? b.items.first['sort'] ?? 999)
                 .toString(),
           ) ??
-          999;
+              999;
 
       if (aSort != bSort) return aSort.compareTo(bSort);
       return a.name.compareTo(b.name);
@@ -315,11 +325,11 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
 
       final rawItems =
           cat['imogies'] ??
-          cat['imogi'] ??
-          cat['emojis'] ??
-          cat['emoji'] ??
-          cat['items'] ??
-          cat['list'];
+              cat['imogi'] ??
+              cat['emojis'] ??
+              cat['emoji'] ??
+              cat['items'] ??
+              cat['list'];
 
       final List<Map<String, dynamic>> items = _asList(rawItems)
           .map<Map<String, dynamic>>(_asMap)
@@ -373,11 +383,11 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
         final cachedFirst = _asMap(cachedList.first);
         final cachedHasNestedItems =
             cachedFirst.containsKey('imogies') ||
-            cachedFirst.containsKey('imogi') ||
-            cachedFirst.containsKey('emojis') ||
-            cachedFirst.containsKey('emoji') ||
-            cachedFirst.containsKey('items') ||
-            cachedFirst.containsKey('list');
+                cachedFirst.containsKey('imogi') ||
+                cachedFirst.containsKey('emojis') ||
+                cachedFirst.containsKey('emoji') ||
+                cachedFirst.containsKey('items') ||
+                cachedFirst.containsKey('list');
 
         if (cachedHasNestedItems) {
           _groupCategoryList(cachedList);
@@ -400,11 +410,11 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
       final first = rawList.isNotEmpty ? _asMap(rawList.first) : {};
       final hasNestedItems =
           first.containsKey('imogies') ||
-          first.containsKey('imogi') ||
-          first.containsKey('emojis') ||
-          first.containsKey('emoji') ||
-          first.containsKey('items') ||
-          first.containsKey('list');
+              first.containsKey('imogi') ||
+              first.containsKey('emojis') ||
+              first.containsKey('emoji') ||
+              first.containsKey('items') ||
+              first.containsKey('list');
 
       if (hasNestedItems) {
         _groupCategoryList(rawList);
@@ -664,195 +674,215 @@ class _LiveImogiBottomSheetState extends State<LiveImogiBottomSheet> {
                   ? _buildShimmerGrid(width)
                   : _categories.isEmpty
                   ? Center(
-                      child: Text(
-                        ('No imogi found').appTr,
-                        style: GoogleFonts.poppins(
-                          color: Colors.black54,
-                          fontSize: 13,
-                        ),
-                      ),
-                    )
+                child: Text(
+                  ('No imogi found').appTr,
+                  style: GoogleFonts.poppins(
+                    color: Colors.black54,
+                    fontSize: 13,
+                  ),
+                ),
+              )
                   : Column(
-                      children: [
-                        Expanded(
-                          child: GridView.builder(
-                            padding: const EdgeInsets.only(top: 0),
-                            physics: const BouncingScrollPhysics(),
-                            gridDelegate:
-                                SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: crossAxisCount,
-                                  mainAxisSpacing: 6,
-                                  crossAxisSpacing: 6,
-                                  childAspectRatio: .82,
-                                ),
-                            itemCount: selectedItems.length,
-                            itemBuilder: (context, index) {
-                              final item = selectedItems[index];
-                              final image = _itemImage(item);
-                              final name = _itemName(item);
-                              final vipLocked =
-                                  _isVipItem(item) && !_canUseVipEmoji;
+                children: [
+                  Expanded(
+                    child: GridView.builder(
+                      padding: const EdgeInsets.only(top: 0),
+                      physics: const BouncingScrollPhysics(),
+                      gridDelegate:
+                      SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        mainAxisSpacing: 6,
+                        crossAxisSpacing: 6,
+                        childAspectRatio: .82,
+                      ),
+                      itemCount: selectedItems.length,
+                      itemBuilder: (context, index) {
+                        final item = selectedItems[index];
+                        final image = _itemImage(item);
+                        final name = _itemName(item);
+                        final vipLocked =
+                            _isVipItem(item) && !_canUseVipEmoji;
 
-                              return GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () => _sendImogi(item),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Expanded(
-                                      child: Center(
-                                        child: Stack(
-                                          alignment: Alignment.center,
-                                          children: [
-                                            image.isEmpty
-                                                ? Icon(
-                                                    Icons
-                                                        .emoji_emotions_rounded,
-                                                    color: Colors.black54,
-                                                    size: 28,
-                                                  )
-                                                : CachedNetworkImage(
-                                                    imageUrl: image,
-                                                    fit: BoxFit.contain,
-                                                    memCacheWidth: 128,
-                                                    memCacheHeight: 128,
-                                                    maxWidthDiskCache: 256,
-                                                    maxHeightDiskCache: 256,
-                                                    fadeInDuration:
-                                                        Duration.zero,
-                                                    placeholder: (_, __) =>
-                                                        _shimmerBox(
-                                                          height: 28,
-                                                          width: 28,
-                                                          radius: 16,
-                                                        ),
-                                                    errorWidget: (_, __, ___) =>
-                                                        Icon(
-                                                          Icons
-                                                              .emoji_emotions_rounded,
-                                                          color: Colors.black54,
-                                                          size: 28,
-                                                        ),
-                                                  ),
-                                            if (vipLocked)
-                                              Positioned(
-                                                top: 0,
-                                                right: 0,
-                                                child: Container(
-                                                  padding: const EdgeInsets.all(
-                                                    3,
-                                                  ),
-                                                  decoration:
-                                                      const BoxDecoration(
-                                                        color: Color(
-                                                          0xFFEDE7F6,
-                                                        ),
-                                                        shape: BoxShape.circle,
-                                                      ),
-                                                  child: const Icon(
-                                                    Icons.lock_rounded,
-                                                    size: 12,
-                                                    color: Color(0xFF6A3FC7),
-                                                  ),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 1),
-                                    Text(
-                                      name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      textAlign: TextAlign.center,
-                                      style: GoogleFonts.poppins(
-                                        color: Colors.black87,
-                                        fontSize: 9.5,
-                                        fontWeight: FontWeight.w500,
-                                        height: 1,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                        Container(
-                          height: 1,
-                          margin: const EdgeInsets.symmetric(vertical: 5),
-                          color: const Color(0xFFE8EAEE),
-                        ),
-                        SizedBox(
-                          height: 54,
-                          child: ListView.builder(
-                            physics: const BouncingScrollPhysics(),
-                            scrollDirection: Axis.horizontal,
-                            itemCount: _categories.length,
-                            itemBuilder: (context, index) {
-                              final category = _categories[index];
-                              final isSelected = index == _selectedIndex;
-
-                              return GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTap: () {
-                                  if (_selectedIndex == index) return;
-                                  setState(() => _selectedIndex = index);
-                                  unawaited(_precacheVisibleImogies(index));
-                                },
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 160),
-                                  width: 52,
-                                  margin: const EdgeInsets.only(right: 7),
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? const Color(0xFFF1F3F6)
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(13),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? const Color(0xFFDDE1E7)
-                                          : Colors.transparent,
-                                    ),
-                                  ),
-                                  child: category.icon.isEmpty
-                                      ? Icon(
-                                          Icons.emoji_emotions_rounded,
-                                          color: isSelected
-                                              ? const Color(0xFFFF4D91)
-                                              : Colors.black54,
-                                          size: 25,
-                                        )
-                                      : CachedNetworkImage(
-                                          imageUrl: category.icon,
+                        return GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => _sendImogi(item),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: Center(
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      image.isEmpty
+                                          ? Icon(
+                                        Icons
+                                            .emoji_emotions_rounded,
+                                        color: Colors.black54,
+                                        size: 28,
+                                      )
+                                          : _isSvgaUrl(image)
+                                          ? SizedBox(
+                                        width: 28,
+                                        height: 28,
+                                        child: SVGAEasyPlayer(
+                                          key: ValueKey(image),
+                                          resUrl: image,
                                           fit: BoxFit.contain,
-                                          memCacheWidth: 96,
-                                          memCacheHeight: 96,
-                                          maxWidthDiskCache: 192,
-                                          maxHeightDiskCache: 192,
-                                          fadeInDuration: Duration.zero,
-                                          placeholder: (_, __) => _shimmerBox(
-                                            height: 25,
-                                            width: 25,
-                                            radius: 14,
-                                          ),
-                                          errorWidget: (_, __, ___) => Icon(
-                                            Icons.emoji_emotions_rounded,
-                                            color: isSelected
-                                                ? const Color(0xFFFF4D91)
-                                                : Colors.black54,
-                                            size: 25,
+                                        ),
+                                      )
+                                          : CachedNetworkImage(
+                                        imageUrl: image,
+                                        fit: BoxFit.contain,
+                                        memCacheWidth: 128,
+                                        memCacheHeight: 128,
+                                        maxWidthDiskCache: 256,
+                                        maxHeightDiskCache: 256,
+                                        fadeInDuration:
+                                        Duration.zero,
+                                        placeholder: (_, __) =>
+                                            _shimmerBox(
+                                              height: 28,
+                                              width: 28,
+                                              radius: 16,
+                                            ),
+                                        errorWidget: (_, __, ___) =>
+                                            Icon(
+                                              Icons
+                                                  .emoji_emotions_rounded,
+                                              color: Colors.black54,
+                                              size: 28,
+                                            ),
+                                      ),
+                                      if (vipLocked)
+                                        Positioned(
+                                          top: 0,
+                                          right: 0,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(
+                                              3,
+                                            ),
+                                            decoration:
+                                            const BoxDecoration(
+                                              color: Color(
+                                                0xFFEDE7F6,
+                                              ),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(
+                                              Icons.lock_rounded,
+                                              size: 12,
+                                              color: Color(0xFF6A3FC7),
+                                            ),
                                           ),
                                         ),
+                                    ],
+                                  ),
                                 ),
-                              );
-                            },
+                              ),
+                              const SizedBox(height: 1),
+                              Text(
+                                name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.poppins(
+                                  color: Colors.black87,
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w500,
+                                  height: 1,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
+                        );
+                      },
                     ),
+                  ),
+                  Container(
+                    height: 1,
+                    margin: const EdgeInsets.symmetric(vertical: 5),
+                    color: const Color(0xFFE8EAEE),
+                  ),
+                  SizedBox(
+                    height: 54,
+                    child: ListView.builder(
+                      physics: const BouncingScrollPhysics(),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: _categories.length,
+                      itemBuilder: (context, index) {
+                        final category = _categories[index];
+                        final isSelected = index == _selectedIndex;
+
+                        return GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () {
+                            if (_selectedIndex == index) return;
+                            setState(() => _selectedIndex = index);
+                            unawaited(_precacheVisibleImogies(index));
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 160),
+                            width: 52,
+                            margin: const EdgeInsets.only(right: 7),
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? const Color(0xFFF1F3F6)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(13),
+                              border: Border.all(
+                                color: isSelected
+                                    ? const Color(0xFFDDE1E7)
+                                    : Colors.transparent,
+                              ),
+                            ),
+                            child: category.icon.isEmpty
+                                ? Icon(
+                              Icons.emoji_emotions_rounded,
+                              color: isSelected
+                                  ? const Color(0xFFFF4D91)
+                                  : Colors.black54,
+                              size: 25,
+                            )
+                                : _isSvgaUrl(category.icon)
+                                ? SizedBox(
+                              width: 25,
+                              height: 25,
+                              child: SVGAEasyPlayer(
+                                key: ValueKey(category.icon),
+                                resUrl: category.icon,
+                                fit: BoxFit.contain,
+                              ),
+                            )
+                                : CachedNetworkImage(
+                              imageUrl: category.icon,
+                              fit: BoxFit.contain,
+                              memCacheWidth: 96,
+                              memCacheHeight: 96,
+                              maxWidthDiskCache: 192,
+                              maxHeightDiskCache: 192,
+                              fadeInDuration: Duration.zero,
+                              placeholder: (_, __) => _shimmerBox(
+                                height: 25,
+                                width: 25,
+                                radius: 14,
+                              ),
+                              errorWidget: (_, __, ___) => Icon(
+                                Icons.emoji_emotions_rounded,
+                                color: isSelected
+                                    ? const Color(0xFFFF4D91)
+                                    : Colors.black54,
+                                size: 25,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

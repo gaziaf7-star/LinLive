@@ -1,17 +1,16 @@
 
 
-// const String kDomainUrl = 'http://192.168.0.192:8001';
-// const String kWsUrl =
-//     'ws://192.168.0.192:8080/app/xccgogz0nowt0d4wj1y6?protocol=7&client=js&version=8.4.0-rc2&flash=false';
-const String kDomainUrl = 'https://linlive.fr';
+// const String kDomainUrl = 'https://superhero-disarm-shakily.ngrok-free.dev';
+// const String kWsUrl = 'ws://dry-apes-strive.loca.lt';
+
+
+
 const String kAudioUrl = 'https://linlive.fr/public/uploads/audio';
+
+const String kDomainUrl = 'https://linlive.fr';
 const String kWsUrl =
     'ws://linlive.fr:8084/app/xccgogz0nowt0d4wj1y6?protocol=7&client=js&version=8.4.0-rc2&flash=false';
 
-// const String kDomainUrl = 'https://testlinlive.linlive.fr';
-// const String kAudioUrl = 'https://testlinlive.linlive.fr/public/uploads/audio';
-// const String kWsUrl =
-//     'ws://testlinlive.linlive.fr:8084/app/xccgogz0nowt0d4wj1y6?protocol=7&client=js&version=8.4.0-rc2&flash=false';
 
 ///--------------- game part -------------------------------------------------
 
@@ -136,6 +135,7 @@ String kProfileUpdate({required int id}) => '$kMainUrl/Register_update/$id';
 const String kProfileGiftList = '$kMainUrl/auth_user_send_gift';
 String kProfileReceverList({required String id}) => '$kMainUrl/auth_user_Receive_gift/$id';
 const String kProfileVisitor = '$kMainUrl/profile_visite';
+ String kProfileVisitList({required int userId}) => '$kMainUrl/profile-visit-count/$userId';
 const String kBaseList = '$kMainUrl/my-base-list';
 String kProfileCombinationList({
   required String userId,
@@ -218,7 +218,6 @@ String kLiveViewersList(int streamId) =>
     "$kMainUrl/livestream/$streamId/viewers";
 
 String getViewerList(int liveStreamId) => "$kMainUrl/viewerlist/$liveStreamId";
-
 // Calls
 const String callLiveStream = "$kMainUrl/calllivestream";
 String getCallList(int liveStreamId) => "$kMainUrl/calllist/$liveStreamId";

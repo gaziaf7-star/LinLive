@@ -576,29 +576,90 @@ class HomeController extends GetxController {
   final allUserData = [].obs;
   final searchController = TextEditingController();
 
-  Future showAllUserData() async {
-    try {
-      final data = await dio.get(kAllUserList);
-      final body = data.data;
+  // PERFORMANCE: O(1) user lookup for live sorting/search.
+  // Age every live item-er jonno allUserData puro list scan hoto.
+  final Map<String, Map<String, dynamic>> _allUserLookup =
+  <String, Map<String, dynamic>>{};
+  Future<void>? _allUsersInFlight;
+  bool _allUsersLoadedOnce = false;
 
-      if (body is Map && body['data'] is List) {
-        allUserData.value = body['data'];
-      } else if (body is List) {
-        allUserData.value = body;
-      } else {
-        allUserData.clear();
+  String _allUserLookupKey(dynamic value) {
+    final String text = value?.toString().trim().toLowerCase() ?? '';
+    if (text.isEmpty || text == 'null' || text == '0') return '';
+    return text;
+  }
+
+  void _rebuildAllUserLookup() {
+    _allUserLookup.clear();
+
+    for (final raw in allUserData) {
+      if (raw is! Map) continue;
+      final Map<String, dynamic> user = Map<String, dynamic>.from(raw);
+
+      for (final rawKey in <dynamic>[
+        user['id'],
+        user['user_id'],
+        user['unique_id'],
+        user['phone'],
+      ]) {
+        final String key = _allUserLookupKey(rawKey);
+        if (key.isNotEmpty) {
+          _allUserLookup.putIfAbsent(key, () => user);
+        }
       }
-
-      // User list contains host country in many APIs. After it loads,
-      // re-sort live list so selected country cards come first smoothly.
-      if (showingLiveStreamList.isNotEmpty) {
-        _sortLiveStreamList();
-      }
-
-      debugPrint('✅ All user data loaded => ${allUserData.length}');
-    } catch (e) {
-      debugPrint('❌ All user data load failed => $e');
     }
+  }
+
+  Future<void> showAllUserData({bool force = false}) async {
+    if (!force && _allUsersLoadedOnce && allUserData.isNotEmpty) {
+      if (_allUserLookup.isEmpty) _rebuildAllUserLookup();
+      return;
+    }
+
+    if (!force && _allUsersInFlight != null) {
+      return _allUsersInFlight!;
+    }
+
+    final Future<void> request = () async {
+      try {
+        final response = await dio.get(
+          kAllUserList,
+          options: Options(
+            headers: const {
+              'Accept': 'application/json',
+            },
+          ),
+        );
+        final body = response.data;
+
+        final List<dynamic> nextUsers;
+        if (body is Map && body['data'] is List) {
+          nextUsers = List<dynamic>.from(body['data']);
+        } else if (body is List) {
+          nextUsers = List<dynamic>.from(body);
+        } else {
+          nextUsers = const <dynamic>[];
+        }
+
+        allUserData.assignAll(nextUsers);
+        _rebuildAllUserLookup();
+        _allUsersLoadedOnce = true;
+
+        // O(1) lookup ready howar por ekbar sort.
+        if (showingLiveStreamList.isNotEmpty) {
+          _sortLiveStreamList();
+        }
+
+        debugPrint('✅ All user data loaded => ${allUserData.length}');
+      } catch (e) {
+        debugPrint('❌ All user data load failed => $e');
+      } finally {
+        _allUsersInFlight = null;
+      }
+    }();
+
+    _allUsersInFlight = request;
+    return request;
   }
 
   final traderListData = [].obs;
@@ -1158,7 +1219,8 @@ class HomeController extends GetxController {
 
   String _countryFromMap(Map<String, dynamic> map) {
     return _normalizeLiveCountry(
-      map['country'] ??
+      map['resolved_country'] ??
+          map['country'] ??
           map['country_name'] ??
           map['stream_country'] ??
           map['permisioncountry'] ??
@@ -1204,50 +1266,30 @@ class HomeController extends GetxController {
   }
 
   Map<String, dynamic> _findUserFromAllUserData(Map<String, dynamic> liveItem) {
+    if (_allUserLookup.isEmpty && allUserData.isNotEmpty) {
+      _rebuildAllUserLookup();
+    }
+
     final Map<String, dynamic> liveUser = _broadcasterUserFromLive(liveItem);
 
-    final String hostDbId = _cleanLiveText(
-      liveItem['user_id'] ?? liveItem['host_id'] ?? liveItem['broadcaster_id'],
-    );
-    final String roomId = _cleanLiveText(liveItem['room_id']);
-    final String nestedDbId = _cleanLiveText(liveUser['id']);
-    final String nestedPublicId = _cleanLiveText(liveUser['user_id']);
+    final List<dynamic> candidates = <dynamic>[
+      liveItem['user_id'],
+      liveItem['host_id'],
+      liveItem['broadcaster_id'],
+      liveItem['owner_user_id'],
+      liveItem['current_host_id'],
+      liveUser['id'],
+      liveUser['user_id'],
+      liveUser['unique_id'],
+      liveItem['room_id'],
+    ];
 
-    for (final rawUser in allUserData) {
-      if (rawUser is! Map) continue;
-      final user = _liveAsMap(rawUser);
+    for (final rawKey in candidates) {
+      final String key = _allUserLookupKey(rawKey);
+      if (key.isEmpty) continue;
 
-      final String id = _cleanLiveText(user['id']);
-      final String publicId = _cleanLiveText(user['user_id']);
-      final String uniqueId = _cleanLiveText(user['unique_id']);
-
-      if (hostDbId.isNotEmpty &&
-          (id == hostDbId ||
-              publicId == hostDbId ||
-              uniqueId == hostDbId)) {
-        return user;
-      }
-
-      if (roomId.isNotEmpty &&
-          (id == roomId ||
-              publicId == roomId ||
-              uniqueId == roomId)) {
-        return user;
-      }
-
-      if (nestedDbId.isNotEmpty &&
-          (id == nestedDbId ||
-              publicId == nestedDbId ||
-              uniqueId == nestedDbId)) {
-        return user;
-      }
-
-      if (nestedPublicId.isNotEmpty &&
-          (id == nestedPublicId ||
-              publicId == nestedPublicId ||
-              uniqueId == nestedPublicId)) {
-        return user;
-      }
+      final Map<String, dynamic>? user = _allUserLookup[key];
+      if (user != null) return user;
     }
 
     return <String, dynamic>{};
@@ -2422,40 +2464,140 @@ class HomeController extends GetxController {
   ///-------------------------------- profile visite api-------------
 
   final profileVisitor = {}.obs;
+  final RxSet<String> profileVisitLoadingIds = <String>{}.obs;
 
-  void visitProfile({required String userId}) async {
-    final data = {'user_id': userId};
+  Future<void> visitProfile({required String userId}) async {
+    final String cleanUserId = userId.trim();
+    if (cleanUserId.isEmpty || profileVisitLoadingIds.contains(cleanUserId)) {
+      return;
+    }
+
+    profileVisitLoadingIds.add(cleanUserId);
+    profileVisitLoadingIds.refresh();
+
+    // Loader immediately paint hobe; API finish howar jonno blank/frozen screen thakbe na.
+    Get.dialog<void>(
+      WillPopScope(
+        onWillPop: () async => false,
+        child: Center(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              width: 150,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 18,
+              ),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(.16),
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(
+                    height: 30,
+                    width: 30,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.6,
+                      color: Color(0xFFFFC915),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    ('Opening profile...').appTr,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.poppins(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF33343A),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+      barrierDismissible: false,
+      barrierColor: Colors.black.withOpacity(.28),
+    );
+
+    // Dialog-er first frame render korar chance dei.
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+
     try {
-      print(kProfileVisitor);
-      print(data);
       final response = await dio.post(
         kProfileVisitor,
-        data: data,
+        data: <String, dynamic>{'user_id': cleanUserId},
         options: Options(
           headers: {
             'Authorization': 'Bearer ${authController.userProfile.value.token}',
+            'Accept': 'application/json',
           },
+          sendTimeout: const Duration(seconds: 8),
+          receiveTimeout: const Duration(seconds: 12),
         ),
       );
-      if (response.statusCode == 200) {
-        profileVisitor.value = response.data;
 
+      if (Get.isDialogOpen == true) {
+        Get.back();
+      }
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final dynamic body = response.data;
+        if (body is Map) {
+          profileVisitor.value = Map<String, dynamic>.from(body);
+        } else {
+          profileVisitor.value = <String, dynamic>{};
+        }
+
+        await Future<void>.delayed(Duration.zero);
         Get.to(
-          userProfileVisit(),
+              () => const userProfileVisit(),
           arguments: response.data,
           transition: Transition.rightToLeft,
+          duration: const Duration(milliseconds: 220),
         );
-      } else {
-        Get.snackbar(
-          ('Failed').appTr,
-          ("Your credentials doesn't match.").appTr,
-          backgroundColor: Colors.red,
-          colorText: Colors.white,
-          snackPosition: SnackPosition.BOTTOM,
-        );
+        return;
       }
+
+      Get.snackbar(
+        ('Failed').appTr,
+        ("Your credentials doesn't match.").appTr,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+        snackPosition: SnackPosition.BOTTOM,
+      );
+    } on DioException catch (e) {
+      if (Get.isDialogOpen == true) {
+        Get.back();
+      }
+
+      final dynamic body = e.response?.data;
+      final String message = body is Map && body['message'] != null
+          ? body['message'].toString()
+          : ('Something went wrong').appTr;
+
+      Get.snackbar(
+        ('Failed').appTr,
+        message,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+        snackPosition: SnackPosition.BOTTOM,
+      );
     } catch (e) {
-      print(e);
+      if (Get.isDialogOpen == true) {
+        Get.back();
+      }
+
       Get.snackbar(
         ('Failed').appTr,
         ("Something went wrong").appTr,
@@ -2463,6 +2605,9 @@ class HomeController extends GetxController {
         colorText: Colors.white,
         snackPosition: SnackPosition.BOTTOM,
       );
+    } finally {
+      profileVisitLoadingIds.remove(cleanUserId);
+      profileVisitLoadingIds.refresh();
     }
   }
 

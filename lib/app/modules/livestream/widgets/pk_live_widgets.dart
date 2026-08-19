@@ -13,10 +13,7 @@ import '../../home/controllers/home_controller.dart';
 import '../controllers/livestream_controller.dart';
 
 import 'package:meetlivepro/app/localization/app_localizer.dart';
-/// Professional Video PK helpers.
-///
-/// This file is intentionally separated from PopularLiveView so your old live,
-/// gift, comment, viewer and seat code stays safe.
+
 
 class PkRequestButton extends StatelessWidget {
   final int currentLivestreamId;
@@ -175,89 +172,194 @@ class _PkHostSelectBottomSheetState extends State<PkHostSelectBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final MediaQueryData media = MediaQuery.of(context);
+    final double availableHeight =
+        media.size.height - media.padding.top - media.viewInsets.bottom;
+
+    // Responsive compact height:
+    // - smaller than the old 72% sheet
+    // - never pushes under the phone navigation area
+    // - still leaves enough room for search + host list on small phones
+    final double maxAllowed = math.max(300.0, availableHeight - 12.0);
+    final double minAllowed = math.min(360.0, maxAllowed);
+    final double desiredHeight = media.size.height * 0.56;
+    final double sheetHeight =
+    desiredHeight.clamp(minAllowed, maxAllowed).toDouble();
+
+    final double horizontalPadding =
+    media.size.width < 360 ? 12.0 : 16.0;
+
     return SafeArea(
       top: false,
+      minimum: EdgeInsets.only(
+        bottom: math.max(6.0, media.padding.bottom),
+      ),
       child: Container(
-        height: Get.height * .72,
-        decoration: const BoxDecoration(
-          color: Color(0xff120027),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xff280052), Color(0xff11001f), Color(0xff001d4c)],
-          ),
+        height: sheetHeight,
+        margin: EdgeInsets.symmetric(
+          horizontal: media.size.width < 340 ? 6 : 10,
         ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(24),
+          ),
+          border: Border.all(
+            color: const Color(0xffEEE8F0),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(.16),
+              blurRadius: 26,
+              offset: const Offset(0, -7),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
         child: Column(
           children: [
             const SizedBox(height: 8),
             Container(
-              width: 48,
-              height: 5,
+              width: 42,
+              height: 4,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(.35),
+                color: const Color(0xffD8D0DA),
                 borderRadius: BorderRadius.circular(999),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                10,
+                horizontalPadding - 4,
+                6,
+              ),
               child: Row(
                 children: [
-                  const Icon(Icons.bolt_rounded, color: Colors.amberAccent),
-                  const SizedBox(width: 8),
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [
+                          Color(0xffff4dd8),
+                          Color(0xff8B5CFF),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.bolt_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
                   Expanded(
                     child: Text(
                       ('Select host for Video PK').appTr,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.poppins(
-                        color: Colors.white,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
+                        color: const Color(0xff241E28),
+                        fontSize: media.size.width < 360 ? 14.5 : 16,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
                     onPressed: () => Get.back(),
-                    icon: const Icon(Icons.close, color: Colors.white),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: Color(0xff746A76),
+                      size: 22,
+                    ),
                   ),
                 ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: TextField(
-                controller: _search,
-                onChanged: (_) => setState(() {}),
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: ('Search host name, ID or level').appTr,
-                  hintStyle: TextStyle(color: Colors.white.withOpacity(.55)),
-                  prefixIcon: Icon(Icons.search, color: Colors.white.withOpacity(.7)),
-                  filled: true,
-                  fillColor: Colors.white.withOpacity(.10),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide.none,
+              padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+              child: SizedBox(
+                height: 42,
+                child: TextField(
+                  controller: _search,
+                  onChanged: (_) => setState(() {}),
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xff2B2530),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: ('Search host name, ID or level').appTr,
+                    hintStyle: GoogleFonts.poppins(
+                      color: const Color(0xffA198A5),
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      color: Color(0xff8D8391),
+                      size: 20,
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xffF7F4F8),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(
+                        color: Color(0xffECE5EE),
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(
+                        color: Color(0xffA56CFF),
+                        width: 1.25,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Expanded(
               child: Obx(() {
                 final lives = _filteredLives(_search.text);
+
                 if (lives.isEmpty) {
                   return Center(
-                    child: Text(
-                      ('No live host available for PK').appTr,
-                      style: TextStyle(color: Colors.white.withOpacity(.75)),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(
+                        ('No live host available for PK').appTr,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.poppins(
+                          color: const Color(0xff8D8391),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                   );
                 }
 
                 return ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    2,
+                    horizontalPadding,
+                    math.max(10.0, media.padding.bottom),
+                  ),
                   itemCount: lives.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
                     final live = lives[index];
                     final user = _hostUser(live);
@@ -266,75 +368,144 @@ class _PkHostSelectBottomSheetState extends State<PkHostSelectBottomSheet> {
                     final image = (user['profile_image'] ?? '').toString();
                     final name = (user['name'] ?? ('Host').appTr).toString();
                     final level = (user['level'] ?? '0').toString();
-                    final viewers = live['livestream_viewers_count'] ?? live['viewer_count'] ?? 0;
+                    final viewers = live['livestream_viewers_count'] ??
+                        live['viewer_count'] ??
+                        0;
 
                     return Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: media.size.width < 360 ? 9 : 11,
+                        vertical: 9,
+                      ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(.10),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: Colors.white.withOpacity(.10)),
+                        color: const Color(0xffFAF8FB),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: const Color(0xffEEE7F0),
+                        ),
                       ),
                       child: Row(
                         children: [
-                          CircleAvatar(
-                            radius: 25,
-                            backgroundColor: Colors.white.withOpacity(.18),
-                            backgroundImage: image.isEmpty
-                                ? null
-                                : CachedNetworkImageProvider(ImageHelper.getImageUrl(image)),
-                            child: image.isEmpty ? const Icon(Icons.person, color: Colors.white) : null,
+                          Container(
+                            width: media.size.width < 360 ? 42 : 46,
+                            height: media.size.width < 360 ? 42 : 46,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: const Color(0xffE6DCEC),
+                                width: 1,
+                              ),
+                            ),
+                            child: ClipOval(
+                              child: image.isEmpty
+                                  ? Container(
+                                color: const Color(0xffF0EBF2),
+                                alignment: Alignment.center,
+                                child: const Icon(
+                                  Icons.person_rounded,
+                                  color: Color(0xff9A8FA0),
+                                ),
+                              )
+                                  : CachedNetworkImage(
+                                imageUrl:
+                                ImageHelper.getImageUrl(image),
+                                fit: BoxFit.cover,
+                                errorWidget: (_, __, ___) => Container(
+                                  color: const Color(0xffF0EBF2),
+                                  alignment: Alignment.center,
+                                  child: const Icon(
+                                    Icons.person_rounded,
+                                    color: Color(0xff9A8FA0),
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
-                          const SizedBox(width: 10),
+                          const SizedBox(width: 9),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: GoogleFonts.poppins(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14,
-                                    )),
-                                const SizedBox(height: 3),
-                                Text(('ID: $hostId  •  Lv.$level  •  Viewers: $viewers').appTr,
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(.70),
-                                      fontSize: 12,
-                                    )),
+                                Text(
+                                  name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.poppins(
+                                    color: const Color(0xff2A2430),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize:
+                                    media.size.width < 360 ? 12.5 : 13.5,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  ('ID: $hostId  •  Lv.$level  •  Viewers: $viewers')
+                                      .appTr,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: GoogleFonts.poppins(
+                                    color: const Color(0xff8A808F),
+                                    fontSize:
+                                    media.size.width < 360 ? 9.8 : 10.8,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 7),
                           Obx(() {
-                            final loading = liveController.pkRequestLoading.value;
-                            return ElevatedButton(
-                              onPressed: loading
-                                  ? null
-                                  : () async {
-                                await liveController.sendPkRequest(
-                                  senderLivestreamId: widget.currentLivestreamId,
-                                  receiverLivestreamId: liveId,
-                                  senderHostId: widget.currentHostId,
-                                  receiverHostId: hostId,
-                                  receiverLiveData: live,
-                                );
-                                if (Get.isBottomSheetOpen == true) Get.back();
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.pinkAccent,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                            final loading =
+                                liveController.pkRequestLoading.value;
+
+                            return SizedBox(
+                              height: 34,
+                              child: ElevatedButton(
+                                onPressed: loading
+                                    ? null
+                                    : () async {
+                                  await liveController.sendPkRequest(
+                                    senderLivestreamId:
+                                    widget.currentLivestreamId,
+                                    receiverLivestreamId: liveId,
+                                    senderHostId: widget.currentHostId,
+                                    receiverHostId: hostId,
+                                    receiverLiveData: live,
+                                  );
+
+                                  if (Get.isBottomSheetOpen == true) {
+                                    Get.back();
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  elevation: 0,
+                                  backgroundColor: const Color(0xffF14FA8),
+                                  foregroundColor: Colors.white,
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal:
+                                    media.size.width < 360 ? 10 : 14,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                ),
+                                child: loading
+                                    ? const SizedBox(
+                                  height: 14,
+                                  width: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                                    : Text(
+                                  ('PK').appTr,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
                               ),
-                              child: loading
-                                  ? const SizedBox(
-                                height: 15,
-                                width: 15,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                                  :  Text(('PK').appTr),
                             );
                           }),
                         ],

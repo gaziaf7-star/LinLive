@@ -4,7 +4,6 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'package:meetlivepro/app/modules/Cp/views/cp_view.dart';
 import 'package:meetlivepro/app/modules/Famaily/view/family_home_api_page.dart';
-import 'package:meetlivepro/app/modules/accountInfornation/views/CoinTopup.dart';
 import 'package:meetlivepro/app/modules/appmenu/views/widgets/managerDashbord.dart';
 import 'package:meetlivepro/constants/constants.dart';
 
@@ -42,21 +41,15 @@ class _PremiumShortcutMenu extends StatelessWidget {
 
   void _openDashboard({
     required String title,
-    required String urlPath,
+    required String target,
   }) {
-    final user = authController.userProfile.value.user;
-    if (user == null || user.id == null) return;
-
-    final String userId = user.id.toString();
-    final String url = 'https://linlive.fr/$urlPath/$userId';
-
     Get.to(
           () => ManagerDashboardWebViewPage(
         title: title,
-        url: url,
+        target: target,
       ),
-      transition: Transition.rightToLeftWithFade,
-      duration: const Duration(milliseconds: 350),
+      transition: Transition.fadeIn,
+      duration: const Duration(milliseconds: 160),
     );
   }
 
@@ -66,6 +59,7 @@ class _PremiumShortcutMenu extends StatelessWidget {
     final bool isManager = userType == 'manager';
     final bool isSuperAdmin = userType == 'super_admin';
     final bool isBdAdmin = userType == 'bd_admin';
+    final bool isBd = userType == 'bd';
 
     final items = <_PremiumItem>[
       _PremiumItem(
@@ -74,7 +68,8 @@ class _PremiumShortcutMenu extends StatelessWidget {
         fallbackIcon: Icons.monetization_on_rounded,
         tileColor: const Color(0xFFFFF1DE),
         onTap: () {
-          homeController.showEarningData;
+          // Old code only referenced the function and did not call it.
+          homeController.showEarningData();
         },
       ),
       if (isManager)
@@ -86,7 +81,7 @@ class _PremiumShortcutMenu extends StatelessWidget {
           onTap: () {
             _openDashboard(
               title: 'Manager Dashboard'.appTr,
-              urlPath: 'manager_dashboard',
+              target: 'manager_dashboard',
             );
           },
         ),
@@ -99,7 +94,7 @@ class _PremiumShortcutMenu extends StatelessWidget {
           onTap: () {
             _openDashboard(
               title: 'Super Admin Dashboard'.appTr,
-              urlPath: 'super_admin_dashboard',
+              target: 'super_admin_dashboard',
             );
           },
         ),
@@ -112,7 +107,20 @@ class _PremiumShortcutMenu extends StatelessWidget {
           onTap: () {
             _openDashboard(
               title: 'BD Admin Dashboard'.appTr,
-              urlPath: 'bd_admin_dashboard',
+              target: 'bd_admin_dashboard',
+            );
+          },
+        ),
+      if (isBd)
+        _PremiumItem(
+          title: 'BD'.appTr,
+          image: 'assets/newaudio/super.png',
+          fallbackIcon: Icons.flag_circle_rounded,
+          tileColor: const Color(0xFFE9F8EF),
+          onTap: () {
+            _openDashboard(
+              title: 'BD Dashboard'.appTr,
+              target: 'bd_dashboard',
             );
           },
         ),
@@ -144,8 +152,6 @@ class _PremiumShortcutMenu extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Use the exact same 4-column width as the first shortcut row.
-        // So row-1 and row-2 icons stay vertically aligned column-to-column.
         final double slotWidth = constraints.maxWidth / 4;
         final double rowHeight =
         (kHeight * .122).clamp(92.0, 112.0).toDouble();
@@ -209,30 +215,50 @@ class _ShortcutItem extends StatefulWidget {
 
 class _ShortcutItemState extends State<_ShortcutItem> {
   bool _pressed = false;
+  bool _tapLocked = false;
+
+  void _handleTap() {
+    if (_tapLocked) return;
+
+    _tapLocked = true;
+    widget.item.onTap();
+
+    Future<void>.delayed(const Duration(milliseconds: 650), () {
+      if (!mounted) return;
+      _tapLocked = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final double iconBox = (widget.kHeight * .060).clamp(48.0, 60.0).toDouble();
+    final double iconBox =
+    (widget.kHeight * .060).clamp(48.0, 60.0).toDouble();
     final double iconSize = iconBox * .56;
     final Color tileColor = widget.item.tileColor;
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapCancel: () => setState(() => _pressed = false),
+      onTapDown: (_) {
+        if (!_tapLocked) {
+          setState(() => _pressed = true);
+        }
+      },
+      onTapCancel: () {
+        if (mounted) setState(() => _pressed = false);
+      },
       onTapUp: (_) {
-        setState(() => _pressed = false);
-        widget.item.onTap();
+        if (mounted) setState(() => _pressed = false);
+        _handleTap();
       },
       child: AnimatedScale(
-        duration: const Duration(milliseconds: 120),
+        duration: const Duration(milliseconds: 100),
         curve: Curves.easeOut,
         scale: _pressed ? .96 : 1,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
+              duration: const Duration(milliseconds: 140),
               width: iconBox,
               height: iconBox,
               decoration: BoxDecoration(
@@ -291,7 +317,8 @@ class _ShortcutItemState extends State<_ShortcutItem> {
                   style: GoogleFonts.poppins(
                     color: const Color(0xFF2E2F33),
                     fontWeight: FontWeight.w500,
-                    fontSize: (widget.kHeight * .0142).clamp(11.0, 13.2).toDouble(),
+                    fontSize:
+                    (widget.kHeight * .0142).clamp(11.0, 13.2).toDouble(),
                     height: 1.15,
                   ),
                 ),
